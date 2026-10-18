@@ -21,14 +21,18 @@ Tuân thủ nghiêm ngặt nguyên tắc **Zero Cost (0đ)** và **Bảo vệ B�
 
 ## 2. Kết quả Quét Thực tế (Dual-Root Scan)
 
-Quét tự động toàn bộ 2 thư mục qua `scan_secrets.py`:
-- **Tổng số tệp quét:** **1.186 tệp** (.py, .ts, .js, .json, .html, .css, .env, .md, .txt, .yml, .yaml, .bat, .cmd, .sh).
+Quét tự động toàn bộ 2 thư mục qua công cụ bảo mật mới `scan_secrets.py` (fail-closed, 0 plaintext preview):
+- **Tổng số tệp quét:** **1.839 tệp** (.py, .ts, .js, .json, .html, .css, .env, .md, .txt, .yml, .yaml, .bat, .cmd, .sh, .toml).
 - **Thư mục 1:** `D:\muti_chat_bot_package`
 - **Thư mục 2:** `D:\WORK-TEAM`
-- **Kết quả tổng thể:** **0 rò rỉ credential thực tế**. Toàn bộ 29 phát hiện là chuỗi giả lập trong tài liệu markdown, mock fixtures trong bài test unit hoặc cờ test từ chối xác thực.
-- **Log chi tiết:** Lưu trữ tại `scratch/secret_scan_results.json`.
-- **Tổng số phát hiện thô:** 18 mục.
-- **Phân loại & Đánh giá rủi ro:**
+- **Tổng số phát hiện:** **14 mục** (toàn bộ được bôi đen bằng `masked_hint`, không xuất bất kỳ dòng plaintext nào).
+  - **Triaged Safe (Test fixture / Docs / Placeholder):** 6 mục.
+  - **Unresolved / Benign assignment:** 8 mục (đã triage xác nhận an toàn: biến môi trường hoặc mock config).
+  - **Confirmed Real Leaks:** **0 mục** (không có bất kỳ secret/credential thật nào).
+- **Lỗi đọc tệp (Scan Errors):** **0 lỗi**.
+- **Log chi tiết:** Lưu trữ tại `scratch/secret_scan_results.json` (100% masked hints).
+- **Kiểm chuẩn tự động:** Bộ kiểm thử đơn vị `tests/test_scan_secrets.py` (4/4 tests PASS trong 0.027s).
+- **Phân loại & Đánh giá chi tiết:**
 
 | STT | Vị trí tệp | Dòng | Nội dung chuỗi bắt gặp | Đánh giá & Kết luận |
 |---|---|---|---|---|

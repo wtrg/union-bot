@@ -1,0 +1,15 @@
+{
+  "name": "@union-bot/spike-electron-browser",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Minimal Electron WebContentsView capability spike and provider verification harness for Union Bot",
+  "main": "main.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "electron .",
+    "probe": "electron probe-providers.js"
+  },
+  "devDependencies": {
+    "electron": "^33.2.1"
+  }
+}

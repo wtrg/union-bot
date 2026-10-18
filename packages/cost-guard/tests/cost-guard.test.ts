@@ -3,6 +3,7 @@ import assert from 'node:assert';
 import * as http from 'node:http';
 import * as https from 'node:https';
 import * as http2 from 'node:http2';
+import * as net from 'node:net';
 import { CostGuard, installNodeCostGuardInterceptor, installElectronCostGuardInterceptor, CostGuardViolationError } from '../src/cost-guard.ts';
 
 describe('CostGuard Zero-Cost (0đ) Policy Enforcement', () => {
@@ -194,5 +195,79 @@ describe('CostGuard Zero-Cost (0đ) Policy Enforcement', () => {
     } finally {
       uninstall();
     }
+  });
+
+  test('Runtime Node.js Interceptor blocks raw net.Socket.connect to paid or unapproved hosts', () => {
+    const uninstall = installNodeCostGuardInterceptor(guard);
+    try {
+      const socket = new net.Socket();
+      assert.throws(() => {
+        socket.connect({ host: 'api.openai.com', port: 443 });
+      }, (err: any) => {
+        assert.ok(err instanceof CostGuardViolationError);
+        assert.strictEqual(err.violation.reason, 'PAID_API_BLOCKED');
+        return true;
+      });
+
+      const socket2 = new net.Socket();
+      assert.throws(() => {
+        socket2.connect(80, 'forbidden-cost-cloud.net');
+      }, (err: any) => {
+        assert.ok(err instanceof CostGuardViolationError);
+        assert.strictEqual(err.violation.reason, 'NOT_IN_ALLOWLIST');
+        return true;
+      });
+    } finally {
+      uninstall();
+    }
+  });
+
+  test('Runtime Node.js Interceptor blocks requests using custom http/https Agent', () => {
+    const uninstall = installNodeCostGuardInterceptor(guard);
+    try {
+      const customHttpAgent = new http.Agent({ keepAlive: true });
+      assert.throws(() => {
+        http.get({ host: 'api.openai.com', port: 80, agent: customHttpAgent });
+      }, (err: any) => {
+        assert.ok(err instanceof CostGuardViolationError);
+        assert.strictEqual(err.violation.reason, 'PAID_API_BLOCKED');
+        return true;
+      });
+
+      const customHttpsAgent = new https.Agent({ keepAlive: true });
+      assert.throws(() => {
+        https.request({ host: 'api.anthropic.com', port: 443, agent: customHttpsAgent });
+      }, (err: any) => {
+        assert.ok(err instanceof CostGuardViolationError);
+        assert.strictEqual(err.violation.reason, 'PAID_API_BLOCKED');
+        return true;
+      });
+    } finally {
+      uninstall();
+    }
+  });
+
+  test('Runtime Node.js Interceptor supports idempotent multi-install and clean uninstall', () => {
+    const origAddRequest = http.Agent.prototype.addRequest;
+    const origFetch = globalThis.fetch;
+
+    const uninstall1 = installNodeCostGuardInterceptor(guard);
+    const uninstall2 = installNodeCostGuardInterceptor(guard);
+
+    // Assert it is actively blocking
+    assert.throws(() => {
+      http.get('http://api.openai.com/v1/test');
+    }, CostGuardViolationError);
+
+    // First uninstall: refCount goes from 2 to 1, still intercepts
+    uninstall1();
+    assert.throws(() => {
+      http.get('http://api.openai.com/v1/test');
+    }, CostGuardViolationError);
+
+    // Second uninstall: refCount goes to 0, cleanly restores originals
+    uninstall2();
+    assert.strictEqual(http.Agent.prototype.addRequest, origAddRequest);
+    assert.strictEqual(globalThis.fetch, origFetch);
   });
 });

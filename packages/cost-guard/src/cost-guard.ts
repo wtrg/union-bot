@@ -176,14 +176,64 @@ function resolveRequestUrl(urlOrOptions: any, defaultProtocol: string): string {
   return '';
 }
 
+interface InterceptorState {
+  costGuard: CostGuard;
+  refCount: number;
+  originalFetch: any;
+  originalHttpAddRequest: any;
+  originalHttpsAddRequest: any;
+  originalHttp2Connect: any;
+  originalNetSocketConnect: any;
+}
+
+let activeInterceptorState: InterceptorState | null = null;
+
 /**
- * Installs runtime network interceptors for Node.js global fetch, http.request, http.get, https.request, and https.get.
+ * Installs runtime network interceptors for Node.js global fetch, http/https Agent, http2.connect, and net.Socket.prototype.connect.
+ * Note: These are in-process runtime defense-in-depth guards; they do not claim coverage over external child processes or OS network stacks.
  * Returns an uninstall function to cleanly restore original network methods.
  */
 export function installNodeCostGuardInterceptor(costGuard: CostGuard): () => void {
+  if (activeInterceptorState) {
+    activeInterceptorState.refCount++;
+    activeInterceptorState.costGuard = costGuard;
+    let uninstalled = false;
+    return function uninstall() {
+      if (uninstalled || !activeInterceptorState) return;
+      uninstalled = true;
+      activeInterceptorState.refCount--;
+      if (activeInterceptorState.refCount <= 0) {
+        if (activeInterceptorState.originalFetch) {
+          globalThis.fetch = activeInterceptorState.originalFetch;
+        }
+        http.Agent.prototype.addRequest = activeInterceptorState.originalHttpAddRequest;
+        https.Agent.prototype.addRequest = activeInterceptorState.originalHttpsAddRequest;
+        if (activeInterceptorState.originalHttp2Connect) {
+          http2.connect = activeInterceptorState.originalHttp2Connect;
+        }
+        if (activeInterceptorState.originalNetSocketConnect) {
+          net.Socket.prototype.connect = activeInterceptorState.originalNetSocketConnect;
+        }
+        activeInterceptorState = null;
+      }
+    };
+  }
+
   const originalFetch = globalThis.fetch;
   const originalHttpAddRequest = http.Agent.prototype.addRequest;
   const originalHttpsAddRequest = https.Agent.prototype.addRequest;
+  const originalHttp2Connect = http2 && typeof http2.connect === 'function' ? http2.connect : null;
+  const originalNetSocketConnect = net && net.Socket && net.Socket.prototype ? net.Socket.prototype.connect : null;
+
+  activeInterceptorState = {
+    costGuard,
+    refCount: 1,
+    originalFetch,
+    originalHttpAddRequest,
+    originalHttpsAddRequest,
+    originalHttp2Connect,
+    originalNetSocketConnect
+  };
 
   // 1. Intercept global fetch
   if (typeof globalThis.fetch === 'function') {
@@ -245,7 +295,6 @@ export function installNodeCostGuardInterceptor(costGuard: CostGuard): () => voi
   };
 
   // 3. Intercept HTTP/2 and raw TCP/TLS socket connections (net.Socket.prototype.connect)
-  const originalHttp2Connect = http2 && typeof http2.connect === 'function' ? http2.connect : null;
   if (originalHttp2Connect) {
     http2.connect = function (authority: any, ...args: any[]) {
       let urlStr: string;
@@ -271,7 +320,6 @@ export function installNodeCostGuardInterceptor(costGuard: CostGuard): () => voi
     };
   }
 
-  const originalNetSocketConnect = net && net.Socket && net.Socket.prototype ? net.Socket.prototype.connect : null;
   if (originalNetSocketConnect) {
     net.Socket.prototype.connect = function (...args: any[]) {
       let targetHost = 'localhost';
@@ -313,17 +361,24 @@ export function installNodeCostGuardInterceptor(costGuard: CostGuard): () => voi
     };
   }
 
+  let uninstalled = false;
   return function uninstall() {
-    if (originalFetch) {
-      globalThis.fetch = originalFetch;
-    }
-    http.Agent.prototype.addRequest = originalHttpAddRequest;
-    https.Agent.prototype.addRequest = originalHttpsAddRequest;
-    if (originalHttp2Connect) {
-      http2.connect = originalHttp2Connect;
-    }
-    if (originalNetSocketConnect) {
-      net.Socket.prototype.connect = originalNetSocketConnect;
+    if (uninstalled || !activeInterceptorState) return;
+    uninstalled = true;
+    activeInterceptorState.refCount--;
+    if (activeInterceptorState.refCount <= 0) {
+      if (activeInterceptorState.originalFetch) {
+        globalThis.fetch = activeInterceptorState.originalFetch;
+      }
+      http.Agent.prototype.addRequest = activeInterceptorState.originalHttpAddRequest;
+      https.Agent.prototype.addRequest = activeInterceptorState.originalHttpsAddRequest;
+      if (activeInterceptorState.originalHttp2Connect) {
+        http2.connect = activeInterceptorState.originalHttp2Connect;
+      }
+      if (activeInterceptorState.originalNetSocketConnect) {
+        net.Socket.prototype.connect = activeInterceptorState.originalNetSocketConnect;
+      }
+      activeInterceptorState = null;
     }
   };
 }

@@ -15,8 +15,8 @@
 
 | Pha | Tên Pha | Trạng thái | Số Ticket | Đã Hoàn thành | Tỉ lệ |
 |---|---|---|---|---|---|
-| **P0** | Khảo sát & Khóa Nền móng (Audit & Baseline) | `VERIFIED_LIVE` | 18 | 18 | 100% |
-| **P1** | Monorepo Foundation & Toolchain | `READY_FOR_NEXT` | 11 | 0 | 0% |
+| **P0** | Khảo sát & Khóa Nền móng (Audit & Baseline) | `ACTIVE (P1_ALLOWED)` | 18 | 16 | 88.9% |
+| **P1** | Monorepo Foundation & Toolchain | `IMPLEMENTATION_ALLOWED` | 11 | 0 | 0% |
 | **P2** | Protocol, Storage & Event Sourcing | `TODO` | 10 | 0 | 0% |
 | **P3** | Desktop Shell & Workspace Window | `TODO` | 15 | 0 | 0% |
 | **P4** | Multi-Provider Browser Integration | `TODO` | 14 | 0 | 0% |
@@ -27,32 +27,40 @@
 | **P9** | Web Provider Capabilities & Extensions | `TODO` | 7 | 0 | 0% |
 | **P10**| Hardening, Adversarial Tests & Acceptance | `TODO` | 14 | 0 | 0% |
 | **P11**| Packaging, Windows Installer & Final Dossier | `TODO` | 12 | 0 | 0% |
-| **Tổng** | **Toàn bộ Lộ trình Union Bot** | **P0 Complete** | **152** | **18** | **11.8%** |
+| **Tổng** | **Toàn bộ Lộ trình Union Bot** | **P1 Allowed** | **152** | **16** | **10.5%** |
 
 ---
 
 ## 2. Chi tiết Vé Công việc Pha P0 (Khảo sát & Khóa Nền móng)
 
-| Ticket ID | Tên Nhiệm vụ | Người phụ trách | File Sản phẩm | Trạng thái | Bằng chứng / Evidence |
+> **Quy ước Nhãn Mức Tin cậy Bằng chứng (Evidence Confidence Levels):**
+> - `SOURCE_VERIFIED`: Đã kiểm chứng trực tiếp trong cây mã nguồn trên GitHub.
+> - `TEAM_EXECUTED_LOG_INSPECTED`: Đội ngũ đã chạy thực tế trên máy trạm Windows, có raw log lưu trữ.
+> - `REVIEWER_EXECUTED`: Technical Leader / Reviewer độc lập tự chạy và nghiệm thu.
+> - `NETWORK_PROBE_ONLY`: Chỉ kiểm tra handshake HTTP/TLS origin, chưa chứng minh GUI nhúng.
+> - `BLOCKED_EXTERNAL`: Bị chặn bởi dịch vụ bên ngoài (WAF, Cloudflare, ToS).
+
+| Ticket ID | Tên Nhiệm vụ | Người phụ trách | File Sản phẩm | Trạng thái | Mức tin cậy & Bằng chứng / Evidence |
 |---|---|---|---|---|---|
-| `P0-001` | Repo Baseline & Clean Tree Audit | Antigravity | `reports/audit/REPO_BASELINE.md` | `VERIFIED_LIVE` | Git init, .gitignore, clean tree verified. |
-| `P0-002` | Legacy Code Module Inventory | Antigravity | `reports/audit/MODULE_INVENTORY.md` | `VERIFIED_LIVE` | 177 files scanned, 4-tier decision applied. |
-| `P0-003` | Security Scan & Legacy Test Baseline | Antigravity | `reports/audit/SECRET_SCAN_REPORT.md`, `reports/qa/BASELINE_TESTS.md` | `VERIFIED_LIVE` | Custom scanner executed (0 leaks); 20/20 legacy tests verified. |
-| `P0-004` | Legacy Data & Persistence Audit | Antigravity | `docs/architecture/LEGACY_DATA_MAP.md` | `VERIFIED_LIVE` | 17 tables analyzed, WAL migration planned. |
-| `P0-005` | Environment & Toolchain Lock | Antigravity | `docs/architecture/ENVIRONMENT_LOCK.md` | `VERIFIED_LIVE` | Node 24, pnpm 12, Python 3.11, Git 2.55 locked. |
-| `P0-006` | Codex App Server Capability Spike | Antigravity | `reports/capability-evidence/CODEX_SPIKE.md` | `VERIFIED_LIVE` | Live multi-turn RPC passed: init -> thread -> turn -> token stream. |
-| `P0-007` | Antigravity Headless CLI Spike | Antigravity | `reports/capability-evidence/ANTIGRAVITY_SPIKE.md` | `VERIFIED_LIVE` | agy -p json executed, token metrics verified. |
-| `P0-008` | Browser Engine & Origin Probe Spike | Antigravity | `reports/capability-evidence/BROWSER_SPIKE.md` | `VERIFIED_LIVE` | Strict TLS probe verified; WebContentsView architecture locked (GUI in P2/P4). |
-| `P0-009` | Cost Guard 0-dong Architecture | Antigravity | `docs/COST_MANIFEST.md`, `packages/cost-guard/` | `VERIFIED_LIVE` | TS module + fetch/Agent/Socket/HTTP2 + Electron interceptor, 14/14 tests pass. |
-| `P0-010` | Provider Capability Matrix V1 | Antigravity | `docs/providers/CAPABILITY_MATRIX.md` | `VERIFIED_LIVE` | 6 providers analyzed, truthfulness enforced. |
-| `P0-011` | Monorepo Structure RFC & ADR-000 | Antigravity | `docs/adr/ADR-000-monorepo-foundation.md` | `VERIFIED_LIVE` | pnpm workspace & TypeScript layout accepted. |
-| `P0-012` | Phase 0 Exit Dossier & Review Packet R01-R03 | Antigravity | `reports/handoff/REVIEW_PACKET_R01.md` | `VERIFIED_LIVE` | Toàn bộ hồ sơ R01-R03 nộp và giải trình với ChatGPT Leader. |
-| `P0-013` | Union Bot Brand & Compatibility Inventory | Antigravity | `docs/adr/ADR-001-union-bot-brand-and-compat.md`, `reports/audit/BRAND_MIGRATION_INVENTORY.md` | `VERIFIED_LIVE` | 3-tier string mapping, 0-breakage strategy locked. |
-| `P0-014` | ChatGPT Leader Handoff Channel Spike | Antigravity | `reports/capability-evidence/LEADER_HANDOFF_SPIKE.md` | `VERIFIED_LIVE` | Two-way handshake tested, R00 verdict received. |
-| `P0-015` | Proof-of-Fidelity Rich Response CAS | Antigravity | `docs/providers/FIDELITY_MATRIX.md`, `packages/artifact-store/` | `VERIFIED_LIVE` | CAS implemented, path traversal blocked, 8/8 tests pass + TS web asset roundtrip verified. |
-| `P0-016` | Provider Policy & Automation Matrix | Antigravity | `docs/providers/POLICY_AUTOMATION_MATRIX.md` | `VERIFIED_LIVE` | Legal/technical permissions mapped, billing blocked. |
-| `P0-017` | Baseline Data Flow & Trust Boundaries | Antigravity | `docs/security/DATA_FLOW_AND_TRUST_BOUNDARIES.md` | `VERIFIED_LIVE` | 4 trust zones & abuse cases defined. |
-| `P0-018` | Product Release Scope & Tiers Decision | Antigravity | `docs/product/RELEASE_SCOPE_DECISION.md` | `VERIFIED_LIVE` | T0-T3 tiers defined; target release = T1 + T2. |
+| `P0-001` | Repo Baseline & Clean Tree Audit | Antigravity | `reports/audit/REPO_BASELINE.md` | `VERIFIED_LIVE` | `[SOURCE_VERIFIED]` Git init, .gitignore, clean tree verified. |
+| `P0-002` | Legacy Code Module Inventory | Antigravity | `reports/audit/MODULE_INVENTORY.md` | `VERIFIED_LIVE` | `[SOURCE_VERIFIED]` 177 files scanned, 4-tier decision applied. |
+| `P0-003` | Legacy Test Baseline Capture | Antigravity | `reports/qa/BASELINE_TESTS.md` | `FAIL (Baseline)` | `[TEAM_EXECUTED_LOG_INSPECTED]` 118 errors/failures, 94 warnings (exit 1) ghi nhận làm mốc lịch sử. |
+| `P0-003-SEC`| Security & Secret Scan Audit | Antigravity | `reports/audit/SECRET_SCAN_REPORT.md` | `VERIFIED_LIVE` | `[TEAM_EXECUTED_LOG_INSPECTED]` Quét 1.186 files qua 2 roots; 0 leaks thực tế; redacted triage. |
+| `P0-004` | Legacy Data & Persistence Audit | Antigravity | `docs/architecture/LEGACY_DATA_MAP.md` | `VERIFIED_LIVE` | `[SOURCE_VERIFIED]` 17 tables analyzed, WAL migration planned. |
+| `P0-005` | Environment & Toolchain Lock | Antigravity | `docs/architecture/ENVIRONMENT_LOCK.md` | `VERIFIED_LIVE` | `[SOURCE_VERIFIED]` Node 24, pnpm 12, Python 3.11, Git 2.55 locked. |
+| `P0-006` | Codex App Server Capability Spike | Antigravity | `reports/capability-evidence/CODEX_SPIKE.md` | `VERIFIED_LIVE` | `[TEAM_EXECUTED_LOG_INSPECTED]` Multi-turn RPC passed: init -> thread -> turn -> token stream. |
+| `P0-007` | Antigravity Headless CLI Spike | Antigravity | `reports/capability-evidence/ANTIGRAVITY_SPIKE.md` | `VERIFIED_LIVE` | `[TEAM_EXECUTED_LOG_INSPECTED]` agy -p json executed, token metrics verified. |
+| `P0-008` | Browser Engine & Origin Probe Spike | Antigravity | `reports/capability-evidence/BROWSER_SPIKE.md`, `spikes/electron-browser/` | `CARRY_OVER_P1` | `[NETWORK_PROBE_ONLY]` Strict TLS probe xong (4 origin); Electron spike tối thiểu đang tiến hành trong P1. |
+| `P0-009` | Cost Guard 0-dong Architecture | Antigravity | `docs/COST_MANIFEST.md`, `docs/security/EGRESS_BOUNDARIES.md`, `packages/cost-guard/` | `VERIFIED_LIVE` | `[SOURCE_VERIFIED]` 3-Layer defense spec; in-process interceptor + 17/17 tests pass. |
+| `P0-010` | Provider Capability Matrix V1 | Antigravity | `docs/providers/CAPABILITY_MATRIX.md` | `VERIFIED_LIVE` | `[SOURCE_VERIFIED]` 6 providers analyzed, truthfulness enforced. |
+| `P0-011` | Monorepo Structure RFC & ADR-000 | Antigravity | `docs/adr/ADR-000-monorepo-foundation.md` | `VERIFIED_LIVE` | `[SOURCE_VERIFIED]` pnpm workspace & TypeScript layout accepted. |
+| `P0-012` | Phase 0 Review Dossier R01–R04 | Antigravity | `reports/handoff/REVIEW_PACKET_R01.md`, `reports/audit/REVIEW_FIX_PLAN_R04.md` | `IN_PROGRESS` | `[TEAM_EXECUTED_LOG_INSPECTED]` Nhận quyết định R04: CHANGES_REQUIRED — P1_IMPLEMENTATION_ALLOWED. |
+| `P0-013` | Union Bot Brand & Compatibility Inventory | Antigravity | `docs/adr/ADR-001-union-bot-brand-and-compat.md`, `reports/audit/BRAND_MIGRATION_INVENTORY.md` | `VERIFIED_LIVE` | `[SOURCE_VERIFIED]` 3-tier string mapping, 0-breakage strategy locked. |
+| `P0-014` | ChatGPT Leader Handoff Channel Spike | Antigravity | `reports/capability-evidence/LEADER_HANDOFF_SPIKE.md` | `VERIFIED_LIVE` | `[TEAM_EXECUTED_LOG_INSPECTED]` Two-way handshake tested, R00-R04 cycles completed. |
+| `P0-015` | Proof-of-Fidelity Rich Response CAS | Antigravity | `docs/providers/FIDELITY_MATRIX.md`, `packages/artifact-store/` | `VERIFIED_LIVE` | `[SOURCE_VERIFIED]` CAS implemented, path traversal blocked, 8/8 tests + TS web roundtrip pass. |
+| `P0-016` | Provider Policy & Automation Matrix | Antigravity | `docs/providers/POLICY_AUTOMATION_MATRIX.md` | `VERIFIED_LIVE` | `[SOURCE_VERIFIED]` Legal/technical permissions mapped, billing blocked. |
+| `P0-017` | Baseline Data Flow & Trust Boundaries | Antigravity | `docs/security/DATA_FLOW_AND_TRUST_BOUNDARIES.md` | `VERIFIED_LIVE` | `[SOURCE_VERIFIED]` 4 trust zones & abuse cases defined. |
+| `P0-018` | Product Release Scope & Tiers Decision | Antigravity | `docs/product/RELEASE_SCOPE_DECISION.md` | `VERIFIED_LIVE` | `[SOURCE_VERIFIED]` T0-T3 tiers defined; target release = T1 + T2. |
 
 ---
 

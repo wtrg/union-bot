@@ -50,17 +50,22 @@ Mọi yêu cầu gửi đến các địa chỉ sau sẽ bị **Cost Guard ngắ
 
 ---
 
-## 3. Cơ chế Thực thi Kỹ thuật (Technical Enforcement)
-Mô-đun `@union-bot/cost-guard` được hiện thực hóa và kiểm chuẩn tự động qua **14/14 unit tests**:
+## 3. Cơ chế Thực thi Kỹ thuật (Technical Enforcement & Scope Boundaries)
+Mô-đun `@union-bot/cost-guard` được hiện thực hóa và kiểm chuẩn tự động qua **17/17 unit tests** (đóng góp vào tổng số 25/25 unit tests toàn hệ thống):
+
+> [!NOTE]
+> **Giới hạn Phạm vi Thực tế (Realistic Scope Boundary):**
+> Các interceptor mức runtime trong tiến trình Node.js và Electron là **lớp phòng vệ bổ trợ trong tiến trình (best-effort in-process runtime guards)** thuộc Mô hình 3 Lớp Phòng thủ được định nghĩa tại `docs/security/EGRESS_BOUNDARIES.md`. Chúng không thay thế cho tường lửa hệ điều hành (OS firewall) và không tự động can thiệp vào các tiến trình con ngoài tầm kiểm soát nếu không qua Admission Policy Gate (Lớp 1).
+
 1. **Tầng Electron Main:** Cung cấp `installElectronCostGuardInterceptor(session, costGuard)`. Hàm này gắn vào `session.webRequest.onBeforeRequest` trên mọi partition của Electron (`persist:mcb-web-*`). Bất kỳ yêu cầu nào hướng đến Paid API (như `api.openai.com`) hoặc trang thanh toán đều bị hủy ngay lập tức (`callback({ cancel: true })`).
-2. **Tầng Node.js Process:** Cung cấp `installNodeCostGuardInterceptor(costGuard)`. Hàm này thiết lập bộ chắn toàn diện tại runtime:
+2. **Tầng Node.js Process:** Cung cấp `installNodeCostGuardInterceptor(costGuard)`. Hàm này thiết lập bộ chắn toàn diện tại runtime với tính năng idempotent (chống double-wrap, ref-counted clean uninstall):
    - Ghi đè an toàn `globalThis.fetch`.
-   - Ghi đè `http.Agent.prototype.addRequest` và `https.Agent.prototype.addRequest` (chặn toàn bộ HTTP/1.1 requests qua mọi module CJS/ESM).
+   - Ghi đè `http.Agent.prototype.addRequest` và `https.Agent.prototype.addRequest` (chặn toàn bộ HTTP/1.1 requests qua mọi module CJS/ESM và custom agents).
    - Ghi đè `net.Socket.prototype.connect` và `http2.connect` (chặn toàn bộ HTTP/2 egress và raw TCP/TLS socket connections đến paid APIs và domain ngoài allowlist).
    - Khi bất kỳ mã nguồn nào gọi fetch/request/connect đến domain bị cấm, hệ thống chặn đứng tức thì và ném lỗi `CostGuardViolationError`.
 3. **Audit Log:** Mọi vi phạm đều kích hoạt sự kiện `COST_GUARD_VIOLATION` được ghi vào danh sách vi phạm (`getViolations()`) và thông báo qua callback kiểm toán.
 
 ---
 
-## 4. Kết luận P0-009 & R03 Resolution
-Chính sách chi phí 0đ được bảo vệ nghiêm ngặt ở cả 2 tầng: tầng phân tích URL tĩnh/động và tầng interceptor mạng runtime (Node.js fetch/Agent/Socket/HTTP2 + Electron session onBeforeRequest). 14/14 bài kiểm thử tự động xác nhận chặn 100% egress tính tiền và ném biệt lệ kiểm toán chính xác.
+## 4. Kết luận P0-009 & R04 Scope Refinement
+Chính sách chi phí 0đ được bảo vệ nghiêm ngặt qua mô hình đa tầng: Admission Policy Gate (Lớp 1), Per-Adapter Action Gate (Lớp 2), và In-process Network Interceptors (Lớp 3). Bộ kiểm thử tự động 17/17 tests xác nhận chặn đúng phạm vi trong tiến trình và ném biệt lệ kiểm toán chính xác mà không tuyên bố quá phạm vi thực tế.
