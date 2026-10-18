@@ -38,7 +38,7 @@ const FidelityLevelSchema = z.enum([
   'L3_INTERACTIVE_CANVAS',
 ]);
 
-const SenderKindSchema = z.enum(['agent', 'human', 'system']);
+const SenderKindSchema = z.enum(['agent', 'human', 'user', 'system']);
 const RecipientKindSchema = z.enum(['agent', 'room', 'system', 'broadcast']);
 
 const TextMessagePartSchema = z.object({
@@ -277,14 +277,17 @@ class Orchestrator {
     const envelope = parseResult.data;
 
     // 2. Anti-spoofing check for renderer submissions
-    if (context.fromRenderer) {
-      // Renderer clients can only submit as 'human' or 'agent' (with non-privileged role), NEVER 'system' or 'ORCHESTRATOR'
-      if (envelope.sender.kind === 'system' || envelope.sender.role === 'ORCHESTRATOR') {
+    if (context && context.fromRenderer) {
+      // Renderer clients can ONLY submit as 'user' or 'human' with role 'USER'.
+      // Renderer is NEVER allowed to claim to be an agent (LEADER, QA_SECURITY, IMPLEMENTER), system, or ORCHESTRATOR.
+      const isUserKind = envelope.sender.kind === 'user' || envelope.sender.kind === 'human';
+      const isUserRole = !envelope.sender.role || envelope.sender.role === 'USER';
+      if (!isUserKind || !isUserRole) {
         return {
           success: false,
           envelopeId: envelope.id,
           roomId: envelope.roomId,
-          error: 'Security violation: renderer cannot forge system or orchestrator identity',
+          error: 'Security violation: renderer can only dispatch as sender.kind === "user" and role === "USER"',
         };
       }
     }
@@ -292,13 +295,18 @@ class Orchestrator {
     // 3. If envelope contains action parts, evaluate admission through AdmissionPolicyGate
     for (const part of envelope.parts) {
       if (part.kind === 'action') {
+        // Extract declared cost: do NOT default to 0; undefined triggers DENY_UNKNOWN_COST fail-closed
+        const declaredCost = (part.input && typeof part.input.estimatedCost === 'number')
+          ? part.input.estimatedCost
+          : (typeof part.estimatedCost === 'number' ? part.estimatedCost : undefined);
+
         const actionDecision = this.admissionGate.evaluate({
           actionId: part.callId,
           actionType: 'INVOKE_TOOL',
-          provider: envelope.sender.provider || 'system',
-          estimatedCost: 0, // In-process tools are 0-cost
+          provider: envelope.sender.provider || (envelope.sender.kind === 'user' ? 'local' : 'system'),
+          estimatedCost: declaredCost,
           requestedBy: envelope.sender.id,
-          metadata: { tool: part.tool },
+          metadata: { tool: part.tool, input: part.input },
         });
 
         if (!actionDecision.allowed) {
@@ -341,6 +349,8 @@ module.exports = {
   RoleSchema,
   ProviderKindSchema,
   FidelityLevelSchema,
+  SenderKindSchema,
+  RecipientKindSchema,
   MessagePartSchema,
   EnvelopeSchema,
   AdmissionActionSchema,

@@ -107,52 +107,6 @@ BENIGN_FIXTURE_ALLOWLIST = [
             "03d104c669e3c7b6be7f989db8b12c8b910d3be8c1e2a73c9369d3cc0ba803b5"
         ],
         "reason": "Audit report table documenting legacy sample header"
-    },
-    # Legacy codebase historical test fixtures (audited in UB-SEC-001)
-    {
-        "path_suffix": "docs/SECURITY_POLICY.md",
-        "rule_id": "SEC-006",
-        "reason": "Legacy policy documentation sample"
-    },
-    {
-        "path_suffix": "docs/audit/MCB-AUDIT-004/extension_check.py",
-        "rule_id": "SEC-001",
-        "reason": "Legacy audit synthetic extension token"
-    },
-    {
-        "path_suffix": "docs/audit/MCB-AUDIT-005/extension_check.py",
-        "rule_id": "SEC-001",
-        "reason": "Legacy audit synthetic extension token"
-    },
-    {
-        "path_suffix": "tests/conftest.py",
-        "rule_id": "SEC-001",
-        "reason": "Legacy pytest synthetic test token"
-    },
-    {
-        "path_suffix": "tests/test_envelope.py",
-        "rule_id": "SEC-002",
-        "reason": "Legacy test redaction vector"
-    },
-    {
-        "path_suffix": "tests/test_envelope.py",
-        "rule_id": "SEC-003",
-        "reason": "Legacy test redaction vector"
-    },
-    {
-        "path_suffix": "tests/test_resilience_and_backup.py",
-        "rule_id": "SEC-001",
-        "reason": "Legacy test backup vector"
-    },
-    {
-        "path_suffix": "tests/test_resilience_and_backup.py",
-        "rule_id": "SEC-002",
-        "reason": "Legacy test backup vector"
-    },
-    {
-        "path_suffix": "tests/test_resilience_and_backup.py",
-        "rule_id": "SEC-003",
-        "reason": "Legacy test backup vector"
     }
 ]
 
@@ -169,25 +123,26 @@ def is_allowlisted_fixture(file_path: str, rule_id: str, raw_val: str = "") -> b
     Checks if a finding exactly matches an entry in the strict BENIGN_FIXTURE_ALLOWLIST.
     Strictly forbids auto-safe triage based on folder names or arbitrary substring matches.
     UB-P1-SEC-S1: Verifies content SHA256 of the matched secret string against expected digest.
-    If raw_val is provided, its SHA256 must match the expected digest, preventing any secret
-    substitution or real credential injection inside allowlisted test fixtures.
+    EVERY allowlisted entry MUST declare non-empty expected_match_sha256 digests.
+    When raw_val is provided, its SHA256 MUST match the pinned expected digest.
     """
     normalized_path = file_path.replace('\\', '/')
-    match_hash = hashlib.sha256(raw_val.encode('utf-8')).hexdigest() if raw_val else None
 
     for item in BENIGN_FIXTURE_ALLOWLIST:
         if normalized_path.endswith(item["path_suffix"]) and item["rule_id"] == rule_id:
             expected_hashes = item.get("expected_match_sha256")
-            if expected_hashes is not None:
-                if match_hash is None:
-                    # Path lookup mode
-                    return True
-                if isinstance(expected_hashes, str):
-                    return match_hash == expected_hashes
-                elif isinstance(expected_hashes, (list, set, tuple)):
-                    return match_hash in expected_hashes
+            if not expected_hashes:
+                # Disallow any fixture without pinned expected digests
                 return False
-            return True
+            if not raw_val:
+                # Metadata check mode: verify entry is registered with valid expected digests
+                return True
+            match_hash = hashlib.sha256(raw_val.encode('utf-8')).hexdigest()
+            if isinstance(expected_hashes, str):
+                return match_hash == expected_hashes
+            elif isinstance(expected_hashes, (list, set, tuple)):
+                return match_hash in expected_hashes
+            return False
     return False
 
 def should_scan_file(fpath: Path) -> bool:

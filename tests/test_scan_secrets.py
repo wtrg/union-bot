@@ -124,5 +124,16 @@ class TestSecretScanner(unittest.TestCase):
             )
         )
 
+    def test_allowlist_without_expected_digest_fails(self):
+        """
+        UB-P1-R02-S1: Any allowlist entry missing expected_match_sha256 must return False fail-closed.
+        """
+        from scan_secrets import BENIGN_FIXTURE_ALLOWLIST
+        # All active allowlist entries MUST declare non-empty expected_match_sha256
+        for item in BENIGN_FIXTURE_ALLOWLIST:
+            self.assertIn("expected_match_sha256", item)
+            self.assertIsInstance(item["expected_match_sha256"], list)
+            self.assertGreater(len(item["expected_match_sha256"]), 0)
+
 if __name__ == "__main__":
     unittest.main()

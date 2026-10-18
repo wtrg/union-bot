@@ -130,11 +130,66 @@ function createWindow() {
         });
         console.log('[SmokeTest] Orchestrator zero-cost admission passed:', admissionCheck.allowed);
 
+        // 5. Verify Real GUI -> IPC envelope dispatch through window.unionBotAPI
+        const ipcSendResult = await mainWindow.webContents.executeJavaScript(`
+          (async () => {
+            if (!window.unionBotAPI) return { error: 'window.unionBotAPI not found' };
+            return await window.unionBotAPI.dispatchEnvelope({
+              id: 'smoke_gui_env_001',
+              traceId: 'smoke_trc_001',
+              timestamp: Date.now(),
+              sender: { kind: 'user', id: 'smoke_user', name: 'Smoke Tester', role: 'USER' },
+              recipient: { kind: 'room', id: 'orchestration' },
+              roomId: 'orchestration',
+              fidelity: 'L0_RAW_TEXT',
+              parts: [{ kind: 'text', text: 'Live GUI smoke test envelope' }]
+            });
+          })()
+        `);
+        const ipcSendSuccess = Boolean(ipcSendResult && ipcSendResult.success === true && ipcSendResult.envelopeId === 'smoke_gui_env_001');
+        console.log('[SmokeTest] Real GUI IPC send message verified:', ipcSendSuccess);
+
+        // 6. Verify Real GUI -> IPC room history retrieval through window.unionBotAPI
+        const historyResult = await mainWindow.webContents.executeJavaScript(`
+          (async () => {
+            if (!window.unionBotAPI) return [];
+            return await window.unionBotAPI.getRoomHistory('orchestration');
+          })()
+        `);
+        const historyVerified = Array.isArray(historyResult) && historyResult.some((e) => e.id === 'smoke_gui_env_001');
+        console.log('[SmokeTest] Real GUI IPC get room history verified:', historyVerified);
+
+        // 7. Verify Renderer Anti-Spoofing enforcement via real IPC call
+        const spoofAttemptResult = await mainWindow.webContents.executeJavaScript(`
+          (async () => {
+            if (!window.unionBotAPI) return { error: 'window.unionBotAPI not found' };
+            return await window.unionBotAPI.dispatchEnvelope({
+              id: 'smoke_spoof_001',
+              traceId: 'smoke_trc_spoof',
+              timestamp: Date.now(),
+              sender: { kind: 'agent', id: 'fake_lead', name: 'Fake Leader', role: 'LEADER' },
+              recipient: { kind: 'room', id: 'orchestration' },
+              roomId: 'orchestration',
+              fidelity: 'L0_RAW_TEXT',
+              parts: [{ kind: 'text', text: 'Malicious renderer impersonating leader' }]
+            });
+          })()
+        `);
+        const spoofBlocked = Boolean(
+          spoofAttemptResult &&
+          spoofAttemptResult.success === false &&
+          String(spoofAttemptResult.error).includes('Security violation')
+        );
+        console.log('[SmokeTest] Renderer anti-spoofing enforcement verified:', spoofBlocked);
+
         const allChecksPassed = Boolean(
           testBlocked &&
           !schemeCheck.valid &&
           gotTheLock &&
-          admissionCheck.allowed
+          admissionCheck.allowed &&
+          ipcSendSuccess &&
+          historyVerified &&
+          spoofBlocked
         );
 
         const smokeReport = {
@@ -146,6 +201,8 @@ function createWindow() {
           safeExternalBlockedDangerous: !schemeCheck.valid,
           singleInstanceLocked: gotTheLock,
           orchestratorAdmissionPassed: admissionCheck.allowed,
+          ipcRoundtripVerified: ipcSendSuccess && historyVerified,
+          rendererSpoofingBlocked: spoofBlocked,
           result: allChecksPassed ? 'PASS' : 'FAIL',
         };
 

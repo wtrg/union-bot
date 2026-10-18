@@ -42,8 +42,10 @@ const INITIAL_DEMO_ENVELOPES: Record<string, EnvelopeView[]> = {
   orchestration: [
     {
       id: 'demo_env_001',
+      traceId: 'trc_demo_001',
       timestamp: Date.now() - 3600000,
-      sender: { id: 'chatgpt_web', name: 'ChatGPT Web', role: 'LEADER', provider: 'chatgpt' },
+      sender: { kind: 'agent', id: 'chatgpt_web', name: 'ChatGPT Web', role: 'LEADER', provider: 'chatgpt' },
+      recipient: { kind: 'room', id: 'orchestration' },
       roomId: 'orchestration',
       fidelity: 'L1_FORMATTED_MARKDOWN',
       isDemo: true,
@@ -56,8 +58,10 @@ const INITIAL_DEMO_ENVELOPES: Record<string, EnvelopeView[]> = {
     },
     {
       id: 'demo_env_002',
+      traceId: 'trc_demo_002',
       timestamp: Date.now() - 1800000,
-      sender: { id: 'antigravity', name: 'Antigravity', role: 'IMPLEMENTER', provider: 'antigravity' },
+      sender: { kind: 'agent', id: 'antigravity', name: 'Antigravity', role: 'IMPLEMENTER', provider: 'antigravity' },
+      recipient: { kind: 'room', id: 'orchestration' },
       roomId: 'orchestration',
       fidelity: 'L1_FORMATTED_MARKDOWN',
       isDemo: true,
@@ -76,8 +80,10 @@ const INITIAL_DEMO_ENVELOPES: Record<string, EnvelopeView[]> = {
     },
     {
       id: 'demo_env_003',
+      traceId: 'trc_demo_003',
       timestamp: Date.now() - 900000,
-      sender: { id: 'codex', name: 'Codex', role: 'QA_SECURITY', provider: 'codex' },
+      sender: { kind: 'agent', id: 'codex', name: 'Codex', role: 'QA_SECURITY', provider: 'codex' },
+      recipient: { kind: 'room', id: 'orchestration' },
       roomId: 'orchestration',
       fidelity: 'L2_STANDALONE_ARTIFACT',
       isDemo: true,
@@ -99,8 +105,10 @@ const INITIAL_DEMO_ENVELOPES: Record<string, EnvelopeView[]> = {
   'agent-dev': [
     {
       id: 'demo_dev_001',
+      traceId: 'trc_demo_dev_001',
       timestamp: Date.now() - 600000,
-      sender: { id: 'antigravity', name: 'Antigravity', role: 'IMPLEMENTER', provider: 'antigravity' },
+      sender: { kind: 'agent', id: 'antigravity', name: 'Antigravity', role: 'IMPLEMENTER', provider: 'antigravity' },
+      recipient: { kind: 'room', id: 'agent-dev' },
       roomId: 'agent-dev',
       fidelity: 'L1_FORMATTED_MARKDOWN',
       isDemo: true,
@@ -115,8 +123,10 @@ const INITIAL_DEMO_ENVELOPES: Record<string, EnvelopeView[]> = {
   'qa-audit': [
     {
       id: 'demo_qa_001',
+      traceId: 'trc_demo_qa_001',
       timestamp: Date.now() - 300000,
-      sender: { id: 'codex', name: 'Codex', role: 'QA_SECURITY', provider: 'codex' },
+      sender: { kind: 'agent', id: 'codex', name: 'Codex', role: 'QA_SECURITY', provider: 'codex' },
+      recipient: { kind: 'room', id: 'qa-audit' },
       roomId: 'qa-audit',
       fidelity: 'L1_FORMATTED_MARKDOWN',
       isDemo: true,
@@ -136,8 +146,10 @@ const INITIAL_DEMO_ENVELOPES: Record<string, EnvelopeView[]> = {
   'review-briefing': [
     {
       id: 'demo_rev_001',
+      traceId: 'trc_demo_rev_001',
       timestamp: Date.now() - 120000,
-      sender: { id: 'chatgpt_web', name: 'ChatGPT Web', role: 'LEADER', provider: 'chatgpt' },
+      sender: { kind: 'agent', id: 'chatgpt_web', name: 'ChatGPT Web', role: 'LEADER', provider: 'chatgpt' },
+      recipient: { kind: 'room', id: 'review-briefing' },
       roomId: 'review-briefing',
       fidelity: 'L0_RAW_TEXT',
       isDemo: true,
@@ -186,13 +198,20 @@ export const App: React.FC = () => {
   const currentEnvelopes = roomEnvelopes[activeRoomId] || [];
 
   const handleSendMessage = async (text: string) => {
+    const traceId = `trc_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const newEnvelope: EnvelopeView = {
       id: `usr_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      traceId,
       timestamp: Date.now(),
       sender: {
+        kind: 'user',
         id: 'user_local',
         name: 'User (You)',
         role: 'USER',
+      },
+      recipient: {
+        kind: 'room',
+        id: activeRoomId,
       },
       roomId: activeRoomId,
       fidelity: 'L0_RAW_TEXT',
@@ -202,9 +221,15 @@ export const App: React.FC = () => {
 
     if (window.unionBotAPI) {
       try {
-        await window.unionBotAPI.dispatchEnvelope(newEnvelope);
+        const dispatchResult = await window.unionBotAPI.dispatchEnvelope(newEnvelope);
+        if (!dispatchResult || !dispatchResult.success) {
+          console.error('[App] Failed to dispatch envelope via IPC:', dispatchResult?.error);
+          alert(`Lỗi gửi tin nhắn qua Orchestrator: ${dispatchResult?.error || 'Unknown IPC Error'}`);
+          return;
+        }
       } catch (err) {
-        console.error('Failed to dispatch envelope via IPC:', err);
+        console.error('[App] IPC exception during dispatch:', err);
+        return;
       }
     }
 

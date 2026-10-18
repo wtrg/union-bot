@@ -23,16 +23,16 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 
-# 3. Run TypeScript & Node Unit Tests (56 tests)
-Write-Host "`n--- 3. Running TypeScript & Node Unit Tests (56 tests) ---" -ForegroundColor Yellow
+# 3. Run TypeScript & Node Unit Tests (59 tests)
+Write-Host "`n--- 3. Running TypeScript & Node Unit Tests (59 tests) ---" -ForegroundColor Yellow
 pnpm test:ts
 if ($LASTEXITCODE -ne 0) {
     Write-Host "`n[FATAL] TypeScript unit tests failed!" -ForegroundColor Red
     exit 1
 }
 
-# 4. Run Python Unit Tests (15 tests)
-Write-Host "`n--- 4. Running Python Unit Tests (15 tests) ---" -ForegroundColor Yellow
+# 4. Run Python Unit Tests (16 tests)
+Write-Host "`n--- 4. Running Python Unit Tests (16 tests) ---" -ForegroundColor Yellow
 pnpm test:py
 if ($LASTEXITCODE -ne 0) {
     Write-Host "`n[FATAL] Python unit tests failed!" -ForegroundColor Red
@@ -56,6 +56,6 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Write-Host "`n========================================================" -ForegroundColor Green
-Write-Host "ALL VERIFICATION CHECKS PASSED (Typecheck + 71 Unit Tests + GUI Smoke + Strict Secret Scan)" -ForegroundColor Green
+Write-Host "ALL VERIFICATION CHECKS PASSED (Typecheck + 75 Unit Tests + GUI Smoke + Strict Secret Scan)" -ForegroundColor Green
 Write-Host "========================================================`n" -ForegroundColor Green
 exit 0

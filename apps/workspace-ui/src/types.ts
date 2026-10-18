@@ -31,12 +31,18 @@ export interface MessagePart {
 
 export interface EnvelopeView {
   id: string;
+  traceId: string;
   timestamp: number;
   sender: {
+    kind: 'user' | 'agent' | 'system';
     id: string;
     name: string;
     role?: string;
     provider?: string;
+  };
+  recipient: {
+    kind: 'room' | 'agent' | 'all';
+    id: string;
   };
   roomId: string;
   parts: MessagePart[];

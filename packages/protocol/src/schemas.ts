@@ -34,7 +34,7 @@ export const FidelityLevelSchema = z.enum([
 ]);
 export type FidelityLevel = z.infer<typeof FidelityLevelSchema>;
 
-export const SenderKindSchema = z.enum(['agent', 'human', 'system']);
+export const SenderKindSchema = z.enum(['agent', 'human', 'user', 'system']);
 export type SenderKind = z.infer<typeof SenderKindSchema>;
 
 export const RecipientKindSchema = z.enum(['agent', 'room', 'system', 'broadcast']);
