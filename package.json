@@ -1,0 +1,18 @@
+{
+  "name": "union-bot-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Union Bot — Multi-AI Collaboration Desktop Workspace",
+  "type": "module",
+  "scripts": {
+    "test": "node --experimental-strip-types --test packages/cost-guard/tests/cost-guard.test.ts packages/artifact-store/tests/artifact-store.test.ts"
+  },
+  "keywords": [
+    "union-bot",
+    "electron",
+    "multi-agent",
+    "collaboration"
+  ],
+  "author": "Union Bot Team",
+  "license": "MIT"
+}

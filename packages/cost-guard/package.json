@@ -1,0 +1,20 @@
+{
+  "name": "@union-bot/cost-guard",
+  "version": "1.0.0",
+  "description": "Zero-Cost (0đ) network enforcement and paid API egress blocking for Union Bot",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "node --test dist/tests/cost-guard.test.js"
+  },
+  "keywords": [
+    "union-bot",
+    "cost-guard",
+    "zero-cost",
+    "security"
+  ],
+  "author": "Union Bot Team",
+  "license": "MIT"
+}

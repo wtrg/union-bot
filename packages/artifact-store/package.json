@@ -1,0 +1,20 @@
+{
+  "name": "@union-bot/artifact-store",
+  "version": "1.0.0",
+  "description": "Content-Addressable Storage (CAS) with SHA256 verification and provenance for Union Bot",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "node --test dist/tests/artifact-store.test.js"
+  },
+  "keywords": [
+    "union-bot",
+    "cas",
+    "sha256",
+    "artifact-store"
+  ],
+  "author": "Union Bot Team",
+  "license": "MIT"
+}
