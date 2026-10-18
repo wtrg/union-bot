@@ -171,6 +171,19 @@ export const App: React.FC = () => {
   );
   const [isDemoMode, setIsDemoMode] = useState<boolean>(!isDesktop);
 
+  const appendOrUpdateEnvelope = (roomId: string, env: EnvelopeView) => {
+    setRoomEnvelopes((prev) => {
+      const roomList = prev[roomId] || [];
+      const existingIdx = roomList.findIndex((item) => item.id === env.id);
+      if (existingIdx >= 0) {
+        const updated = [...roomList];
+        updated[existingIdx] = { ...updated[existingIdx], ...env };
+        return { ...prev, [roomId]: updated };
+      }
+      return { ...prev, [roomId]: [...roomList, env] };
+    });
+  };
+
   useEffect(() => {
     if (window.unionBotAPI) {
       setIsDemoMode(false);
@@ -183,10 +196,7 @@ export const App: React.FC = () => {
 
       const unsubscribe = window.unionBotAPI.onEnvelopeReceived((env: EnvelopeView) => {
         if (env && env.roomId) {
-          setRoomEnvelopes((prev) => ({
-            ...prev,
-            [env.roomId]: [...(prev[env.roomId] || []), env],
-          }));
+          appendOrUpdateEnvelope(env.roomId, env);
         }
       });
 
@@ -197,7 +207,7 @@ export const App: React.FC = () => {
   const activeRoom = INITIAL_ROOMS.find((r) => r.id === activeRoomId);
   const currentEnvelopes = roomEnvelopes[activeRoomId] || [];
 
-  const handleSendMessage = async (text: string) => {
+  const handleSendMessage = async (text: string): Promise<boolean> => {
     const traceId = `trc_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const newEnvelope: EnvelopeView = {
       id: `usr_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
@@ -225,18 +235,18 @@ export const App: React.FC = () => {
         if (!dispatchResult || !dispatchResult.success) {
           console.error('[App] Failed to dispatch envelope via IPC:', dispatchResult?.error);
           alert(`Lỗi gửi tin nhắn qua Orchestrator: ${dispatchResult?.error || 'Unknown IPC Error'}`);
-          return;
+          return false;
         }
+        appendOrUpdateEnvelope(activeRoomId, newEnvelope);
+        return true;
       } catch (err) {
         console.error('[App] IPC exception during dispatch:', err);
-        return;
+        return false;
       }
+    } else {
+      appendOrUpdateEnvelope(activeRoomId, newEnvelope);
+      return true;
     }
-
-    setRoomEnvelopes((prev) => ({
-      ...prev,
-      [activeRoomId]: [...(prev[activeRoomId] || []), newEnvelope],
-    }));
   };
 
   return (

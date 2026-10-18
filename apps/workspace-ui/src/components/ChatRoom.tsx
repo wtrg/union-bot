@@ -4,17 +4,30 @@ import { EnvelopeView } from '../types.ts';
 interface ChatRoomProps {
   roomName?: string;
   envelopes: EnvelopeView[];
-  onSendMessage: (text: string) => void;
+  onSendMessage: (text: string) => Promise<boolean> | boolean | void;
 }
 
 export const ChatRoom: React.FC<ChatRoomProps> = ({ roomName, envelopes, onSendMessage }) => {
   const [inputText, setInputText] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!inputText.trim()) return;
-    onSendMessage(inputText.trim());
-    setInputText('');
+    const textToSend = inputText.trim();
+    if (!textToSend || isSubmitting) return;
+
+    setIsSubmitting(true);
+    try {
+      const result = await onSendMessage(textToSend);
+      // Only clear input if send succeeded (C01: preserve draft on failure)
+      if (result !== false) {
+        setInputText('');
+      }
+    } catch {
+      // In case of unexpected error, preserve draft
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (

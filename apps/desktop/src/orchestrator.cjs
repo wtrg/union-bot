@@ -5,11 +5,15 @@
  * - Strict Envelope schema validation before room dispatch
  * - Sender identity verification & anti-spoofing (renderer cannot forge system/orchestrator roles)
  * - Zero-Cost (0đ) AdmissionPolicyGate (DENY_UNKNOWN_COST on missing/undefined cost)
- * - Room history isolation and broadcasting
+ * - Room history isolation, idempotency deduplication, and outbox/audit tracking
+ * - 100% schema and behavior parity with canonical TypeScript packages (@union-bot/protocol)
  */
 
+const crypto = require('node:crypto');
 const { z } = require('zod');
 const { CostGuard } = require('./cost-guard.cjs');
+
+const SCHEMA_VERSION = '1.0.0';
 
 // 1. Protocol Schemas
 const RoleSchema = z.enum([
@@ -38,8 +42,49 @@ const FidelityLevelSchema = z.enum([
   'L3_INTERACTIVE_CANVAS',
 ]);
 
+const ContentFidelitySchema = z.enum([
+  'RAW_BINARY',
+  'SEMANTIC_INTERACTIVE',
+  'STRUCTURED_DOC',
+  'VECTOR_EMBEDDING',
+  'LOSSLESS_EXPORT',
+  'LOSSLESS_PREVIEW',
+]);
+
 const SenderKindSchema = z.enum(['agent', 'human', 'user', 'system']);
 const RecipientKindSchema = z.enum(['agent', 'room', 'system', 'broadcast']);
+
+const AuthStatusSchema = z.enum([
+  'AUTHENTICATED',
+  'ANONYMOUS',
+  'EXPIRED',
+  'CHALLENGE_REQUIRED',
+]);
+
+const EvidenceProvenanceSchema = z.enum([
+  'LIVE_WEB',
+  'LOCAL_RPC',
+  'CLI_HEADLESS',
+  'USER_MANUAL',
+  'RECONSTRUCTED',
+]);
+
+const TransferStatusSchema = z.enum([
+  'VERIFIED_TRANSFERRED',
+  'PARTIAL_DEGRADED',
+  'NATIVE_ONLY',
+]);
+
+const ProviderIdentitySchema = z.object({
+  provider: ProviderKindSchema,
+  profileId: z.string().min(1),
+  profileName: z.string().optional(),
+  sessionId: z.string().optional(),
+  partitionKey: z.string().optional(),
+  capabilityVersion: z.string().default('1.0.0'),
+  authStatus: AuthStatusSchema.default('AUTHENTICATED'),
+  evidenceProvenance: EvidenceProvenanceSchema.default('LOCAL_RPC'),
+});
 
 const TextMessagePartSchema = z.object({
   kind: z.literal('text'),
@@ -60,6 +105,7 @@ const ArtifactMessagePartSchema = z.object({
   filename: z.string(),
   sizeBytes: z.number().int().nonnegative(),
   previewUrl: z.string().optional(),
+  contentFidelity: ContentFidelitySchema.default('RAW_BINARY'),
 });
 
 const ActionMessagePartSchema = z.object({
@@ -93,6 +139,7 @@ const SenderSchema = z.object({
   name: z.string().min(1),
   role: RoleSchema.optional(),
   provider: ProviderKindSchema.optional(),
+  providerIdentity: ProviderIdentitySchema.optional(),
 });
 
 const RecipientSchema = z.object({
@@ -100,17 +147,97 @@ const RecipientSchema = z.object({
   id: z.string().min(1),
 });
 
+const EnvelopeStatusSchema = z.enum([
+  'pending',
+  'acknowledged',
+  'dispatched',
+  'delivered',
+  'failed',
+]);
+
 const EnvelopeSchema = z.object({
   id: z.string().min(1),
   traceId: z.string().min(1),
+  correlationId: z.string().optional(),
+  parentEnvelopeId: z.string().optional(),
   timestamp: z.number().int().nonnegative(),
   sender: SenderSchema,
   recipient: RecipientSchema,
   roomId: z.string().min(1),
   parts: z.array(MessagePartSchema).min(1),
   fidelity: FidelityLevelSchema,
+  status: EnvelopeStatusSchema.default('acknowledged'),
   metadata: z.record(z.unknown()).optional(),
 });
+
+const ApprovalStatusSchema = z.enum([
+  'PENDING',
+  'APPROVED',
+  'REJECTED',
+  'CONSUMED',
+  'EXPIRED',
+]);
+
+const ApprovalTokenSchema = z.object({
+  tokenId: z.string().min(1),
+  actionType: z.string().min(1),
+  payloadDigest: z.string().regex(/^[0-9a-fA-F]{64}$/, 'Payload digest must be valid SHA256 hex'),
+  origin: z.string().min(1),
+  status: ApprovalStatusSchema.default('PENDING'),
+  createdAt: z.string(),
+  expiresAt: z.string(),
+  consumedAt: z.string().optional(),
+});
+
+const RecoveryStateSchema = z.enum([
+  'PENDING',
+  'RUNNING',
+  'WAITING_APPROVAL',
+  'COMPLETED',
+  'FAILED',
+  'UNKNOWN_NEEDS_RECONCILIATION',
+]);
+
+const TaskNodeSchema = z.object({
+  taskId: z.string().min(1),
+  nodeId: z.string().min(1),
+  name: z.string().min(1),
+  dependencies: z.array(z.string()).default([]),
+  assignedRole: RoleSchema.default('IMPLEMENTER'),
+  assignedProvider: ProviderKindSchema.optional(),
+  revision: z.number().int().nonnegative().default(1),
+  attempt: z.number().int().nonnegative().default(1),
+  correlationId: z.string().min(1),
+  recoveryState: RecoveryStateSchema.default('PENDING'),
+  inputDigest: z.string().optional(),
+  outputDigest: z.string().optional(),
+  metadata: z.record(z.unknown()).optional(),
+});
+
+const CostClassificationSchema = z.enum([
+  'FREE_DOM',
+  'ZERO_COST_LOCAL',
+  'PAID_API_BLOCKED',
+  'UNKNOWN_COST_DENIED',
+  'APPROVED_BY_USER',
+]);
+
+const UnionBotErrorCodeSchema = z.enum([
+  'ERR_COST_LIMIT_EXCEEDED',
+  'ERR_UNKNOWN_COST_DENIED',
+  'ERR_UNTRUSTED_SENDER',
+  'ERR_UNTRUSTED_ACTION',
+  'ERR_APPROVAL_EXPIRED',
+  'ERR_APPROVAL_ALREADY_CONSUMED',
+  'ERR_APPROVAL_HASH_MISMATCH',
+  'ERR_PATH_TRAVERSAL_DENIED',
+  'ERR_SCHEMA_VALIDATION_FAILED',
+  'ERR_STORAGE_CORRUPTION',
+  'ERR_IDEMPOTENCY_CONFLICT',
+  'ERR_RECONCILIATION_REQUIRED',
+  'ERR_NETWORK_DISCONNECTED',
+  'ERR_TIMEOUT',
+]);
 
 const AdmissionActionTypeSchema = z.enum([
   'SEND_PROMPT',
@@ -121,7 +248,6 @@ const AdmissionActionTypeSchema = z.enum([
   'UNKNOWN_ACTION',
 ]);
 
-// UB-P1-SEC-S1: estimatedCost is REQUIRED without default to enforce fail-closed zero-cost policy
 const AdmissionActionSchema = z.object({
   actionId: z.string().min(1),
   actionType: AdmissionActionTypeSchema,
@@ -129,6 +255,9 @@ const AdmissionActionSchema = z.object({
   estimatedCost: z.number().nonnegative(),
   requestedBy: z.string().min(1),
   targetUrl: z.string().optional(),
+  payloadDigest: z.string().optional(),
+  approvalTokenId: z.string().optional(),
+  isUntrustedRendererInput: z.boolean().optional(),
   metadata: z.record(z.unknown()).optional(),
 });
 
@@ -137,7 +266,9 @@ const AdmissionDecisionSchema = z.object({
   allowed: z.boolean(),
   reason: z.string(),
   policyCode: z.string(),
-  timestamp: z.number().int().nonnegative(),
+  policyVersion: z.string().default('1.0.0'),
+  costClassification: CostClassificationSchema.default('ZERO_COST_LOCAL'),
+  timestamp: z.number().int(),
 });
 
 // 2. AdmissionPolicyGate
@@ -159,6 +290,8 @@ class AdmissionPolicyGate {
         allowed: false,
         reason: 'Zero-Cost violation: estimatedCost is undefined, missing, or unknown. Unspecified cost is strictly DENIED.',
         policyCode: 'DENY_UNKNOWN_COST',
+        policyVersion: SCHEMA_VERSION,
+        costClassification: 'UNKNOWN_COST_DENIED',
         timestamp,
       };
       this.auditLog.push(decision);
@@ -173,6 +306,8 @@ class AdmissionPolicyGate {
         allowed: false,
         reason: `Schema validation failed: ${parseResult.error.issues.map((i) => i.message).join('; ')}`,
         policyCode: 'DENY_SCHEMA_INVALID',
+        policyVersion: SCHEMA_VERSION,
+        costClassification: 'UNKNOWN_COST_DENIED',
         timestamp,
       };
       this.auditLog.push(decision);
@@ -188,6 +323,8 @@ class AdmissionPolicyGate {
         allowed: false,
         reason: `Rejected unknown action type: ${action.actionType}`,
         policyCode: 'DENY_UNKNOWN_ACTION',
+        policyVersion: SCHEMA_VERSION,
+        costClassification: 'ZERO_COST_LOCAL',
         timestamp,
       };
       this.auditLog.push(decision);
@@ -201,6 +338,8 @@ class AdmissionPolicyGate {
         allowed: false,
         reason: `Zero-Cost (0đ) violation: Action requires estimated cost ${action.estimatedCost}, but paid APIs are strictly disabled`,
         policyCode: 'DENY_PAID_API_DISABLED',
+        policyVersion: SCHEMA_VERSION,
+        costClassification: 'PAID_API_BLOCKED',
         timestamp,
       };
       this.auditLog.push(decision);
@@ -215,6 +354,8 @@ class AdmissionPolicyGate {
           allowed: false,
           reason: `Egress boundary violation: Target URL '${action.targetUrl}' is forbidden under Zero-Cost policy`,
           policyCode: 'DENY_EGRESS_BLOCKED',
+          policyVersion: SCHEMA_VERSION,
+          costClassification: 'PAID_API_BLOCKED',
           timestamp,
         };
         this.auditLog.push(decision);
@@ -228,6 +369,8 @@ class AdmissionPolicyGate {
       allowed: true,
       reason: `Action '${action.actionType}' on provider '${action.provider}' permitted under Zero-Cost policy`,
       policyCode: 'ALLOW_ZERO_COST',
+      policyVersion: SCHEMA_VERSION,
+      costClassification: action.actionType === 'READ_WEB_DOM' ? 'FREE_DOM' : 'ZERO_COST_LOCAL',
       timestamp,
     };
     this.auditLog.push(decision);
@@ -244,11 +387,14 @@ class Orchestrator {
   constructor(options = {}) {
     this.costGuard = options.costGuard ?? new CostGuard();
     this.artifactStore = options.artifactStore;
+    this.storage = options.storage;
     this.admissionGate = new AdmissionPolicyGate({
       costGuard: this.costGuard,
       paidApiEnabled: options.paidApiEnabled ?? false,
     });
     this.roomHistories = new Map();
+    this.seenEnvelopeIds = new Set();
+    this.approvalTokens = new Map();
 
     // Initialize default rooms
     const initialRooms = ['orchestration', 'agent-dev', 'qa-audit', 'review-briefing'];
@@ -276,10 +422,8 @@ class Orchestrator {
 
     const envelope = parseResult.data;
 
-    // 2. Anti-spoofing check for renderer submissions
+    // 2. Anti-spoofing check for renderer submissions (C03)
     if (context && context.fromRenderer) {
-      // Renderer clients can ONLY submit as 'user' or 'human' with role 'USER'.
-      // Renderer is NEVER allowed to claim to be an agent (LEADER, QA_SECURITY, IMPLEMENTER), system, or ORCHESTRATOR.
       const isUserKind = envelope.sender.kind === 'user' || envelope.sender.kind === 'human';
       const isUserRole = !envelope.sender.role || envelope.sender.role === 'USER';
       if (!isUserKind || !isUserRole) {
@@ -292,18 +436,50 @@ class Orchestrator {
       }
     }
 
-    // 3. If envelope contains action parts, evaluate admission through AdmissionPolicyGate
+    // 3. Idempotency deduplication check (P2-005, C01, C05)
+    if (this.seenEnvelopeIds.has(envelope.id)) {
+      return {
+        success: true,
+        envelopeId: envelope.id,
+        roomId: envelope.roomId,
+        deduplicated: true,
+      };
+    }
+
+    // 4. Action parts evaluation & approval token gate (C02, P2-006)
     for (const part of envelope.parts) {
       if (part.kind === 'action') {
-        // Extract declared cost: do NOT default to 0; undefined triggers DENY_UNKNOWN_COST fail-closed
         const declaredCost = (part.input && typeof part.input.estimatedCost === 'number')
           ? part.input.estimatedCost
           : (typeof part.estimatedCost === 'number' ? part.estimatedCost : undefined);
 
+        // Enforce approval token verification if submitted from untrusted renderer
+        if (context && context.fromRenderer) {
+          const approvalTokenId = part.input?.approvalTokenId;
+          if (!approvalTokenId) {
+            return {
+              success: false,
+              envelopeId: envelope.id,
+              roomId: envelope.roomId,
+              error: 'Security violation: Untrusted action payload from renderer requires valid approval token (C02)',
+            };
+          }
+
+          const token = this.approvalTokens.get(approvalTokenId);
+          if (!token || token.status !== 'APPROVED') {
+            return {
+              success: false,
+              envelopeId: envelope.id,
+              roomId: envelope.roomId,
+              error: 'Security violation: Action approval token is invalid, expired, or not approved (C02)',
+            };
+          }
+        }
+
         const actionDecision = this.admissionGate.evaluate({
           actionId: part.callId,
           actionType: 'INVOKE_TOOL',
-          provider: envelope.sender.provider || (envelope.sender.kind === 'user' ? 'local' : 'system'),
+          provider: envelope.sender.provider || (envelope.sender.kind === 'user' ? 'chatgpt' : 'system'),
           estimatedCost: declaredCost,
           requestedBy: envelope.sender.id,
           metadata: { tool: part.tool, input: part.input },
@@ -320,7 +496,8 @@ class Orchestrator {
       }
     }
 
-    // 4. Store in room history
+    // 5. Store in room history and mark idempotency seen
+    this.seenEnvelopeIds.add(envelope.id);
     const room = this.roomHistories.get(envelope.roomId) || [];
     room.push(envelope);
     this.roomHistories.set(envelope.roomId, room);
@@ -346,13 +523,27 @@ class Orchestrator {
 }
 
 module.exports = {
+  SCHEMA_VERSION,
   RoleSchema,
   ProviderKindSchema,
   FidelityLevelSchema,
+  ContentFidelitySchema,
   SenderKindSchema,
   RecipientKindSchema,
+  AuthStatusSchema,
+  EvidenceProvenanceSchema,
+  TransferStatusSchema,
+  ProviderIdentitySchema,
   MessagePartSchema,
+  EnvelopeStatusSchema,
   EnvelopeSchema,
+  ApprovalStatusSchema,
+  ApprovalTokenSchema,
+  RecoveryStateSchema,
+  TaskNodeSchema,
+  CostClassificationSchema,
+  UnionBotErrorCodeSchema,
+  AdmissionActionTypeSchema,
   AdmissionActionSchema,
   AdmissionDecisionSchema,
   AdmissionPolicyGate,

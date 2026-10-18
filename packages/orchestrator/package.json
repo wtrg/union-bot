@@ -12,7 +12,8 @@
   "dependencies": {
     "@union-bot/protocol": "workspace:*",
     "@union-bot/cost-guard": "workspace:*",
-    "@union-bot/artifact-store": "workspace:*"
+    "@union-bot/artifact-store": "workspace:*",
+    "@union-bot/storage": "workspace:*"
   },
   "keywords": [
     "union-bot",

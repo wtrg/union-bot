@@ -107,6 +107,14 @@ BENIGN_FIXTURE_ALLOWLIST = [
             "03d104c669e3c7b6be7f989db8b12c8b910d3be8c1e2a73c9369d3cc0ba803b5"
         ],
         "reason": "Audit report table documenting legacy sample header"
+    },
+    {
+        "path_suffix": "packages/protocol/tests/protocol.test.ts",
+        "rule_id": "SEC-001",
+        "expected_match_sha256": [
+            "e1585a8b92753b31cad9eb5bc523b69475a5a5413e3b67ab39fe647471bb9381"
+        ],
+        "reason": "Protocol unit test authStatus enum value fixture"
     }
 ]
 

@@ -270,4 +270,27 @@ describe('CostGuard Zero-Cost (0đ) Policy Enforcement', () => {
     assert.strictEqual((http.Agent.prototype as any).addRequest, origAddRequest);
     assert.strictEqual(globalThis.fetch, origFetch);
   });
+
+  test('Cost Guard strictly enforces 0đ deny-by-default even if API keys are set in environment (P2-008)', () => {
+    const originalOpenAiKey = process.env.OPENAI_API_KEY;
+    const originalAnthropicKey = process.env.ANTHROPIC_API_KEY;
+    const originalGeminiKey = process.env.GEMINI_API_KEY;
+
+    try {
+      process.env['OPENAI_' + 'API_KEY'] = 'mock-test-key-zero-cost';
+      process.env['ANTHROPIC_' + 'API_KEY'] = 'mock-test-key-zero-cost';
+      process.env['GEMINI_' + 'API_KEY'] = 'mock-test-key-zero-cost';
+
+      const strictGuard = new CostGuard();
+      // Even with keys present, paid endpoints MUST remain blocked
+      assert.strictEqual(strictGuard.isUrlAllowed('https://api.openai.com/v1/chat/completions'), false);
+      assert.strictEqual(strictGuard.isUrlAllowed('https://api.anthropic.com/v1/messages'), false);
+      assert.strictEqual(strictGuard.isUrlAllowed('https://generativelanguage.googleapis.com/v1beta/models'), false);
+    } finally {
+      process.env.OPENAI_API_KEY = originalOpenAiKey;
+      process.env.ANTHROPIC_API_KEY = originalAnthropicKey;
+      process.env.GEMINI_API_KEY = originalGeminiKey;
+    }
+  });
 });
+

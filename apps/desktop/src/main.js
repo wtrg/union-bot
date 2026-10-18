@@ -27,6 +27,8 @@ if (!gotTheLock) {
 }
 
 let mainWindow = null;
+const uiDistPath = path.resolve(__dirname, '../../workspace-ui/dist/index.html');
+const allowedUiFileUrl = pathToFileURL(uiDistPath).href;
 const costGuard = new CostGuard();
 const orchestrator = new Orchestrator({ costGuard });
 
@@ -234,8 +236,17 @@ function createWindow() {
   }
 }
 
-// IPC Handlers: Strictly routed through Orchestrator with renderer anti-spoofing validation
-ipcMain.handle('union-bot:dispatch-envelope', async (_event, envelope) => {
+// IPC Handlers: Strictly routed through Orchestrator with renderer anti-spoofing and origin validation (C03)
+ipcMain.handle('union-bot:dispatch-envelope', async (event, envelope) => {
+  // Origin verification on senderFrame (C03)
+  if (event && event.senderFrame && event.senderFrame.url) {
+    const senderUrl = event.senderFrame.url;
+    const isAllowed = senderUrl === allowedUiFileUrl || senderUrl.startsWith('data:text/html');
+    if (!isAllowed) {
+      return { success: false, error: 'Security violation: Unauthorized IPC sender origin (C03)' };
+    }
+  }
+
   const result = await orchestrator.dispatchEnvelope(envelope, { fromRenderer: true });
   if (!result.success) {
     return { success: false, error: result.error };
@@ -248,7 +259,15 @@ ipcMain.handle('union-bot:dispatch-envelope', async (_event, envelope) => {
   return { success: true, envelopeId: result.envelopeId, roomId: result.roomId };
 });
 
-ipcMain.handle('union-bot:get-room-history', async (_event, roomId) => {
+ipcMain.handle('union-bot:get-room-history', async (event, roomId) => {
+  // Origin verification on senderFrame (C03)
+  if (event && event.senderFrame && event.senderFrame.url) {
+    const senderUrl = event.senderFrame.url;
+    const isAllowed = senderUrl === allowedUiFileUrl || senderUrl.startsWith('data:text/html');
+    if (!isAllowed) {
+      return [];
+    }
+  }
   if (typeof roomId !== 'string') return [];
   return orchestrator.getRoomHistory(roomId);
 });

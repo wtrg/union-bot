@@ -15,10 +15,10 @@
 
 | Pha | Tên Pha | Trạng thái | Số Ticket | Đã Hoàn thành | Tỉ lệ |
 |---|---|---|---|---|---|
-| **P0** | Khảo sát & Khóa Nền móng (Audit & Baseline) | `GATE_ACCEPTED_WITH_CARRYOVER` | 18 | 16 (Gate Closed) | 100% (Gate Closed) |
-| **P1** | Monorepo Foundation & Toolchain | `ACTIVE (WAVES 1, 2 & R02 FIXES COMPLETE / SUBMISSION READY)` | 18 | 18 | 100% |
-| **P2** | Protocol, Storage & Event Sourcing | `TODO` | 10 | 0 | 0% |
-| **P3** | Desktop Shell & Workspace Window | `TODO` | 15 | 0 | 0% |
+| **P0** | Khảo sát & Khóa Nền móng (Audit & Baseline) | `GATE_ACCEPTED_WITH_CARRYOVER` | 18 | 18 (Gate Closed) | 100% |
+| **P1** | Monorepo Foundation & Toolchain | `GATE_ACCEPTED_WITH_CARRYOVER` | 18 | 18 (Gate Closed) | 100% |
+| **P2** | Protocol, Storage & Event Sourcing | `SUBMISSION_READY (ALL 12 TICKETS & C01-C06 COMPLETE)` | 12 | 12 | 100% |
+| **P3** | Desktop Shell & Workspace Window | `TODO (NEXT UP ON GO_P3)` | 15 | 0 | 0% |
 | **P4** | Multi-Provider Browser Integration | `TODO` | 14 | 0 | 0% |
 | **P5** | Artifact Management & Rich Response CAS | `TODO` | 15 | 0 | 0% |
 | **P6** | Codex Local Agent Integration | `TODO` | 10 | 0 | 0% |
@@ -27,7 +27,7 @@
 | **P9** | Web Provider Capabilities & Extensions | `TODO` | 7 | 0 | 0% |
 | **P10**| Hardening, Adversarial Tests & Acceptance | `TODO` | 14 | 0 | 0% |
 | **P11**| Packaging, Windows Installer & Final Dossier | `TODO` | 12 | 0 | 0% |
-| **Tổng** | **Toàn bộ Lộ trình Union Bot** | **P1 Submission Ready** | **159** | **33** | **20.8%** |
+| **Tổng** | **Toàn bộ Lộ trình Union Bot** | **P2 Submission Ready (95 Tests PASS)** | **161** | **48** | **29.8%** |
 
 ---
 
@@ -104,9 +104,31 @@
 - `P1-010-R03`: Review Fix Plan & Dossier R03 (`reports/audit/REVIEW_FIX_PLAN_P1_R02.md`, `reports/handoff/REVIEW_PACKET_P1_R03.md`) requesting `GO_P2` — **SUBMISSION_READY**
 - `UB-P1-QA-009` [METRICS]: Đồng bộ kiểm thử toàn diện: **75/75 Automated Tests PASS** (59 TS + 16 Python) + 1 Electron GUI Smoke Test (Real IPC Roundtrip Verified) + Strict Secret Scan (737 files, 0 leaks, 0 errors) — **VERIFIED_LIVE**
 
-### Phase P2: Protocol, Storage & Event Sourcing (10 tickets)
-- `P2-001` .. `P2-008`: Zod schemas, SQLite WAL setup, event journal, idempotency
-- `P2-009` .. `P2-010`: Persistence tests & Review Packet R03
+### Phase P2: Protocol, Storage & Event Sourcing (12 tickets + Carryovers C01-C06) (`SUBMISSION_READY`)
+
+> **Quyết định Chuyển pha:** `GO_P2` được Technical Leader phê duyệt tại Round P1 R03 (gắn với commit `d4ea25a818c2796816298128a302eaea68a6c945`, văn bản chỉ thị `docs/UNION_BOT_GO_P2_LEADER_REVIEW_P1_R03.md`).
+
+#### P2 Core Tickets (ALL 12 COMPLETE)
+- `P2-001` [PROTOCOL]: Schema versioning (`SCHEMA_VERSION = '1.0.0'`) & backward compatibility contracts in `@union-bot/protocol` — **VERIFIED_LIVE**
+- `P2-002` [PROTOCOL]: Protocol extensions: 6-level `ContentFidelitySchema`, `ProviderIdentitySchema` (6 AI multi-account), `TaskNodeSchema` (DAG graphs), `ApprovalTokenSchema`, and `UnionBotErrorCodeSchema` — **VERIFIED_LIVE**
+- `P2-003` [STORAGE]: SQLite WAL StorageEngine with Node 24 native `DatabaseSync` (`node:sqlite`), zero external build toolchains, and rollback migration manager — **VERIFIED_LIVE**
+- `P2-004` [EVENT_STORE]: Append-only EventStore journal with room projection rebuild and snapshotting — **VERIFIED_LIVE**
+- `P2-005` [IDEMPOTENCY]: IdempotencyManager with atomic acquire/complete/fail state machine and outbox delivery queue — **VERIFIED_LIVE**
+- `P2-006` [APPROVAL_GATE]: ApprovalGateManager for action payloads with canonical sorted SHA-256 digests, expiry check, and single-use fail-closed consumption — **VERIFIED_LIVE**
+- `P2-007` [WORKSPACE_SECURITY]: Strict path traversal & symlink escape validator (`fs.realpathSync`, defending against null bytes, `..`, and junction bypasses) — **VERIFIED_LIVE**
+- `P2-008` [COST_GUARD]: 0đ Zero-Cost deny-by-default environment hardening (blocking paid endpoints even if API keys are set in `process.env`) — **VERIFIED_LIVE**
+- `P2-009` [BACKUP]: Atomic SQLite backup manager with SHA-256 manifest integrity and corruption rollback — **VERIFIED_LIVE**
+- `P2-010` [DIAGNOSTICS]: Redacted diagnostic bundle exporter ensuring zero credentials or PII in audit dumps — **VERIFIED_LIVE**
+- `P2-011` [ERROR_TAXONOMY]: Structured `UnionBotError` with retryability classification and standardized error codes — **VERIFIED_LIVE**
+- `P2-012` [PAGINATION_BENCHMARK]: High-throughput seek-based cursor pagination handling 10,000 events in <90ms — **VERIFIED_LIVE**
+
+#### Carryover Resolutions (C01 - C06 ALL RESOLVED)
+- `C01`: UI message rendering deduplication in `App.tsx` via `appendOrUpdateEnvelope` and draft composer retention on dispatch failure in `ChatRoom.tsx` — **VERIFIED_LIVE**
+- `C02`: Action approval token requirement for untrusted renderer action payloads in Orchestrator — **VERIFIED_LIVE**
+- `C03`: Main process IPC origin hardening (`event.senderFrame.url` validation against `allowedUiFileUrl`) and renderer anti-spoofing in `apps/desktop/src/main.js` — **VERIFIED_LIVE**
+- `C04`: Desktop CommonJS bundle (`apps/desktop/src/orchestrator.cjs`) synchronized with canonical TypeScript packages, passing 100% parity suite (`tests/cross_compatibility.test.ts`) — **VERIFIED_LIVE**
+- `C05`: Storage engine event sourcing, room projection rebuild, and outbox delivery queue — **VERIFIED_LIVE**
+- `C06`: Strict `pnpm lint` script added to `package.json` (`tsc --noEmit && python scan_secrets.py --strict`) and test suite counter alignment (95 automated tests + GUI smoke) — **VERIFIED_LIVE**
 
 ### Phase P3: Desktop Shell & Workspace Window (15 tickets)
 - `P3-001` .. `P3-014`: Electron window lifecycle, tray, multi-room UI, keyboard shortcuts

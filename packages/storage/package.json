@@ -1,0 +1,23 @@
+{
+  "name": "@union-bot/storage",
+  "version": "1.0.0",
+  "description": "Persistent SQLite WAL Storage, Event Store, Idempotency, and Approval Gate for Union Bot",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "test": "node --experimental-strip-types --test tests/storage.test.ts"
+  },
+  "dependencies": {
+    "@union-bot/protocol": "workspace:*"
+  },
+  "keywords": [
+    "union-bot",
+    "sqlite",
+    "wal",
+    "event-sourcing",
+    "storage"
+  ],
+  "author": "Union Bot Team",
+  "license": "MIT"
+}

@@ -41,6 +41,8 @@ export class AdmissionPolicyGate {
         allowed: false,
         reason: 'Zero-Cost violation: estimatedCost is undefined, missing, or unknown. Unspecified cost is strictly DENIED.',
         policyCode: 'DENY_UNKNOWN_COST',
+        policyVersion: '1.0.0',
+        costClassification: 'UNKNOWN_COST_DENIED',
         timestamp,
       };
       this.auditLog.push(decision);
@@ -55,6 +57,8 @@ export class AdmissionPolicyGate {
         allowed: false,
         reason: `Schema validation failed: ${parseResult.error.issues.map((i) => i.message).join('; ')}`,
         policyCode: 'DENY_SCHEMA_INVALID',
+        policyVersion: '1.0.0',
+        costClassification: 'UNKNOWN_COST_DENIED',
         timestamp,
       };
       this.auditLog.push(decision);
@@ -70,6 +74,8 @@ export class AdmissionPolicyGate {
         allowed: false,
         reason: `Rejected unknown action type: ${action.actionType}`,
         policyCode: 'DENY_UNKNOWN_ACTION',
+        policyVersion: '1.0.0',
+        costClassification: 'ZERO_COST_LOCAL',
         timestamp,
       };
       this.auditLog.push(decision);
@@ -83,6 +89,8 @@ export class AdmissionPolicyGate {
         allowed: false,
         reason: `Zero-Cost (0đ) violation: Action requires estimated cost ${action.estimatedCost}, but paid APIs are strictly disabled`,
         policyCode: 'DENY_PAID_API_DISABLED',
+        policyVersion: '1.0.0',
+        costClassification: 'PAID_API_BLOCKED',
         timestamp,
       };
       this.auditLog.push(decision);
@@ -97,6 +105,8 @@ export class AdmissionPolicyGate {
           allowed: false,
           reason: `Egress boundary violation: Target URL '${action.targetUrl}' is forbidden under Zero-Cost policy`,
           policyCode: 'DENY_EGRESS_BLOCKED',
+          policyVersion: '1.0.0',
+          costClassification: 'PAID_API_BLOCKED',
           timestamp,
         };
         this.auditLog.push(decision);
@@ -110,6 +120,8 @@ export class AdmissionPolicyGate {
       allowed: true,
       reason: `Action '${action.actionType}' on provider '${action.provider}' permitted under Zero-Cost policy`,
       policyCode: 'ALLOW_ZERO_COST',
+      policyVersion: '1.0.0',
+      costClassification: action.actionType === 'READ_WEB_DOM' ? 'FREE_DOM' : 'ZERO_COST_LOCAL',
       timestamp,
     };
     this.auditLog.push(decision);
