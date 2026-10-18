@@ -17,6 +17,7 @@ export interface MessagePart {
   kind: 'text' | 'code' | 'artifact' | 'action' | 'status';
   text?: string;
   code?: string;
+  content?: string;
   language?: string;
   filename?: string;
   sha256?: string;

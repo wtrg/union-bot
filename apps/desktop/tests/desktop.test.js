@@ -48,4 +48,105 @@ describe('Union Bot Desktop Security & Shell Verification', () => {
     assert.match(html, /<title>Union Bot<\/title>/);
     assert.match(html, /Content-Security-Policy/);
   });
+
+  it('orchestrator validates envelopes and blocks malformed payloads', async () => {
+    const { Orchestrator } = require('../src/orchestrator.cjs');
+    const orch = new Orchestrator();
+
+    // 1. Malformed payload
+    const badResult = await orch.dispatchEnvelope({ id: 'bad_001', roomId: 'orchestration' });
+    assert.equal(badResult.success, false);
+    assert.match(badResult.error, /Envelope schema validation error/);
+
+    // 2. Valid envelope
+    const goodResult = await orch.dispatchEnvelope({
+      id: 'env_valid_001',
+      traceId: 'trace_001',
+      timestamp: Date.now(),
+      sender: { kind: 'human', id: 'user_lead', name: 'User' },
+      recipient: { kind: 'room', id: 'orchestration' },
+      roomId: 'orchestration',
+      fidelity: 'L1_FORMATTED_MARKDOWN',
+      parts: [{ kind: 'text', text: 'Hello team!' }],
+    });
+    assert.equal(goodResult.success, true);
+    assert.equal(goodResult.roomId, 'orchestration');
+
+    const history = orch.getRoomHistory('orchestration');
+    assert.equal(history.length, 1);
+    assert.equal(history[0].id, 'env_valid_001');
+  });
+
+  it('orchestrator enforces renderer anti-spoofing against forged system/orchestrator roles', async () => {
+    const { Orchestrator } = require('../src/orchestrator.cjs');
+    const orch = new Orchestrator();
+
+    // Attacker in renderer tries to forge system sender
+    const spoofResult1 = await orch.dispatchEnvelope({
+      id: 'spoof_001',
+      traceId: 'tr_spoof_1',
+      timestamp: Date.now(),
+      sender: { kind: 'system', id: 'sys_core', name: 'System Internal' },
+      recipient: { kind: 'room', id: 'orchestration' },
+      roomId: 'orchestration',
+      fidelity: 'L0_RAW_TEXT',
+      parts: [{ kind: 'text', text: 'Spoofed system broadcast' }],
+    }, { fromRenderer: true });
+
+    assert.equal(spoofResult1.success, false);
+    assert.match(spoofResult1.error, /renderer cannot forge system or orchestrator identity/);
+
+    // Attacker in renderer tries to forge ORCHESTRATOR role
+    const spoofResult2 = await orch.dispatchEnvelope({
+      id: 'spoof_002',
+      traceId: 'tr_spoof_2',
+      timestamp: Date.now(),
+      sender: { kind: 'agent', id: 'fake_orch', name: 'Fake Orchestrator', role: 'ORCHESTRATOR' },
+      recipient: { kind: 'room', id: 'orchestration' },
+      roomId: 'orchestration',
+      fidelity: 'L0_RAW_TEXT',
+      parts: [{ kind: 'text', text: 'Spoofed orchestrator command' }],
+    }, { fromRenderer: true });
+
+    assert.equal(spoofResult2.success, false);
+    assert.match(spoofResult2.error, /renderer cannot forge system or orchestrator identity/);
+  });
+
+  it('orchestrator AdmissionPolicyGate strictly enforces DENY_UNKNOWN_COST', () => {
+    const { Orchestrator } = require('../src/orchestrator.cjs');
+    const orch = new Orchestrator();
+
+    // 1. Missing cost => DENY_UNKNOWN_COST
+    const decisionMissing = orch.evaluateAction({
+      actionId: 'act_unknown_001',
+      actionType: 'READ_WEB_DOM',
+      provider: 'chatgpt',
+      requestedBy: 'user_session',
+    });
+    assert.equal(decisionMissing.allowed, false);
+    assert.equal(decisionMissing.policyCode, 'DENY_UNKNOWN_COST');
+
+    // 2. Explicit zero-cost => ALLOW_ZERO_COST
+    const decisionZero = orch.evaluateAction({
+      actionId: 'act_zero_001',
+      actionType: 'READ_WEB_DOM',
+      provider: 'chatgpt',
+      estimatedCost: 0,
+      requestedBy: 'user_session',
+      targetUrl: 'https://chatgpt.com',
+    });
+    assert.equal(decisionZero.allowed, true);
+    assert.equal(decisionZero.policyCode, 'ALLOW_ZERO_COST');
+
+    // 3. Paid cost with paid_api_enabled: false => DENY_PAID_API_DISABLED
+    const decisionPaid = orch.evaluateAction({
+      actionId: 'act_paid_001',
+      actionType: 'SEND_PROMPT',
+      provider: 'chatgpt',
+      estimatedCost: 0.10,
+      requestedBy: 'user_session',
+    });
+    assert.equal(decisionPaid.allowed, false);
+    assert.equal(decisionPaid.policyCode, 'DENY_PAID_API_DISABLED');
+  });
 });

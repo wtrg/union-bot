@@ -9,10 +9,11 @@
     "test": "node --test tests/desktop.test.js"
   },
   "dependencies": {
-    "@union-bot/protocol": "workspace:*",
-    "@union-bot/cost-guard": "workspace:*",
     "@union-bot/artifact-store": "workspace:*",
-    "@union-bot/orchestrator": "workspace:*"
+    "@union-bot/cost-guard": "workspace:*",
+    "@union-bot/orchestrator": "workspace:*",
+    "@union-bot/protocol": "workspace:*",
+    "zod": "^3.23.8"
   },
   "devDependencies": {
     "electron": "^33.4.11"

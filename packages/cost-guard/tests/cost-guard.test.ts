@@ -94,7 +94,7 @@ describe('CostGuard Zero-Cost (0đ) Policy Enforcement', () => {
   });
 
   test('Runtime Electron Interceptor cancels forbidden egress requests', () => {
-    let beforeRequestCallback: ((details: any, cb: (res: { cancel: boolean }) => void) => void) | null = null;
+    let beforeRequestCallback: any = null;
     const mockSession = {
       webRequest: {
         onBeforeRequest: (cb: any) => {
@@ -108,21 +108,21 @@ describe('CostGuard Zero-Cost (0đ) Policy Enforcement', () => {
 
     // 1. Test paid API cancellation
     let cancelled = false;
-    beforeRequestCallback!({ url: 'https://api.openai.com/v1/models' }, (res) => {
+    beforeRequestCallback({ url: 'https://api.openai.com/v1/models' }, (res: any) => {
       cancelled = res.cancel;
     });
     assert.strictEqual(cancelled, true, 'Electron interceptor must cancel paid OpenAI API request');
 
     // 2. Test billing endpoint cancellation
     cancelled = false;
-    beforeRequestCallback!({ url: 'https://chatgpt.com/billing/payment' }, (res) => {
+    beforeRequestCallback({ url: 'https://chatgpt.com/billing/payment' }, (res: any) => {
       cancelled = res.cancel;
     });
     assert.strictEqual(cancelled, true, 'Electron interceptor must cancel billing endpoint request');
 
     // 3. Test allowed domain pass-through
     cancelled = true;
-    beforeRequestCallback!({ url: 'https://chatgpt.com/c/work-session' }, (res) => {
+    beforeRequestCallback({ url: 'https://chatgpt.com/c/work-session' }, (res: any) => {
       cancelled = res.cancel;
     });
     assert.strictEqual(cancelled, false, 'Electron interceptor must allow approved chatgpt.com web UI');
@@ -248,7 +248,7 @@ describe('CostGuard Zero-Cost (0đ) Policy Enforcement', () => {
   });
 
   test('Runtime Node.js Interceptor supports idempotent multi-install and clean uninstall', () => {
-    const origAddRequest = http.Agent.prototype.addRequest;
+    const origAddRequest = (http.Agent.prototype as any).addRequest;
     const origFetch = globalThis.fetch;
 
     const uninstall1 = installNodeCostGuardInterceptor(guard);
@@ -267,7 +267,7 @@ describe('CostGuard Zero-Cost (0đ) Policy Enforcement', () => {
 
     // Second uninstall: refCount goes to 0, cleanly restores originals
     uninstall2();
-    assert.strictEqual(http.Agent.prototype.addRequest, origAddRequest);
+    assert.strictEqual((http.Agent.prototype as any).addRequest, origAddRequest);
     assert.strictEqual(globalThis.fetch, origFetch);
   });
 });

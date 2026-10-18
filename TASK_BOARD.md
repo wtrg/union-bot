@@ -16,7 +16,7 @@
 | Pha | Tên Pha | Trạng thái | Số Ticket | Đã Hoàn thành | Tỉ lệ |
 |---|---|---|---|---|---|
 | **P0** | Khảo sát & Khóa Nền móng (Audit & Baseline) | `GATE_ACCEPTED_WITH_CARRYOVER` | 18 | 16 (Gate Closed) | 100% (Gate Closed) |
-| **P1** | Monorepo Foundation & Toolchain | `ACTIVE (WAVES 1 & 2 DONE / WAVE 3 SUBMISSION)` | 18 | 17 | 94.4% |
+| **P1** | Monorepo Foundation & Toolchain | `ACTIVE (WAVES 1, 2 & R02 FIXES COMPLETE / SUBMISSION READY)` | 18 | 18 | 100% |
 | **P2** | Protocol, Storage & Event Sourcing | `TODO` | 10 | 0 | 0% |
 | **P3** | Desktop Shell & Workspace Window | `TODO` | 15 | 0 | 0% |
 | **P4** | Multi-Provider Browser Integration | `TODO` | 14 | 0 | 0% |
@@ -90,9 +90,19 @@
 - `UB-P1-ARCH-006` [S2/MEDIUM]: Cost Guard admission gate wiring & deny-before-dispatch — **VERIFIED_LIVE**
 - `UB-P1-QA-007` [S3/LOW]: Evidence taxonomy & test counters alignment (51 TS + 14 Python = 65 tests + GUI Smoke) — **VERIFIED_LIVE**
 
-#### Wave 3: Reproducible Build & Verification Gate (GO_P2) (IN PROGRESS)
+#### Wave 3: Reproducible Build, Audit Fix Loop & Verification Gate (GO_P2) (ROUND R02 SUBMISSION READY)
 - `P1-008`: Build orchestration & scripts (`pnpm build`, `pnpm test`, `pnpm smoke:gui`, `pnpm verify`) — **VERIFIED_LIVE**
-- `P1-010`: Phase 1 Review Dossier & `reports/handoff/REVIEW_PACKET_P1_R01.md` requesting `GO_P2` — **SUBMISSION_READY**
+- `P1-010-R01`: Phase 1 Review Dossier & `reports/handoff/REVIEW_PACKET_P1_R01.md` — **REVIEWED_BY_LEADER** (Result: `CHANGES_REQUIRED — P2_PREPARATION_ALLOWED`)
+- `P1-R01-01` [S1]: Loại bỏ default cost, bắt buộc `estimatedCost` và fail-closed `DENY_UNKNOWN_COST` — **VERIFIED_LIVE**
+- `P1-R01-02` [S1]: Kết nối Electron IPC vào `Orchestrator` (`apps/desktop/src/orchestrator.cjs`) — **VERIFIED_LIVE**
+- `P1-R01-03` [S1]: Chống renderer spoofing (`kind: system`, `role: ORCHESTRATOR`) & thẩm định Zod envelope — **VERIFIED_LIVE**
+- `P1-R01-04` [S1]: Ghim SHA256 content match digest cho fixture allowlist trong `scan_secrets.py` — **VERIFIED_LIVE**
+- `P1-R01-05` [S2]: Fail-closed Electron GUI smoke assertions (exit code 1 khi assert hỏng) — **VERIFIED_LIVE**
+- `P1-R01-06` [S2]: Khóa chặt phạm vi điều hướng nội bộ `file://` của Electron chỉ tới UI index.html — **VERIFIED_LIVE**
+- `P1-R01-07` [S2]: Tích hợp kiểm tra kiểu tĩnh TypeScript (`tsc --noEmit`) vào CI Bước 1 — **VERIFIED_LIVE**
+- `P1-R01-08` [S3]: Minh bạch mock demo trong giao diện chat (`[OFFLINE MOCK PREVIEW]`) & empty states — **VERIFIED_LIVE**
+- `P1-010-R02`: Review Fix Plan & Dossier R02 (`reports/audit/REVIEW_FIX_PLAN_P1_R01.md`, `reports/handoff/REVIEW_PACKET_P1_R02.md`) requesting `GO_P2` — **SUBMISSION_READY**
+- `UB-P1-QA-008` [METRICS]: Đồng bộ kiểm thử toàn diện: **71/71 Automated Tests PASS** (56 TS + 15 Python) + 1 Electron GUI Smoke Test + Strict Secret Scan (734 files, 0 leaks, 0 errors) — **VERIFIED_LIVE**
 
 ### Phase P2: Protocol, Storage & Event Sourcing (10 tickets)
 - `P2-001` .. `P2-008`: Zod schemas, SQLite WAL setup, event journal, idempotency

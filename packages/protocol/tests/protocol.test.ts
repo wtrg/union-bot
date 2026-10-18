@@ -126,4 +126,15 @@ describe('Union Bot Protocol Schemas', () => {
     });
     assert.equal(decision.allowed, true);
   });
+
+  it('rejects AdmissionAction when estimatedCost is omitted, missing, or undefined', () => {
+    assert.throws(() => {
+      AdmissionActionSchema.parse({
+        actionId: 'act_missing_cost_001',
+        actionType: 'READ_WEB_DOM',
+        provider: 'chatgpt',
+        requestedBy: 'orchestrator_core',
+      });
+    });
+  });
 });

@@ -138,7 +138,7 @@ export const AdmissionActionSchema = z.object({
   actionId: z.string().min(1),
   actionType: AdmissionActionTypeSchema,
   provider: ProviderKindSchema,
-  estimatedCost: z.number().nonnegative().default(0),
+  estimatedCost: z.number().nonnegative(),
   requestedBy: z.string().min(1),
   targetUrl: z.string().optional(),
   metadata: z.record(z.unknown()).optional(),

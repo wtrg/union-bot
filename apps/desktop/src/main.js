@@ -13,8 +13,10 @@
 const { app, BrowserWindow, ipcMain, session, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const { pathToFileURL } = require('url');
 const { safeOpenExternal, validateExternalUrl } = require('./safe-external.js');
 const { CostGuard, installElectronCostGuardInterceptor } = require('./cost-guard.cjs');
+const { Orchestrator } = require('./orchestrator.cjs');
 
 // 1. Single Instance Lock
 const gotTheLock = app.requestSingleInstanceLock();
@@ -26,13 +28,7 @@ if (!gotTheLock) {
 
 let mainWindow = null;
 const costGuard = new CostGuard();
-const roomHistories = new Map();
-
-// In-memory initial rooms
-roomHistories.set('orchestration', []);
-roomHistories.set('agent-dev', []);
-roomHistories.set('qa-audit', []);
-roomHistories.set('review-briefing', []);
+const orchestrator = new Orchestrator({ costGuard });
 
 function createWindow() {
   const isSmoke = process.argv.includes('--smoke');
@@ -72,16 +68,19 @@ function createWindow() {
     return { action: 'deny' };
   });
 
-  // 5. Prevent in-window navigation away from local file origin
+  // 5. Compute allowed Workspace UI path
+  const uiDistPath = path.resolve(__dirname, '../../workspace-ui/dist/index.html');
+  const allowedUiFileUrl = pathToFileURL(uiDistPath).href;
+
+  // 6. Strictly restrict in-window navigation: ONLY the bundled UI index.html is allowed
   mainWindow.webContents.on('will-navigate', (event, url) => {
-    if (!url.startsWith('file://')) {
+    if (url !== allowedUiFileUrl) {
       event.preventDefault();
       safeOpenExternal(url, shell);
     }
   });
 
-  // 6. Load Workspace UI
-  const uiDistPath = path.resolve(__dirname, '../../workspace-ui/dist/index.html');
+  // 7. Load Workspace UI
   if (fs.existsSync(uiDistPath)) {
     mainWindow.loadFile(uiDistPath);
   } else {
@@ -120,6 +119,24 @@ function createWindow() {
         // Verify single instance lock active
         console.log('[SmokeTest] Single instance lock held:', gotTheLock);
 
+        // Verify Orchestrator Zero-Cost AdmissionPolicyGate integration
+        const admissionCheck = orchestrator.evaluateAction({
+          actionId: 'smoke_test_001',
+          actionType: 'SEND_PROMPT',
+          provider: 'chatgpt',
+          estimatedCost: 0,
+          requestedBy: 'smoke_runner',
+          targetUrl: 'https://chatgpt.com',
+        });
+        console.log('[SmokeTest] Orchestrator zero-cost admission passed:', admissionCheck.allowed);
+
+        const allChecksPassed = Boolean(
+          testBlocked &&
+          !schemeCheck.valid &&
+          gotTheLock &&
+          admissionCheck.allowed
+        );
+
         const smokeReport = {
           suite: 'UNION_BOT_ELECTRON_GUI_SMOKE',
           timestamp: new Date().toISOString(),
@@ -128,7 +145,8 @@ function createWindow() {
           costGuardBlockedPaid: testBlocked,
           safeExternalBlockedDangerous: !schemeCheck.valid,
           singleInstanceLocked: gotTheLock,
-          result: 'PASS',
+          orchestratorAdmissionPassed: admissionCheck.allowed,
+          result: allChecksPassed ? 'PASS' : 'FAIL',
         };
 
         const reportDir = path.resolve(__dirname, '../../../reports/capability-evidence');
@@ -140,7 +158,14 @@ function createWindow() {
         );
 
         console.log('[SmokeTest] Evidence written to ELECTRON_GUI_SMOKE_EVIDENCE.json');
-        console.log('[SmokeTest] Smoke test PASS! Exiting cleanly.');
+
+        if (!allChecksPassed) {
+          console.error('[SmokeTest] One or more assertions FAILED! Exiting with code 1.');
+          app.quit();
+          process.exit(1);
+        }
+
+        console.log('[SmokeTest] Smoke test PASS! All assertions verified cleanly.');
         app.quit();
         process.exit(0);
       } catch (err) {
@@ -152,24 +177,23 @@ function createWindow() {
   }
 }
 
-// IPC Handlers
+// IPC Handlers: Strictly routed through Orchestrator with renderer anti-spoofing validation
 ipcMain.handle('union-bot:dispatch-envelope', async (_event, envelope) => {
-  if (!envelope || !envelope.roomId) {
-    return { success: false, error: 'Invalid envelope payload' };
+  const result = await orchestrator.dispatchEnvelope(envelope, { fromRenderer: true });
+  if (!result.success) {
+    return { success: false, error: result.error };
   }
-  const history = roomHistories.get(envelope.roomId) || [];
-  history.push(envelope);
-  roomHistories.set(envelope.roomId, history);
 
-  // Broadcast to other subscribers if any
+  // Broadcast to subscribers
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('union-bot:envelope-received', envelope);
   }
-  return { success: true, envelopeId: envelope.id };
+  return { success: true, envelopeId: result.envelopeId, roomId: result.roomId };
 });
 
 ipcMain.handle('union-bot:get-room-history', async (_event, roomId) => {
-  return roomHistories.get(roomId) || [];
+  if (typeof roomId !== 'string') return [];
+  return orchestrator.getRoomHistory(roomId);
 });
 
 // App Lifecycle

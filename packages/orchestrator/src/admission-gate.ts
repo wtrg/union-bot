@@ -33,7 +33,21 @@ export class AdmissionPolicyGate {
   public evaluate(rawAction: unknown): AdmissionDecision {
     const timestamp = Date.now();
 
-    // 1. Validate structure with Zod schema
+    // 1. Strict zero-cost check: reject unknown or unspecified cost
+    const rawCost = (rawAction as any)?.estimatedCost;
+    if (rawCost === undefined || rawCost === null || typeof rawCost !== 'number' || Number.isNaN(rawCost)) {
+      const decision: AdmissionDecision = {
+        actionId: (rawAction as any)?.actionId || 'unknown_action',
+        allowed: false,
+        reason: 'Zero-Cost violation: estimatedCost is undefined, missing, or unknown. Unspecified cost is strictly DENIED.',
+        policyCode: 'DENY_UNKNOWN_COST',
+        timestamp,
+      };
+      this.auditLog.push(decision);
+      return decision;
+    }
+
+    // 2. Validate structure with Zod schema
     const parseResult = AdmissionActionSchema.safeParse(rawAction);
     if (!parseResult.success) {
       const decision: AdmissionDecision = {

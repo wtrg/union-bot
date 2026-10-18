@@ -11,13 +11,14 @@
   },
   "scripts": {
     "dev": "node apps/desktop/scripts/launch.js",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p apps/workspace-ui/tsconfig.json",
     "build": "pnpm --filter @union-bot/workspace-ui build",
     "test": "pnpm test:ts && pnpm test:py",
     "test:ts": "node --experimental-strip-types --test packages/cost-guard/tests/cost-guard.test.ts packages/artifact-store/tests/artifact-store.test.ts packages/protocol/tests/protocol.test.ts packages/orchestrator/tests/orchestrator.test.ts tests/integration_packages.test.ts spikes/electron-browser/test-safe-external.js apps/desktop/tests/desktop.test.js",
     "test:py": "python -m unittest discover -s tests -p \"test_*.py\"",
     "smoke:gui": "node apps/desktop/scripts/launch.js --smoke",
     "secret-scan": "python scan_secrets.py --strict",
-    "verify": "pnpm build && pnpm test && pnpm smoke:gui && pnpm secret-scan"
+    "verify": "pnpm typecheck && pnpm build && pnpm test && pnpm smoke:gui && pnpm secret-scan"
   },
   "keywords": [
     "union-bot",
@@ -26,5 +27,9 @@
     "collaboration"
   ],
   "author": "Union Bot Team",
-  "license": "MIT"
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "typescript": "^5.6.3"
+  }
 }

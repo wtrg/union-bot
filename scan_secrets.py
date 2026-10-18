@@ -15,6 +15,7 @@ import sys
 import re
 import json
 import argparse
+import hashlib
 from pathlib import Path
 
 RULES = [
@@ -77,21 +78,34 @@ BENIGN_FIXTURE_ALLOWLIST = [
     {
         "path_suffix": "tests/test_scan_secrets.py",
         "rule_id": "SEC-001",
+        "expected_match_sha256": [
+            "840881e18cbe400765483cf840dfbbd39aa6304e39fb84a70b8e79ead298cc15",
+            "b4108cde217de62eda8d832e8054396f78b207d41008840634a4a7024909cb76"
+        ],
         "reason": "Scanner unit test synthetic credential fixture"
     },
     {
         "path_suffix": "tests/test_scan_secrets.py",
         "rule_id": "SEC-002",
+        "expected_match_sha256": [
+            "b4108cde217de62eda8d832e8054396f78b207d41008840634a4a7024909cb76"
+        ],
         "reason": "Scanner unit test synthetic OpenAI key fixture"
     },
     {
         "path_suffix": "tests/test_codex_harness.py",
         "rule_id": "SEC-002",
+        "expected_match_sha256": [
+            "b4108cde217de62eda8d832e8054396f78b207d41008840634a4a7024909cb76"
+        ],
         "reason": "Codex harness unit test synthetic redaction fixture"
     },
     {
         "path_suffix": "reports/audit/SECRET_SCAN_REPORT.md",
         "rule_id": "SEC-006",
+        "expected_match_sha256": [
+            "03d104c669e3c7b6be7f989db8b12c8b910d3be8c1e2a73c9369d3cc0ba803b5"
+        ],
         "reason": "Audit report table documenting legacy sample header"
     },
     # Legacy codebase historical test fixtures (audited in UB-SEC-001)
@@ -150,14 +164,29 @@ def mask_secret(secret_str: str) -> str:
         return "***"
     return f"{secret_str[:3]}...***...{secret_str[-2:]}"
 
-def is_allowlisted_fixture(file_path: str, rule_id: str) -> bool:
+def is_allowlisted_fixture(file_path: str, rule_id: str, raw_val: str = "") -> bool:
     """
     Checks if a finding exactly matches an entry in the strict BENIGN_FIXTURE_ALLOWLIST.
     Strictly forbids auto-safe triage based on folder names or arbitrary substring matches.
+    UB-P1-SEC-S1: Verifies content SHA256 of the matched secret string against expected digest.
+    If raw_val is provided, its SHA256 must match the expected digest, preventing any secret
+    substitution or real credential injection inside allowlisted test fixtures.
     """
     normalized_path = file_path.replace('\\', '/')
+    match_hash = hashlib.sha256(raw_val.encode('utf-8')).hexdigest() if raw_val else None
+
     for item in BENIGN_FIXTURE_ALLOWLIST:
         if normalized_path.endswith(item["path_suffix"]) and item["rule_id"] == rule_id:
+            expected_hashes = item.get("expected_match_sha256")
+            if expected_hashes is not None:
+                if match_hash is None:
+                    # Path lookup mode
+                    return True
+                if isinstance(expected_hashes, str):
+                    return match_hash == expected_hashes
+                elif isinstance(expected_hashes, (list, set, tuple)):
+                    return match_hash in expected_hashes
+                return False
             return True
     return False
 
@@ -200,8 +229,8 @@ def scan_file(fpath: Path, base_dir: Path, findings: list, scan_errors: list):
                     raw_val = match if isinstance(match, str) else match[0] if isinstance(match, tuple) else ""
                     rel_path = str(fpath.relative_to(base_dir) if fpath.is_relative_to(base_dir) else fpath)
 
-                    # Default to UNRESOLVED unless explicitly allowlisted
-                    triage_status = "triaged_safe" if is_allowlisted_fixture(rel_path, rule["id"]) else "unresolved"
+                    # Default to UNRESOLVED unless explicitly allowlisted with exact content digest
+                    triage_status = "triaged_safe" if is_allowlisted_fixture(rel_path, rule["id"], raw_val) else "unresolved"
                     findings.append({
                         "rule_id": rule["id"],
                         "description": rule["description"],

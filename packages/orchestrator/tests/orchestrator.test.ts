@@ -108,4 +108,19 @@ describe('AdmissionPolicyGate & Orchestrator Zero-Cost (0đ) Policy', () => {
     assert.equal(result.success, false);
     assert.match(result.error!, /Envelope schema validation error/);
   });
+
+  it('strictly DENIES any action where estimatedCost is omitted, undefined or unknown (DENY_UNKNOWN_COST)', () => {
+    const gate = new AdmissionPolicyGate();
+    const decision = gate.evaluate({
+      actionId: 'act_unknown_cost_001',
+      actionType: 'READ_WEB_DOM',
+      provider: 'chatgpt',
+      requestedBy: 'user_session',
+      targetUrl: 'https://chatgpt.com',
+    });
+
+    assert.equal(decision.allowed, false);
+    assert.equal(decision.policyCode, 'DENY_UNKNOWN_COST');
+    assert.match(decision.reason, /estimatedCost is undefined, missing, or unknown/);
+  });
 });

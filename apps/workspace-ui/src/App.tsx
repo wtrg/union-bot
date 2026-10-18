@@ -31,6 +31,13 @@ const INITIAL_AGENTS: AgentInfo[] = [
   { id: 'deepseek_web', name: 'DeepSeek Web', role: 'Standby Member', provider: 'deepseek', status: 'auth_required' },
 ];
 
+const EMPTY_ROOMS: Record<string, EnvelopeView[]> = {
+  orchestration: [],
+  'agent-dev': [],
+  'qa-audit': [],
+  'review-briefing': [],
+};
+
 const INITIAL_DEMO_ENVELOPES: Record<string, EnvelopeView[]> = {
   orchestration: [
     {
@@ -43,7 +50,7 @@ const INITIAL_DEMO_ENVELOPES: Record<string, EnvelopeView[]> = {
       parts: [
         {
           kind: 'text',
-          text: 'Directive R05: GO_P1 officially issued. All team members proceed with Wave 2 Desktop & UI Foundation under strict Zero-Cost (0đ) and no-leak policies.',
+          text: '[OFFLINE MOCK PREVIEW] Directive R05: Phase P1 Monorepo & UI Foundation active. Zero-Cost 0đ policy enforced.',
         },
       ],
     },
@@ -57,7 +64,7 @@ const INITIAL_DEMO_ENVELOPES: Record<string, EnvelopeView[]> = {
       parts: [
         {
           kind: 'text',
-          text: 'Wave 1 security preflight completed. Proceeding with @union-bot/protocol, @union-bot/orchestrator, and Electron single-instance desktop shell.',
+          text: '[OFFLINE MOCK PREVIEW] Wave 1 & 2 desktop shell, orchestrator, and protocol schemas integrated.',
         },
         {
           kind: 'code',
@@ -77,7 +84,7 @@ const INITIAL_DEMO_ENVELOPES: Record<string, EnvelopeView[]> = {
       parts: [
         {
           kind: 'text',
-          text: 'Security verification suite executed: 47 unit tests pass 100%, 0 secret leaks detected across 708 files.',
+          text: '[OFFLINE MOCK PREVIEW] Security verification suite executed: 71 unit tests pass 100%, 0 secret leaks detected across 734 files.',
         },
         {
           kind: 'artifact',
@@ -100,7 +107,7 @@ const INITIAL_DEMO_ENVELOPES: Record<string, EnvelopeView[]> = {
       parts: [
         {
           kind: 'text',
-          text: 'Desktop app scaffolding initiated with Electron 33, contextIsolation: true, sandbox: true, safeOpenExternal URL protection.',
+          text: '[OFFLINE MOCK PREVIEW] Desktop app with Electron 33, contextIsolation: true, sandbox: true, safeOpenExternal URL protection.',
         },
       ],
     },
@@ -116,7 +123,7 @@ const INITIAL_DEMO_ENVELOPES: Record<string, EnvelopeView[]> = {
       parts: [
         {
           kind: 'text',
-          text: 'Codex RPC harness hardened with direct argv execution (shell=False) and recursive PII scrubbing.',
+          text: '[OFFLINE MOCK PREVIEW] Codex RPC harness hardened with direct argv execution (shell=False) and recursive PII scrubbing.',
         },
         {
           kind: 'action',
@@ -137,7 +144,7 @@ const INITIAL_DEMO_ENVELOPES: Record<string, EnvelopeView[]> = {
       parts: [
         {
           kind: 'text',
-          text: 'Standing by for Review Packet P1 R01 dossier and Windows GUI smoke evidence.',
+          text: '[OFFLINE MOCK PREVIEW] Standing by for Review Packet P1 R02 dossier and Windows GUI smoke evidence.',
         },
       ],
     },
@@ -145,21 +152,33 @@ const INITIAL_DEMO_ENVELOPES: Record<string, EnvelopeView[]> = {
 };
 
 export const App: React.FC = () => {
+  const isDesktop = typeof window !== 'undefined' && Boolean(window.unionBotAPI);
   const [activeRoomId, setActiveRoomId] = useState<string>('orchestration');
-  const [roomEnvelopes, setRoomEnvelopes] = useState<Record<string, EnvelopeView[]>>(INITIAL_DEMO_ENVELOPES);
-  const [isDemoMode, setIsDemoMode] = useState<boolean>(true);
+  const [roomEnvelopes, setRoomEnvelopes] = useState<Record<string, EnvelopeView[]>>(
+    isDesktop ? EMPTY_ROOMS : INITIAL_DEMO_ENVELOPES
+  );
+  const [isDemoMode, setIsDemoMode] = useState<boolean>(!isDesktop);
 
   useEffect(() => {
     if (window.unionBotAPI) {
       setIsDemoMode(false);
       window.unionBotAPI.getRoomHistory(activeRoomId).then((history) => {
-        if (history && history.length > 0) {
+        setRoomEnvelopes((prev) => ({
+          ...prev,
+          [activeRoomId]: history || [],
+        }));
+      });
+
+      const unsubscribe = window.unionBotAPI.onEnvelopeReceived((env: EnvelopeView) => {
+        if (env && env.roomId) {
           setRoomEnvelopes((prev) => ({
             ...prev,
-            [activeRoomId]: history,
+            [env.roomId]: [...(prev[env.roomId] || []), env],
           }));
         }
       });
+
+      return unsubscribe;
     }
   }, [activeRoomId]);
 
@@ -206,6 +225,7 @@ export const App: React.FC = () => {
       <main className="main-content">
         <Header room={activeRoom} isDemoMode={isDemoMode} />
         <ChatRoom
+          roomName={activeRoom?.name}
           envelopes={currentEnvelopes}
           onSendMessage={handleSendMessage}
         />

@@ -14,9 +14,13 @@ export const Header: React.FC<HeaderProps> = ({ room, isDemoMode }) => {
         <span style={{ color: 'var(--text-muted)', fontSize: 13 }}>
           {room?.description}
         </span>
-        {isDemoMode && (
-          <span className="demo-badge">
-            DEMO MODE (OFFLINE / AIR-GAPPED)
+        {isDemoMode ? (
+          <span className="demo-badge" style={{ fontSize: 10, color: 'var(--accent-amber)', border: '1px solid var(--accent-amber)', padding: '2px 6px', borderRadius: 4 }}>
+            STANDALONE PREVIEW (OFFLINE SEED)
+          </span>
+        ) : (
+          <span className="live-badge" style={{ fontSize: 10, color: 'var(--accent-emerald)', border: '1px solid var(--accent-emerald)', padding: '2px 6px', borderRadius: 4 }}>
+            ELECTRON LIVE IPC (ZERO-COST ACTIVE)
           </span>
         )}
       </div>
