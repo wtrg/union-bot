@@ -290,7 +290,7 @@ describe('Union Bot Phase P2 Gate R03 Integration Vectors (R03-E01 through R03-E
       recipient: 'agent_signer',
     });
 
-    gate.approveToken(token.tokenId, { id: 'lead', role: 'LEADER' });
+    gate.approveToken(token.tokenId, { id: 'lead', role: 'LEADER', isTrustedContext: true });
 
     // Missing workspaceId in request
     assert.throws(
@@ -344,7 +344,7 @@ describe('Union Bot Phase P2 Gate R03 Integration Vectors (R03-E01 through R03-E
       payload,
       origin: 'admin',
     });
-    gate1.approveToken(token.tokenId, { id: 'admin', role: 'ADMIN' });
+    gate1.approveToken(token.tokenId, { id: 'admin', role: 'ADMIN', isTrustedContext: true });
 
     // Open second connection to the same DB file
     const storage2 = new StorageEngine({ filename: dbPath, wal: true });

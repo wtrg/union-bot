@@ -132,25 +132,25 @@ export class ApprovalGateManager {
     approver: ApproverIdentity,
     decisionContext?: Record<string, unknown>
   ): { success: boolean; tokenId: string; approvedAt: string } {
-    if (!approver || !approver.id) {
+    if (!approver || typeof approver !== 'object' || !approver.id) {
       throw new UnionBotError({
         code: 'ERR_UNTRUSTED_SENDER',
-        message: 'Approver identity is required to approve an action token.',
+        message: 'Approver identity with valid id is required to approve an action token (UB-P2-R03-02).',
       });
     }
 
-    if (approver.isTrustedContext === false) {
+    if (approver.isTrustedContext !== true) {
       throw new UnionBotError({
         code: 'ERR_UNTRUSTED_SENDER',
-        message: 'Approver context is not trusted or verified by main process (UB-P2-R02-003).',
+        message: 'Approver context must be verified by trusted main process (UB-P2-R03-02).',
       });
     }
 
     const authorizedRoles = ['LEADER', 'USER', 'ADMIN', 'OPERATOR'];
-    if (approver.role && !authorizedRoles.includes(approver.role)) {
+    if (!approver.role || !authorizedRoles.includes(approver.role)) {
       throw new UnionBotError({
         code: 'ERR_UNTRUSTED_SENDER',
-        message: `Approver role '${approver.role}' is not authorized to grant approval.`,
+        message: `Approver role is required and must be authorized (${authorizedRoles.join(', ')}).`,
         details: { approverId: approver.id, role: approver.role },
       });
     }
@@ -291,6 +291,14 @@ export class ApprovalGateManager {
         code: 'ERR_APPROVAL_HASH_MISMATCH',
         message: `Action type mismatch: expected ${row.action_type}, received ${actionType}`,
         details: { tokenId, expected: row.action_type, received: actionType },
+      });
+    }
+
+    if (payload === null || payload === undefined || payload === '') {
+      throw new UnionBotError({
+        code: 'ERR_APPROVAL_HASH_MISMATCH',
+        message: `Payload is required to validate and consume approval token ${tokenId} (UB-P2-R03-01).`,
+        details: { tokenId },
       });
     }
 

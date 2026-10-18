@@ -157,6 +157,7 @@ export class Orchestrator {
             };
           }
 
+          // 4a. Renderer actions require approvalTokenId before admission evaluation (C02, P2-006)
           if (!part.approvalTokenId) {
             if (this.idempotency) {
               this.idempotency.fail(envelope.id, { error: 'Missing approval token' });
@@ -169,7 +170,31 @@ export class Orchestrator {
             };
           }
 
-          // Validate approval token with ApprovalGateManager (UB-P2-R02-003, R03-E06)
+          // 4b. Pass action to AdmissionPolicyGate BEFORE consuming token (Zero-Cost Policy, R04-G12)
+          const declaredCost = (part as any)?.input?.estimatedCost ?? (part as any)?.estimatedCost;
+          const admissionDecision = this.admissionGate.evaluate({
+            actionId: part.callId,
+            actionType: part.tool === 'read_web' ? 'READ_WEB_DOM' : 'INVOKE_TOOL',
+            provider: (envelope.sender.provider as any) || 'system',
+            estimatedCost: declaredCost,
+            requestedBy: envelope.sender.id,
+          });
+
+          if (!admissionDecision.allowed) {
+            if (this.idempotency) {
+              this.idempotency.fail(envelope.id, { error: admissionDecision.reason });
+            }
+            return {
+              success: false,
+              envelopeId: envelope.id,
+              roomId: envelope.roomId,
+              error: `Admission policy denied action '${part.tool}': ${admissionDecision.reason} (${admissionDecision.policyCode})`,
+            };
+          }
+
+          // 4c. Validate and consume approval token ONLY after admission policy passes (R04-G12)
+
+          // Validate approval token with ApprovalGateManager (UB-P2-R02-003, R03-E06, R04-G12)
           if (this.approvalGate) {
             try {
               this.approvalGate.validateAndConsume(part.approvalTokenId, part.tool, part.input, {
@@ -190,28 +215,6 @@ export class Orchestrator {
               };
             }
           }
-        }
-
-        // Pass action to AdmissionPolicyGate (Zero-Cost Policy)
-        const declaredCost = (part as any)?.input?.estimatedCost ?? (part as any)?.estimatedCost;
-        const admissionDecision = this.admissionGate.evaluate({
-          actionId: part.callId,
-          actionType: part.tool === 'read_web' ? 'READ_WEB_DOM' : 'INVOKE_TOOL',
-          provider: (envelope.sender.provider as any) || 'system',
-          estimatedCost: declaredCost,
-          requestedBy: envelope.sender.id,
-        });
-
-        if (!admissionDecision.allowed) {
-          if (this.idempotency) {
-            this.idempotency.fail(envelope.id, { error: admissionDecision.reason });
-          }
-          return {
-            success: false,
-            envelopeId: envelope.id,
-            roomId: envelope.roomId,
-            error: `Admission policy denied action '${part.tool}': ${admissionDecision.reason} (${admissionDecision.policyCode})`,
-          };
         }
       }
     }

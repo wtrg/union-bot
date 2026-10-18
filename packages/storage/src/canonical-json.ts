@@ -144,3 +144,25 @@ export function computeCanonicalDigest(payload: unknown, version = CANONICALIZAT
   const digestInput = `v${version}:${canonicalStr}`;
   return createHash('sha256').update(digestInput, 'utf8').digest('hex');
 }
+
+/**
+ * Computes deterministic canonical digest for an Envelope.
+ */
+export function computeEnvelopeDigest(envelope: any): string {
+  const normalized = {
+    id: envelope.id,
+    roomId: envelope.roomId,
+    workspaceId: envelope.workspaceId || null,
+    sender: {
+      kind: envelope.sender.kind,
+      id: envelope.sender.id,
+      role: envelope.sender.role || null,
+    },
+    recipient: envelope.recipient ? {
+      kind: envelope.recipient.kind,
+      id: envelope.recipient.id,
+    } : null,
+    parts: envelope.parts || [],
+  };
+  return computeCanonicalDigest(normalized, CANONICALIZATION_VERSION);
+}

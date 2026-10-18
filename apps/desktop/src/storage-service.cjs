@@ -8,6 +8,7 @@
 const cp = require('node:child_process');
 const path = require('node:path');
 const fs = require('node:fs');
+const { computeEnvelopeDigest } = require('./canonical-json.cjs');
 
 function findSystemNode() {
   if (process.env.SYSTEM_NODE_PATH) {
@@ -245,6 +246,7 @@ class StorageServiceClient {
         status TEXT NOT NULL,
         payload_digest TEXT,
         response_json TEXT,
+        dispatch_prepared INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL,
         expires_at TEXT NOT NULL
       );
@@ -287,7 +289,23 @@ class StorageServiceClient {
       );
     `);
 
+    // Auto-migration for legacy databases missing dispatch_prepared (UB-P2-R03-04)
+    const idempotencyCols = this.nativeDb.prepare('PRAGMA table_info(idempotency_keys)').all();
+    if (!idempotencyCols.some((c) => c.name === 'dispatch_prepared')) {
+      this.nativeDb.exec('ALTER TABLE idempotency_keys ADD COLUMN dispatch_prepared INTEGER NOT NULL DEFAULT 0;');
+    }
+
     const now = new Date().toISOString();
+    const hasMigration = this.nativeDb.prepare('SELECT version FROM schema_migrations WHERE version = 1').get();
+    if (!hasMigration) {
+      this.nativeDb.prepare('INSERT INTO schema_migrations (version, name, checksum, applied_at) VALUES (?, ?, ?, ?)').run(
+        1,
+        '001_initial_p2_schema',
+        'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+        now
+      );
+    }
+
     const defaultRooms = ['orchestration', 'agent-dev', 'qa-audit', 'review-briefing'];
     const insertRoom = this.nativeDb.prepare('INSERT OR IGNORE INTO rooms (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)');
     for (const r of defaultRooms) {
@@ -353,10 +371,14 @@ class StorageServiceClient {
 
             this.nativeDb.exec('BEGIN IMMEDIATE;');
             try {
-              // 1. Idempotency deduplication in transaction
+              // 1. Idempotency deduplication in transaction (UB-P2-R03-03, R04-G04)
+              const envelopeDigest = computeEnvelopeDigest(envelope);
               if (envelope.id) {
-                const existing = this.nativeDb.prepare('SELECT status, response_json FROM idempotency_keys WHERE key = ?').get(envelope.id);
+                const existing = this.nativeDb.prepare('SELECT status, response_json, payload_digest FROM idempotency_keys WHERE key = ?').get(envelope.id);
                 if (existing) {
+                  if (!existing.payload_digest || existing.payload_digest !== envelopeDigest) {
+                    throw new Error(`ERR_PAYLOAD_MISMATCH: Idempotency key '${envelope.id}' reused with mismatched payload. Replay with different content is forbidden.`);
+                  }
                   if (existing.status === 'COMPLETED') {
                     this.nativeDb.exec('COMMIT;');
                     return Promise.resolve({ success: true, envelopeId: envelope.id, deduplicated: true });
@@ -368,13 +390,35 @@ class StorageServiceClient {
                     throw new Error(`ERR_IDEMPOTENCY_CONFLICT: Key ${envelope.id} is already PENDING`);
                   }
                 } else {
+                  const existingEnv = this.nativeDb.prepare('SELECT id, raw_json FROM envelopes WHERE id = ?').get(envelope.id);
+                  if (existingEnv) {
+                    const parsedPayload = JSON.parse(existingEnv.raw_json);
+                    const legacyDigest = computeEnvelopeDigest(parsedPayload);
+                    if (legacyDigest !== envelopeDigest) {
+                      throw new Error(`ERR_PAYLOAD_MISMATCH: Envelope '${envelope.id}' already exists with different payload digest.`);
+                    }
+                    this.nativeDb.prepare(`
+                      INSERT OR REPLACE INTO idempotency_keys (key, target_id, status, payload_digest, response_json, dispatch_prepared, created_at, expires_at)
+                      VALUES (?, ?, 'COMPLETED', ?, ?, 0, ?, ?)
+                    `).run(
+                      envelope.id,
+                      envelope.roomId,
+                      legacyDigest,
+                      JSON.stringify({ success: true, envelopeId: envelope.id }),
+                      now,
+                      new Date(Date.now() + 86400000).toISOString()
+                    );
+                    this.nativeDb.exec('COMMIT;');
+                    return Promise.resolve({ success: true, envelopeId: envelope.id, deduplicated: true });
+                  }
+
                   this.nativeDb.prepare(`
-                    INSERT INTO idempotency_keys (key, target_id, status, payload_digest, response_json, created_at, expires_at)
-                    VALUES (?, ?, 'COMPLETED', ?, ?, ?, ?)
+                    INSERT INTO idempotency_keys (key, target_id, status, payload_digest, response_json, dispatch_prepared, created_at, expires_at)
+                    VALUES (?, ?, 'COMPLETED', ?, ?, 0, ?, ?)
                   `).run(
                     envelope.id,
                     envelope.roomId,
-                    null,
+                    envelopeDigest,
                     JSON.stringify({ success: true, envelopeId: envelope.id }),
                     now,
                     new Date(Date.now() + 86400000).toISOString()
@@ -464,14 +508,14 @@ class StorageServiceClient {
           case 'approveToken': {
             const { tokenId, approver } = args;
             if (!approver || !approver.id) {
-              return Promise.reject(new Error('ERR_UNTRUSTED_SENDER: Approver identity is required'));
+              return Promise.reject(new Error('ERR_UNTRUSTED_SENDER: Approver identity is required (UB-P2-R03-02)'));
             }
-            if (approver.isTrustedContext === false) {
-              return Promise.reject(new Error('ERR_UNTRUSTED_SENDER: Approver context is untrusted'));
+            if (approver.isTrustedContext !== true) {
+              return Promise.reject(new Error('ERR_UNTRUSTED_SENDER: Approver context must be verified trusted context (UB-P2-R03-02)'));
             }
             const allowedRoles = ['LEADER', 'USER', 'ADMIN', 'OPERATOR'];
-            if (approver.role && !allowedRoles.includes(approver.role)) {
-              return Promise.reject(new Error(`ERR_UNTRUSTED_SENDER: Role '${approver.role}' is not authorized to approve tokens`));
+            if (!approver.role || !allowedRoles.includes(approver.role)) {
+              return Promise.reject(new Error(`ERR_UNTRUSTED_SENDER: Role '${approver.role}' is not authorized to approve tokens (UB-P2-R03-02)`));
             }
             const row = this.nativeDb.prepare('SELECT status, expires_at FROM approvals WHERE token_id = ?').get(tokenId);
             if (!row) {
@@ -500,6 +544,9 @@ class StorageServiceClient {
           }
           case 'validateAndConsumeApproval': {
             const { tokenId, actionType, payloadDigest, options = {} } = args;
+            if (!payloadDigest || typeof payloadDigest !== 'string' || !/^[0-9a-fA-F]{64}$/.test(payloadDigest)) {
+              return Promise.reject(new Error('ERR_APPROVAL_HASH_MISMATCH: Non-empty 64-char hex payload digest is required (UB-P2-R03-01)'));
+            }
             const row = this.nativeDb.prepare('SELECT * FROM approvals WHERE token_id = ?').get(tokenId);
             if (!row) {
               return Promise.reject(new Error(`ERR_UNTRUSTED_ACTION: Approval token not found: ${tokenId}`));
@@ -539,7 +586,7 @@ class StorageServiceClient {
             if (row.action_type !== actionType) {
               return Promise.reject(new Error(`ERR_APPROVAL_HASH_MISMATCH: Action type mismatch: expected ${row.action_type}, received ${actionType}`));
             }
-            if (payloadDigest && row.payload_digest !== payloadDigest) {
+            if (row.payload_digest !== payloadDigest) {
               return Promise.reject(new Error(`ERR_APPROVAL_HASH_MISMATCH: Payload digest mismatch for token ${tokenId}`));
             }
             if (new Date(row.expires_at).getTime() < Date.now()) {
@@ -559,10 +606,10 @@ class StorageServiceClient {
             const res = this.nativeDb.prepare(`
               UPDATE approvals
               SET status = 'CONSUMED', consumed_at = ?
-              WHERE token_id = ? AND status = 'APPROVED' AND expires_at > ?
-            `).run(nowIso, tokenId, nowIso);
+              WHERE token_id = ? AND status = 'APPROVED' AND payload_digest = ? AND expires_at > ?
+            `).run(nowIso, tokenId, payloadDigest, nowIso);
             if (res.changes === 0) {
-              return Promise.reject(new Error(`ERR_APPROVAL_ALREADY_CONSUMED: Token ${tokenId} was consumed concurrently`));
+              return Promise.reject(new Error(`ERR_APPROVAL_ALREADY_CONSUMED: Token ${tokenId} was consumed concurrently or payload digest mismatch`));
             }
             return Promise.resolve({ success: true, tokenId, consumedAt: nowIso });
           }
@@ -637,6 +684,25 @@ class StorageServiceClient {
 
   async validateAndConsumeApproval(tokenId, actionType, payloadDigest, options) {
     return this.sendRequest('validateAndConsumeApproval', { tokenId, actionType, payloadDigest, options });
+  }
+
+  async closeAsync() {
+    if (this.nativeDb) {
+      try {
+        this.nativeDb.close();
+      } catch {}
+      this.nativeDb = null;
+    }
+    if (this.worker) {
+      try {
+        await this.sendRequest('close', {}, 1000);
+      } catch {}
+      try {
+        this.worker.kill();
+      } catch {}
+      this.worker = null;
+    }
+    this.rejectAllPending(new Error('ERR_STORAGE_UNAVAILABLE: Storage service closed'));
   }
 
   close() {

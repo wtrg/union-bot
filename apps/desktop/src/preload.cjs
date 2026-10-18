@@ -17,6 +17,18 @@ contextBridge.exposeInMainWorld('unionBotAPI', {
     return ipcRenderer.invoke('union-bot:get-room-history', roomId);
   },
 
+  getAppStatus: async () => {
+    return ipcRenderer.invoke('union-bot:get-app-status');
+  },
+
+  approveToken: async (tokenId, decisionContext) => {
+    return ipcRenderer.invoke('union-bot:approve-token', { tokenId, decisionContext });
+  },
+
+  getApprovalToken: async (tokenId) => {
+    return ipcRenderer.invoke('union-bot:get-approval-token', tokenId);
+  },
+
   onEnvelopeReceived: (callback) => {
     if (typeof callback !== 'function') return () => {};
     const subscription = (_event, envelope) => callback(envelope);

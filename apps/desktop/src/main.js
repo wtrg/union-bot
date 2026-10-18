@@ -20,6 +20,13 @@ const { Orchestrator } = require('./orchestrator.cjs');
 const { StorageServiceClient } = require('./storage-service.cjs');
 const { isAuthorizedSenderFrame } = require('./auth-check.cjs');
 
+// Custom test userData override for isolated multi-process E2E testing
+const customUserDataArg = process.argv.find((a) => a.startsWith('--test-user-data=') || a.startsWith('--user-data-dir='));
+if (customUserDataArg) {
+  const customUserData = customUserDataArg.split('=')[1];
+  app.setPath('userData', path.resolve(customUserData));
+}
+
 // 1. Single Instance Lock
 const gotTheLock = app.requestSingleInstanceLock();
 if (!gotTheLock) {
@@ -29,6 +36,8 @@ if (!gotTheLock) {
 }
 
 let mainWindow = null;
+let appStatus = 'STARTING'; // 'STARTING' | 'READY' | 'STORAGE_ERROR_BLOCKED'
+let storageInitError = null;
 const uiDistPath = path.resolve(__dirname, '../../workspace-ui/dist/index.html');
 const allowedUiFileUrl = pathToFileURL(uiDistPath).href;
 const costGuard = new CostGuard();
@@ -77,10 +86,7 @@ function createWindow() {
     return { action: 'deny' };
   });
 
-  // 5. Compute allowed Workspace UI path
-  const uiDistPath = path.resolve(__dirname, '../../workspace-ui/dist/index.html');
-  const allowedUiFileUrl = pathToFileURL(uiDistPath).href;
-
+  // 5. Use allowed Workspace UI path (allowedUiFileUrl)
   // 6. Strictly restrict in-window navigation: ONLY the bundled UI index.html is allowed
   mainWindow.webContents.on('will-navigate', (event, url) => {
     if (url !== allowedUiFileUrl) {
@@ -89,8 +95,26 @@ function createWindow() {
     }
   });
 
-  // 7. Load Workspace UI
-  if (fs.existsSync(uiDistPath)) {
+  // 7. Load Workspace UI or Recovery Screen
+  if (appStatus === 'STORAGE_ERROR_BLOCKED') {
+    mainWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(`
+      <!DOCTYPE html>
+      <html>
+        <head><title>Union Bot — Storage Initialization Error</title></head>
+        <body style="background:#0a0d14;color:#f1f5f9;font-family:sans-serif;padding:40px;">
+          <h1 style="color:#ef4444;">Union Bot — Storage Error</h1>
+          <p><strong>Status:</strong> STORAGE_ERROR_BLOCKED</p>
+          <p>The desktop persistent storage engine failed to initialize:</p>
+          <pre style="background:#1e293b;padding:12px;border-radius:6px;color:#f87171;">${storageInitError || 'Storage offline'}</pre>
+          <p>All mutation operations (dispatchEnvelope, approveToken) are strictly blocked.</p>
+          <p>UserData Directory: <code>${userDataDir}</code></p>
+          <div style="margin-top:20px;">
+            <button onclick="window.location.reload()" style="background:#2563eb;color:#fff;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Retry Storage Initialization</button>
+          </div>
+        </body>
+      </html>
+    `)}`);
+  } else if (fs.existsSync(uiDistPath)) {
     mainWindow.loadFile(uiDistPath);
   } else {
     // Offline fallback
@@ -107,7 +131,304 @@ function createWindow() {
     `)}`);
   }
 
-  // 7. Handle GUI Smoke Test Mode
+  // 7a. R04-G07: Storage Error Recovery Smoke Test Mode
+  if (process.argv.includes('--smoke-error-test')) {
+    console.log('[SmokeErrorTest] Running Storage Error Recovery Smoke Test...');
+    mainWindow.webContents.once('did-finish-load', async () => {
+      try {
+        const evalResult = await mainWindow.webContents.executeJavaScript(`
+          (async () => {
+            const status = await window.unionBotAPI.getAppStatus();
+            const dispatch = await window.unionBotAPI.dispatchEnvelope({
+              id: 'err_test_001',
+              traceId: 'trc_err_001',
+              timestamp: Date.now(),
+              sender: { kind: 'user', id: 'tester', role: 'USER' },
+              recipient: { kind: 'room', id: 'orchestration' },
+              roomId: 'orchestration',
+              fidelity: 'L0_RAW_TEXT',
+              parts: [{ kind: 'text', text: 'Blocked dispatch' }]
+            });
+            const approve = await window.unionBotAPI.approveToken({ tokenId: 'tok_blocked' });
+            return { status, dispatch, approve };
+          })()
+        `);
+
+        const isStatusBlocked = appStatus === 'STORAGE_ERROR_BLOCKED' && evalResult.status.status === 'STORAGE_ERROR_BLOCKED';
+        const isDispatchBlocked = evalResult.dispatch.success === false && String(evalResult.dispatch.error).includes('ERR_STORAGE_UNAVAILABLE');
+        const isApproveBlocked = evalResult.approve.success === false && String(evalResult.approve.error).includes('ERR_STORAGE_UNAVAILABLE');
+
+        console.log('[SmokeErrorTest] Status blocked:', isStatusBlocked);
+        console.log('[SmokeErrorTest] Dispatch blocked:', isDispatchBlocked);
+        console.log('[SmokeErrorTest] Approve blocked:', isApproveBlocked);
+
+        const allPassed = isStatusBlocked && isDispatchBlocked && isApproveBlocked;
+        const report = {
+          suite: 'UNION_BOT_ELECTRON_STORAGE_ERROR_SMOKE',
+          timestamp: new Date().toISOString(),
+          appStatus,
+          storageInitError,
+          statusCheck: evalResult.status,
+          dispatchBlocked: isDispatchBlocked,
+          approveBlocked: isApproveBlocked,
+          result: allPassed ? 'PASS' : 'FAIL',
+        };
+
+        const reportDir = path.resolve(__dirname, '../../../reports/capability-evidence');
+        if (!fs.existsSync(reportDir)) fs.mkdirSync(reportDir, { recursive: true });
+        fs.writeFileSync(
+          path.join(reportDir, 'ELECTRON_STORAGE_ERROR_SMOKE_EVIDENCE.json'),
+          JSON.stringify(report, null, 2),
+          'utf-8'
+        );
+
+        if (!allPassed) {
+          app.quit();
+          process.exit(1);
+        }
+        console.log('[SmokeErrorTest] PASS! Storage failure recovery correctly blocked all mutations.');
+        app.quit();
+        process.exit(0);
+      } catch (err) {
+        console.error('[SmokeErrorTest] Error:', err);
+        app.quit();
+        process.exit(1);
+      }
+    });
+    return;
+  }
+
+  // 7b. R04-G08: Real Electron Kill & Relaunch Stage 1
+  if (process.argv.includes('--r04-e2e-stage=1')) {
+    mainWindow.webContents.once('did-finish-load', async () => {
+      try {
+        const dispatchResult = await mainWindow.webContents.executeJavaScript(`
+          (async () => {
+            return await window.unionBotAPI.dispatchEnvelope({
+              id: 'e2e_kill_test_001',
+              traceId: 'trc_kill_001',
+              timestamp: Date.now(),
+              sender: { kind: 'user', id: 'kill_tester', name: 'Kill Tester', role: 'USER' },
+              recipient: { kind: 'room', id: 'orchestration' },
+              roomId: 'orchestration',
+              fidelity: 'L0_RAW_TEXT',
+              parts: [{ kind: 'text', text: 'Kill restart envelope test' }]
+            });
+          })()
+        `);
+
+        if (!dispatchResult || !dispatchResult.success || dispatchResult.envelopeId !== 'e2e_kill_test_001') {
+          console.error('[R04-G08] Stage 1 dispatch failed:', dispatchResult);
+          app.quit();
+          process.exit(1);
+        }
+
+        const ackMarkerPath = path.join(userDataDir, 'e2e_stage1_ack.json');
+        fs.writeFileSync(ackMarkerPath, JSON.stringify(dispatchResult, null, 2), 'utf-8');
+        console.log('[R04-G08] STAGE1_DURABLE_ACK_RECEIVED');
+      } catch (err) {
+        console.error('[R04-G08] Stage 1 exception:', err);
+        app.quit();
+        process.exit(1);
+      }
+    });
+    return;
+  }
+
+  // 7c. R04-G08: Real Electron Kill & Relaunch Stage 2
+  if (process.argv.includes('--r04-e2e-stage=2')) {
+    mainWindow.webContents.once('did-finish-load', async () => {
+      try {
+        const stage2Result = await mainWindow.webContents.executeJavaScript(`
+          (async () => {
+            const history = await window.unionBotAPI.getRoomHistory('orchestration');
+            const dupResult = await window.unionBotAPI.dispatchEnvelope({
+              id: 'e2e_kill_test_001',
+              traceId: 'trc_kill_001',
+              timestamp: Date.now(),
+              sender: { kind: 'user', id: 'kill_tester', name: 'Kill Tester', role: 'USER' },
+              recipient: { kind: 'room', id: 'orchestration' },
+              roomId: 'orchestration',
+              fidelity: 'L0_RAW_TEXT',
+              parts: [{ kind: 'text', text: 'Kill restart envelope test' }]
+            });
+            const changedResult = await window.unionBotAPI.dispatchEnvelope({
+              id: 'e2e_kill_test_001',
+              traceId: 'trc_kill_001',
+              timestamp: Date.now(),
+              sender: { kind: 'user', id: 'kill_tester', name: 'Kill Tester', role: 'USER' },
+              recipient: { kind: 'room', id: 'orchestration' },
+              roomId: 'orchestration',
+              fidelity: 'L0_RAW_TEXT',
+              parts: [{ kind: 'text', text: 'MALICIOUS_CHANGED_PAYLOAD' }]
+            });
+            const historyAfter = await window.unionBotAPI.getRoomHistory('orchestration');
+            return { history, dupResult, changedResult, historyAfter };
+          })()
+        `);
+
+        const historyOk = Array.isArray(stage2Result.history) && stage2Result.history.length === 1 && stage2Result.history[0].id === 'e2e_kill_test_001';
+        const dupOk = Boolean(stage2Result.dupResult && stage2Result.dupResult.success && stage2Result.dupResult.deduplicated);
+        const changedOk = Boolean(stage2Result.changedResult && !stage2Result.changedResult.success && String(stage2Result.changedResult.error).includes('ERR_PAYLOAD_MISMATCH'));
+        const countOk = Array.isArray(stage2Result.historyAfter) && stage2Result.historyAfter.length === 1;
+
+        console.log('[R04-G08] History preserved:', historyOk);
+        console.log('[R04-G08] Exact duplicate ACKed:', dupOk);
+        console.log('[R04-G08] Changed payload rejected:', changedOk);
+        console.log('[R04-G08] Final count preserved (1):', countOk);
+
+        const allPassed = historyOk && dupOk && changedOk && countOk;
+
+        const report = {
+          suite: 'UNION_BOT_ELECTRON_KILL_RESTART_EVIDENCE',
+          timestamp: new Date().toISOString(),
+          userDataDir,
+          historyCountBefore: stage2Result.history?.length,
+          dupResult: stage2Result.dupResult,
+          changedResult: stage2Result.changedResult,
+          historyCountAfter: stage2Result.historyAfter?.length,
+          result: allPassed ? 'PASS' : 'FAIL',
+        };
+
+        const reportDir = path.resolve(__dirname, '../../../reports/capability-evidence');
+        if (!fs.existsSync(reportDir)) fs.mkdirSync(reportDir, { recursive: true });
+        fs.writeFileSync(
+          path.join(reportDir, 'ELECTRON_KILL_RESTART_EVIDENCE.json'),
+          JSON.stringify(report, null, 2),
+          'utf-8'
+        );
+
+        if (!allPassed) {
+          app.quit();
+          process.exit(1);
+        }
+
+        console.log('[R04-G08] STAGE2_VERIFICATION_PASSED');
+        app.quit();
+        process.exit(0);
+      } catch (err) {
+        console.error('[R04-G08] Stage 2 exception:', err);
+        app.quit();
+        process.exit(1);
+      }
+    });
+    return;
+  }
+
+  // 7d. R04-G11: Real Electron Frame Boundary Verification
+  if (process.argv.includes('--r04-e2e-frame-test')) {
+    mainWindow.webContents.once('did-finish-load', async () => {
+      try {
+        console.log('[R04-G11] Running Frame Boundary Verification in Real Electron...');
+
+        // 1. Trusted Main Frame dispatch
+        const mainFrameResult = await mainWindow.webContents.executeJavaScript(`
+          (async () => {
+            return await window.unionBotAPI.dispatchEnvelope({
+              id: 'frame_test_main_001',
+              traceId: 'trc_frame_main',
+              timestamp: Date.now(),
+              sender: { kind: 'user', id: 'frame_tester', name: 'Frame Tester', role: 'USER' },
+              recipient: { kind: 'room', id: 'orchestration' },
+              roomId: 'orchestration',
+              fidelity: 'L0_RAW_TEXT',
+              parts: [{ kind: 'text', text: 'Trusted main frame message' }]
+            });
+          })()
+        `);
+        const mainFrameAllowed = Boolean(mainFrameResult && mainFrameResult.success === true);
+        console.log('[R04-G11] mainFrameResult raw:', JSON.stringify(mainFrameResult));
+        console.log('[R04-G11] Trusted main frame dispatch:', mainFrameAllowed);
+
+        // 2. Second BrowserWindow (Rogue Window / Unauthorized webContents)
+        const rogueWin = new BrowserWindow({
+          show: false,
+          webPreferences: {
+            contextIsolation: true,
+            nodeIntegration: false,
+            sandbox: true,
+            preload: path.join(__dirname, 'preload.cjs'),
+          },
+        });
+        await rogueWin.loadURL('data:text/html;charset=utf-8,<html><body>Rogue Window</body></html>');
+        const rogueResult = await rogueWin.webContents.executeJavaScript(`
+          (async () => {
+            return await window.unionBotAPI.dispatchEnvelope({
+              id: 'frame_test_rogue_001',
+              traceId: 'trc_frame_rogue',
+              timestamp: Date.now(),
+              sender: { kind: 'user', id: 'rogue_tester', name: 'Rogue Tester', role: 'USER' },
+              recipient: { kind: 'room', id: 'orchestration' },
+              roomId: 'orchestration',
+              fidelity: 'L0_RAW_TEXT',
+              parts: [{ kind: 'text', text: 'Rogue window message' }]
+            });
+          })()
+        `);
+        rogueWin.destroy();
+        const rogueBlocked = Boolean(rogueResult && rogueResult.success === false && String(rogueResult.error).includes('Security violation'));
+        console.log('[R04-G11] Rogue window IPC blocked:', rogueBlocked);
+
+        // 3. Subframe / Iframe senderFrame verification
+        const iframeSyntheticEvent = {
+          sender: mainWindow.webContents,
+          senderFrame: {
+            parent: { id: 1 },
+            url: allowedUiFileUrl,
+          },
+        };
+        const iframeCheckDenied = !isAuthorizedSenderFrame(iframeSyntheticEvent, mainWindow, allowedUiFileUrl);
+        console.log('[R04-G11] Subframe/Iframe sender denied by auth-check:', iframeCheckDenied);
+
+        // 4. Navigated / Unauthorized URL in main window
+        const untrustedUrlSyntheticEvent = {
+          sender: mainWindow.webContents,
+          senderFrame: {
+            parent: null,
+            url: 'https://evil.attacker.com/index.html',
+          },
+        };
+        const untrustedUrlDenied = !isAuthorizedSenderFrame(untrustedUrlSyntheticEvent, mainWindow, allowedUiFileUrl);
+        console.log('[R04-G11] Untrusted navigated URL denied by auth-check:', untrustedUrlDenied);
+
+        const allPassed = mainFrameAllowed && rogueBlocked && iframeCheckDenied && untrustedUrlDenied;
+
+        const report = {
+          suite: 'UNION_BOT_ELECTRON_FRAME_BOUNDARY_EVIDENCE',
+          timestamp: new Date().toISOString(),
+          mainFrameAllowed,
+          rogueBlocked,
+          iframeCheckDenied,
+          untrustedUrlDenied,
+          result: allPassed ? 'PASS' : 'FAIL',
+        };
+
+        const reportDir = path.resolve(__dirname, '../../../reports/capability-evidence');
+        if (!fs.existsSync(reportDir)) fs.mkdirSync(reportDir, { recursive: true });
+        fs.writeFileSync(
+          path.join(reportDir, 'ELECTRON_FRAME_BOUNDARY_EVIDENCE.json'),
+          JSON.stringify(report, null, 2),
+          'utf-8'
+        );
+
+        if (!allPassed) {
+          app.quit();
+          process.exit(1);
+        }
+
+        console.log('[R04-G11] FRAME_BOUNDARY_VERIFICATION_PASSED');
+        app.quit();
+        process.exit(0);
+      } catch (err) {
+        console.error('[R04-G11] Exception:', err);
+        app.quit();
+        process.exit(1);
+      }
+    });
+    return;
+  }
+
+  // 7. Handle Standard GUI Smoke Test Mode
   if (isSmoke) {
     console.log('[SmokeTest] Running Union Bot Automated GUI Smoke Test...');
 
@@ -156,6 +477,7 @@ function createWindow() {
           })()
         `);
         const ipcSendSuccess = Boolean(ipcSendResult && ipcSendResult.success === true && ipcSendResult.envelopeId === 'smoke_gui_env_001');
+        console.log('[SmokeTest] ipcSendResult raw:', JSON.stringify(ipcSendResult));
         console.log('[SmokeTest] Real GUI IPC send message verified:', ipcSendSuccess);
 
         // 6. Verify Real GUI -> IPC room history retrieval through window.unionBotAPI
@@ -249,7 +571,18 @@ function checkSenderAuthorized(event) {
 }
 
 // IPC Handlers: Strictly routed through Orchestrator with renderer anti-spoofing and origin validation (C03, UB-P2-R01-008)
+ipcMain.handle('union-bot:get-app-status', async (event) => {
+  return { status: appStatus, error: storageInitError };
+});
+
 ipcMain.handle('union-bot:dispatch-envelope', async (event, envelope) => {
+  if (appStatus !== 'READY') {
+    return {
+      success: false,
+      error: `ERR_STORAGE_UNAVAILABLE: Desktop storage is not ready (${appStatus}): ${storageInitError || 'Storage offline'} (UB-P2-R03-05)`,
+    };
+  }
+
   if (!checkSenderAuthorized(event)) {
     return { success: false, error: 'Security violation: Unauthorized IPC sender origin or missing frame (UB-P2-R01-008)' };
   }
@@ -263,7 +596,7 @@ ipcMain.handle('union-bot:dispatch-envelope', async (event, envelope) => {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('union-bot:envelope-received', envelope);
   }
-  return { success: true, envelopeId: result.envelopeId, roomId: result.roomId };
+  return { success: true, envelopeId: result.envelopeId, roomId: result.roomId, deduplicated: result.deduplicated };
 });
 
 ipcMain.handle('union-bot:get-room-history', async (event, roomId) => {
@@ -274,14 +607,58 @@ ipcMain.handle('union-bot:get-room-history', async (event, roomId) => {
   return await orchestrator.getRoomHistoryAsync(roomId);
 });
 
+ipcMain.handle('union-bot:approve-token', async (event, { tokenId, decisionContext } = {}) => {
+  if (appStatus !== 'READY') {
+    return { success: false, error: `ERR_STORAGE_UNAVAILABLE: Desktop storage is not ready (${appStatus}) (UB-P2-R03-05)` };
+  }
+  if (!checkSenderAuthorized(event)) {
+    return { success: false, error: 'Security violation: Unauthorized IPC sender origin or missing frame (UB-P2-R01-008)' };
+  }
+  if (!tokenId || typeof tokenId !== 'string') {
+    return { success: false, error: 'ERR_UNTRUSTED_ACTION: tokenId is required' };
+  }
+
+  // Server-side TrustedPrincipal minted by main process - NEVER take untrusted role from renderer (UB-P2-R03-02)
+  const trustedApprover = {
+    id: 'local-operator',
+    role: 'OPERATOR',
+    isTrustedContext: true,
+  };
+
+  try {
+    const result = await storage.approveToken(tokenId, trustedApprover, decisionContext);
+    return { success: true, ...result };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('union-bot:get-approval-token', async (event, tokenId) => {
+  if (!checkSenderAuthorized(event)) {
+    return null;
+  }
+  if (!tokenId || typeof tokenId !== 'string') return null;
+  try {
+    return await storage.getApprovalToken(tokenId);
+  } catch {
+    return null;
+  }
+});
+
 // App Lifecycle
 app.whenReady().then(async () => {
   try {
+    if (process.argv.includes('--test-force-storage-error')) {
+      throw new Error('ERR_STORAGE_UNAVAILABLE: Forced storage failure for test verification (UB-P2-R03-05)');
+    }
     if (storage && storage.ready) {
       await storage.ready;
     }
+    appStatus = 'READY';
   } catch (err) {
-    console.error('[UnionBot] Warning: storage init error on startup:', err.message);
+    appStatus = 'STORAGE_ERROR_BLOCKED';
+    storageInitError = err.message;
+    console.error('[UnionBot] Critical storage initialization failure on startup:', err.message);
   }
   createWindow();
 

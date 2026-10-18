@@ -1,0 +1,18 @@
+{
+  "suite": "UNION_BOT_ELECTRON_KILL_RESTART_EVIDENCE",
+  "timestamp": "2026-10-18T21:35:46.926Z",
+  "userDataDir": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\ub-test-g08-1792359343608",
+  "historyCountBefore": 1,
+  "dupResult": {
+    "success": true,
+    "envelopeId": "e2e_kill_test_001",
+    "roomId": "orchestration",
+    "deduplicated": true
+  },
+  "changedResult": {
+    "success": false,
+    "error": "Storage failure: ERR_PAYLOAD_MISMATCH: Idempotency key 'e2e_kill_test_001' reused with mismatched payload. Replay with different content is forbidden."
+  },
+  "historyCountAfter": 1,
+  "result": "PASS"
+}

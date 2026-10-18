@@ -255,7 +255,7 @@ describe('AdmissionPolicyGate & Orchestrator Zero-Cost (0đ) Policy', () => {
     assert.match(resPending.error!, /PENDING status/);
 
     // 4. Operator approves token -> dispatch now succeeds
-    approvalGate.approveToken(token.tokenId, { id: 'po_lead', role: 'LEADER' });
+    approvalGate.approveToken(token.tokenId, { id: 'po_lead', role: 'LEADER', isTrustedContext: true });
     const resApproved = await orch.dispatchEnvelope(actionEnv, { isFromRenderer: true });
     assert.equal(resApproved.success, true);
   });

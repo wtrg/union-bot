@@ -124,8 +124,8 @@ function installElectronCostGuardInterceptor(session, costGuard) {
 
   session.webRequest.onBeforeRequest((details, callback) => {
     const url = details.url;
-    // Allow local file:// URLs for bundled workspace UI
-    if (url.startsWith('file://') || url.startsWith('devtools://')) {
+    // Allow local file://, devtools://, and internal data: URLs for bundled/recovery workspace UI
+    if (url.startsWith('file://') || url.startsWith('devtools://') || url.startsWith('data:')) {
       callback({ cancel: false });
       return;
     }

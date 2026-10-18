@@ -12,6 +12,7 @@
 const crypto = require('node:crypto');
 const { z } = require('zod');
 const { CostGuard } = require('./cost-guard.cjs');
+const { computeCanonicalDigest, computeEnvelopeDigest } = require('./canonical-json.cjs');
 
 const SCHEMA_VERSION = '1.0.0';
 
@@ -436,6 +437,7 @@ class Orchestrator {
     });
     this.roomHistories = new Map();
     this.seenEnvelopeIds = new Set();
+    this.inMemoryDigests = new Map();
     this.approvalTokens = new Map();
 
     // Initialize default rooms
@@ -492,8 +494,18 @@ class Orchestrator {
       }
     }
 
-    // 3. Idempotency deduplication check (P2-005, C01, C05)
-    if (this.seenEnvelopeIds.has(envelope.id)) {
+    // 3. Idempotency deduplication check in non-storage mode (P2-005, C01, C05, UB-P2-R03-03)
+    if (!this.storage && this.seenEnvelopeIds.has(envelope.id)) {
+      const incomingDigest = computeEnvelopeDigest(envelope);
+      const storedDigest = this.inMemoryDigests.get(envelope.id);
+      if (storedDigest && storedDigest !== incomingDigest) {
+        return {
+          success: false,
+          envelopeId: envelope.id,
+          roomId: envelope.roomId,
+          error: `ERR_PAYLOAD_MISMATCH: Idempotency key '${envelope.id}' reused with mismatched payload. Replay with different content is forbidden.`,
+        };
+      }
       return {
         success: true,
         envelopeId: envelope.id,
@@ -502,16 +514,17 @@ class Orchestrator {
       };
     }
 
-    // 4. Action parts evaluation & approval token gate (C02, P2-006)
+    // 4. Action parts evaluation & approval token gate (UB-P2-R03-01, R04-G12, C02, P2-006)
     for (const part of envelope.parts) {
       if (part.kind === 'action') {
         const declaredCost = (part.input && typeof part.input.estimatedCost === 'number')
           ? part.input.estimatedCost
           : (typeof part.estimatedCost === 'number' ? part.estimatedCost : undefined);
 
-        // Enforce approval token verification if submitted from untrusted renderer (C02, UB-P2-R02-003)
+        // 4a. Renderer actions require approvalTokenId before admission evaluation (C02, P2-006)
+        let approvalTokenId = null;
         if (context && context.fromRenderer) {
-          const approvalTokenId = part.input?.approvalTokenId;
+          approvalTokenId = part.input?.approvalTokenId || part.approvalTokenId;
           if (!approvalTokenId) {
             return {
               success: false,
@@ -520,13 +533,46 @@ class Orchestrator {
               error: 'Security violation: Untrusted action payload from renderer requires valid approval token (C02)',
             };
           }
+        }
+
+        // 4b. Evaluate AdmissionPolicyGate BEFORE consuming token (Zero-Cost Policy, R04-G12)
+        const actionDecision = this.admissionGate.evaluate({
+          actionId: part.callId,
+          actionType: part.tool === 'read_web' ? 'READ_WEB_DOM' : 'INVOKE_TOOL',
+          provider: envelope.sender.provider || (envelope.sender.kind === 'user' ? 'chatgpt' : 'system'),
+          estimatedCost: declaredCost,
+          requestedBy: envelope.sender.id,
+          metadata: { tool: part.tool, input: part.input },
+        });
+
+        if (!actionDecision.allowed) {
+          return {
+            success: false,
+            envelopeId: envelope.id,
+            roomId: envelope.roomId,
+            error: `Action admission denied: ${actionDecision.reason} (${actionDecision.policyCode})`,
+          };
+        }
+
+        // 4c. Validate and consume approval token ONLY after admission policy passes (R04-G12)
+        if (context && context.fromRenderer) {
+          if (part.input === null || part.input === undefined || part.input === '') {
+            return {
+              success: false,
+              envelopeId: envelope.id,
+              roomId: envelope.roomId,
+              error: 'Security violation: Action input payload is required for approval verification (UB-P2-R03-01)',
+            };
+          }
+
+          const payloadDigest = computeCanonicalDigest(part.input, 1);
 
           if (this.storage && typeof this.storage.validateAndConsumeApproval === 'function') {
             try {
               await this.storage.validateAndConsumeApproval(
                 approvalTokenId,
                 part.tool,
-                null,
+                payloadDigest,
                 {
                   workspaceId: envelope.workspaceId,
                   roomId: envelope.roomId,
@@ -552,25 +598,16 @@ class Orchestrator {
                 error: 'Security violation: Action approval token is invalid, expired, or not approved (C02)',
               };
             }
+            if (token.payloadDigest && token.payloadDigest !== payloadDigest) {
+              return {
+                success: false,
+                envelopeId: envelope.id,
+                roomId: envelope.roomId,
+                error: 'Security violation: Payload digest mismatch for approval token (UB-P2-R03-01)',
+              };
+            }
+            token.status = 'CONSUMED';
           }
-        }
-
-        const actionDecision = this.admissionGate.evaluate({
-          actionId: part.callId,
-          actionType: 'INVOKE_TOOL',
-          provider: envelope.sender.provider || (envelope.sender.kind === 'user' ? 'chatgpt' : 'system'),
-          estimatedCost: declaredCost,
-          requestedBy: envelope.sender.id,
-          metadata: { tool: part.tool, input: part.input },
-        });
-
-        if (!actionDecision.allowed) {
-          return {
-            success: false,
-            envelopeId: envelope.id,
-            roomId: envelope.roomId,
-            error: `Action admission denied: ${actionDecision.reason} (${actionDecision.policyCode})`,
-          };
         }
       }
     }
@@ -599,6 +636,7 @@ class Orchestrator {
 
     // 6. In-memory cache & idempotency tracking
     this.seenEnvelopeIds.add(envelope.id);
+    this.inMemoryDigests.set(envelope.id, computeEnvelopeDigest(envelope));
     const room = this.roomHistories.get(envelope.roomId) || [];
     room.push(envelope);
     this.roomHistories.set(envelope.roomId, room);

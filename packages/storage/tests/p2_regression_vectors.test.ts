@@ -105,7 +105,7 @@ describe('Union Bot Phase P2 Official Regression Vectors (P2-T01 through P2-T18)
     });
 
     // PO approves token
-    const approveResult = gate.approveToken(token.tokenId, { id: 'user_lead', role: 'LEADER' });
+    const approveResult = gate.approveToken(token.tokenId, { id: 'user_lead', role: 'LEADER', isTrustedContext: true });
     assert.equal(approveResult.success, true);
 
     const tokenApproved = gate.getToken(token.tokenId);
@@ -555,7 +555,7 @@ describe('Union Bot Phase P2 Official Regression Vectors (P2-T01 through P2-T18)
       roomId: 'room_private',
     });
 
-    gate.approveToken(token.tokenId, { id: 'admin_usr' });
+    gate.approveToken(token.tokenId, { id: 'admin_usr', role: 'ADMIN', isTrustedContext: true });
 
     // Consuming from different workspace must throw ERR_UNTRUSTED_ACTION
     assert.throws(

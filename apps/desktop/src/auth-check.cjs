@@ -10,6 +10,14 @@
  * (UB-P2-R01-008, UB-P2-R02-006, R03-E11)
  */
 
+function normalizeUrl(urlStr) {
+  if (typeof urlStr !== 'string') return '';
+  if (process.platform === 'win32' && urlStr.startsWith('file:///')) {
+    return urlStr.replace(/^file:\/\/\/([a-zA-Z]):/, (_, drive) => `file:///${drive.toUpperCase()}:`);
+  }
+  return urlStr;
+}
+
 function isAuthorizedSenderFrame(event, mainWindow, allowedUiFileUrl) {
   if (!event || !event.sender || !event.senderFrame) {
     return false;
@@ -23,11 +31,13 @@ function isAuthorizedSenderFrame(event, mainWindow, allowedUiFileUrl) {
   if (event.senderFrame.parent !== null) {
     return false;
   }
-  const frameUrl = event.senderFrame.url;
-  if (!frameUrl || frameUrl !== allowedUiFileUrl) {
+  const frameUrl = normalizeUrl(event.senderFrame.url);
+  const targetUrl = normalizeUrl(allowedUiFileUrl);
+  if (!frameUrl || frameUrl !== targetUrl) {
     return false;
   }
   return true;
 }
 
-module.exports = { isAuthorizedSenderFrame };
+module.exports = { isAuthorizedSenderFrame, normalizeUrl };
+

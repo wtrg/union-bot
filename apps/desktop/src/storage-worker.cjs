@@ -9,6 +9,16 @@
 const { DatabaseSync } = require('node:sqlite');
 const fs = require('node:fs');
 const path = require('node:path');
+const { computeEnvelopeDigest } = require('./canonical-json.cjs');
+
+function maybeInjectFault(checkpoint, args) {
+  if (process.env.UNION_BOT_TEST_FAULT_INJECTION === '1' && args && args.injectFaultAt === checkpoint) {
+    if (args.faultAction === 'kill') {
+      process.exit(42);
+    }
+    throw new Error(`ERR_TEST_INJECTED_FAULT: Injected fault at ${checkpoint}`);
+  }
+}
 
 let db = null;
 let currentDbPath = ':memory:';
@@ -74,6 +84,7 @@ function initDb(dbPath) {
       status TEXT NOT NULL,
       payload_digest TEXT,
       response_json TEXT,
+      dispatch_prepared INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL,
       expires_at TEXT NOT NULL
     );
@@ -119,8 +130,24 @@ function initDb(dbPath) {
     );
   `);
 
-  // Ensure default rooms
+  // Auto-migration for legacy databases missing dispatch_prepared (UB-P2-R03-04)
+  const idempotencyCols = db.prepare('PRAGMA table_info(idempotency_keys)').all();
+  if (!idempotencyCols.some((c) => c.name === 'dispatch_prepared')) {
+    db.exec('ALTER TABLE idempotency_keys ADD COLUMN dispatch_prepared INTEGER NOT NULL DEFAULT 0;');
+  }
+
   const now = new Date().toISOString();
+  const hasMigration = db.prepare('SELECT version FROM schema_migrations WHERE version = 1').get();
+  if (!hasMigration) {
+    db.prepare('INSERT INTO schema_migrations (version, name, checksum, applied_at) VALUES (?, ?, ?, ?)').run(
+      1,
+      '001_initial_p2_schema',
+      'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+      now
+    );
+  }
+
+  // Ensure default rooms
   const defaultRooms = ['orchestration', 'agent-dev', 'qa-audit', 'review-briefing'];
   const insertRoom = db.prepare('INSERT OR IGNORE INTO rooms (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)');
   for (const r of defaultRooms) {
@@ -159,10 +186,14 @@ function handleRequest(msg) {
 
         db.exec('BEGIN IMMEDIATE;');
         try {
-          // 1. Idempotency deduplication check in transaction
+          // 1. Idempotency deduplication check in transaction (UB-P2-R03-03, R04-G04)
+          const envelopeDigest = computeEnvelopeDigest(envelope);
           if (envelope.id) {
-            const existing = db.prepare('SELECT status, response_json FROM idempotency_keys WHERE key = ?').get(envelope.id);
+            const existing = db.prepare('SELECT status, response_json, payload_digest FROM idempotency_keys WHERE key = ?').get(envelope.id);
             if (existing) {
+              if (!existing.payload_digest || existing.payload_digest !== envelopeDigest) {
+                throw new Error(`ERR_PAYLOAD_MISMATCH: Idempotency key '${envelope.id}' reused with mismatched payload. Replay with different content is forbidden.`);
+              }
               if (existing.status === 'COMPLETED') {
                 db.exec('COMMIT;');
                 process.send({ id, result: { success: true, envelopeId: envelope.id, deduplicated: true } });
@@ -175,19 +206,44 @@ function handleRequest(msg) {
                 throw new Error(`ERR_IDEMPOTENCY_CONFLICT: Key ${envelope.id} is already PENDING`);
               }
             } else {
+              const existingEnv = db.prepare('SELECT id, raw_json FROM envelopes WHERE id = ?').get(envelope.id);
+              if (existingEnv) {
+                const parsedPayload = JSON.parse(existingEnv.raw_json);
+                const legacyDigest = computeEnvelopeDigest(parsedPayload);
+                if (legacyDigest !== envelopeDigest) {
+                  throw new Error(`ERR_PAYLOAD_MISMATCH: Envelope '${envelope.id}' already exists with different payload digest.`);
+                }
+                db.prepare(`
+                  INSERT OR REPLACE INTO idempotency_keys (key, target_id, status, payload_digest, response_json, dispatch_prepared, created_at, expires_at)
+                  VALUES (?, ?, 'COMPLETED', ?, ?, 0, ?, ?)
+                `).run(
+                  envelope.id,
+                  envelope.roomId,
+                  legacyDigest,
+                  JSON.stringify({ success: true, envelopeId: envelope.id }),
+                  now,
+                  new Date(Date.now() + 86400000).toISOString()
+                );
+                db.exec('COMMIT;');
+                process.send({ id, result: { success: true, envelopeId: envelope.id, deduplicated: true } });
+                break;
+              }
+
               db.prepare(`
-                INSERT INTO idempotency_keys (key, target_id, status, payload_digest, response_json, created_at, expires_at)
-                VALUES (?, ?, 'COMPLETED', ?, ?, ?, ?)
+                INSERT INTO idempotency_keys (key, target_id, status, payload_digest, response_json, dispatch_prepared, created_at, expires_at)
+                VALUES (?, ?, 'COMPLETED', ?, ?, 0, ?, ?)
               `).run(
                 envelope.id,
                 envelope.roomId,
-                null,
+                envelopeDigest,
                 JSON.stringify({ success: true, envelopeId: envelope.id }),
                 now,
                 new Date(Date.now() + 86400000).toISOString()
               );
             }
           }
+
+          maybeInjectFault('after_idempotency', args);
 
           // 2. Ensure room exists
           db.prepare('INSERT OR IGNORE INTO rooms (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)')
@@ -211,17 +267,24 @@ function handleRequest(msg) {
             new Date(envelope.timestamp || Date.now()).toISOString()
           );
 
+          maybeInjectFault('after_envelope', args);
+
           // 4. Append to event journal
           db.prepare(`
             INSERT INTO events (event_id, stream_id, event_type, payload_json, metadata_json, occurred_at)
             VALUES (?, ?, 'ENVELOPE_RECORDED', ?, NULL, ?)
           `).run(eventId, `room:${envelope.roomId}`, JSON.stringify(envelope), now);
 
+          maybeInjectFault('after_event', args);
+
           // 5. Insert into outbox
           db.prepare(`
             INSERT INTO outbox (id, stream_id, event_id, payload_json, status, retry_count, created_at, updated_at)
             VALUES (?, ?, ?, ?, 'QUEUED', 0, ?, ?)
           `).run(outboxId, `room:${envelope.roomId}`, eventId, JSON.stringify(envelope), now, now);
+
+          maybeInjectFault('after_outbox', args);
+          maybeInjectFault('before_commit', args);
 
           db.exec('COMMIT;');
           process.send({ id, result: { success: true, envelopeId: envelope.id } });
@@ -274,14 +337,14 @@ function handleRequest(msg) {
       case 'approveToken': {
         const { tokenId, approver } = args;
         if (!approver || !approver.id) {
-          throw new Error('ERR_UNTRUSTED_SENDER: Approver identity is required');
+          throw new Error('ERR_UNTRUSTED_SENDER: Approver identity is required (UB-P2-R03-02)');
         }
-        if (approver.isTrustedContext === false) {
-          throw new Error('ERR_UNTRUSTED_SENDER: Approver context is untrusted');
+        if (approver.isTrustedContext !== true) {
+          throw new Error('ERR_UNTRUSTED_SENDER: Approver context must be verified trusted context (UB-P2-R03-02)');
         }
         const allowedRoles = ['LEADER', 'USER', 'ADMIN', 'OPERATOR'];
-        if (approver.role && !allowedRoles.includes(approver.role)) {
-          throw new Error(`ERR_UNTRUSTED_SENDER: Role '${approver.role}' is not authorized to approve tokens`);
+        if (!approver.role || !allowedRoles.includes(approver.role)) {
+          throw new Error(`ERR_UNTRUSTED_SENDER: Role '${approver.role}' is not authorized to approve tokens (UB-P2-R03-02)`);
         }
         const row = db.prepare('SELECT status, expires_at FROM approvals WHERE token_id = ?').get(tokenId);
         if (!row) {
@@ -311,6 +374,9 @@ function handleRequest(msg) {
       }
       case 'validateAndConsumeApproval': {
         const { tokenId, actionType, payloadDigest, options = {} } = args;
+        if (!payloadDigest || typeof payloadDigest !== 'string' || !/^[0-9a-fA-F]{64}$/.test(payloadDigest)) {
+          throw new Error('ERR_APPROVAL_HASH_MISMATCH: Non-empty 64-char hex payload digest is required (UB-P2-R03-01)');
+        }
         const row = db.prepare('SELECT * FROM approvals WHERE token_id = ?').get(tokenId);
         if (!row) {
           throw new Error(`ERR_UNTRUSTED_ACTION: Approval token not found: ${tokenId}`);
@@ -350,7 +416,7 @@ function handleRequest(msg) {
         if (row.action_type !== actionType) {
           throw new Error(`ERR_APPROVAL_HASH_MISMATCH: Action type mismatch: expected ${row.action_type}, received ${actionType}`);
         }
-        if (payloadDigest && row.payload_digest !== payloadDigest) {
+        if (row.payload_digest !== payloadDigest) {
           throw new Error(`ERR_APPROVAL_HASH_MISMATCH: Payload digest mismatch for token ${tokenId}`);
         }
         if (new Date(row.expires_at).getTime() < Date.now()) {
@@ -370,10 +436,10 @@ function handleRequest(msg) {
         const res = db.prepare(`
           UPDATE approvals
           SET status = 'CONSUMED', consumed_at = ?
-          WHERE token_id = ? AND status = 'APPROVED' AND expires_at > ?
-        `).run(nowIso, tokenId, nowIso);
+          WHERE token_id = ? AND status = 'APPROVED' AND payload_digest = ? AND expires_at > ?
+        `).run(nowIso, tokenId, payloadDigest, nowIso);
         if (res.changes === 0) {
-          throw new Error(`ERR_APPROVAL_ALREADY_CONSUMED: Token ${tokenId} was consumed concurrently`);
+          throw new Error(`ERR_APPROVAL_ALREADY_CONSUMED: Token ${tokenId} was consumed concurrently or payload digest mismatch`);
         }
         process.send({ id, result: { success: true, tokenId, consumedAt: nowIso } });
         break;

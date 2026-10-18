@@ -73,17 +73,15 @@ export class IdempotencyManager {
       .get(key) as { status: string; response_json: string | null; payload_digest: string | null; expires_at: string; dispatch_prepared?: number } | undefined;
 
     if (existing) {
-      // Check payload digest mismatch (UB-P2-R01-005, P2-T07)
-      if (
-        options.payloadDigest &&
-        existing.payload_digest &&
-        existing.payload_digest !== options.payloadDigest
-      ) {
-        throw new UnionBotError({
-          code: 'ERR_PAYLOAD_MISMATCH',
-          message: `Idempotency key '${key}' reused with mismatched payload digest. Replay with different parameters is forbidden.`,
-          details: { key, expectedDigest: existing.payload_digest, actualDigest: options.payloadDigest },
-        });
+      // Check payload digest mismatch (UB-P2-R01-005, P2-T07, UB-P2-R03-03)
+      if (options.payloadDigest) {
+        if (!existing.payload_digest || existing.payload_digest !== options.payloadDigest) {
+          throw new UnionBotError({
+            code: 'ERR_PAYLOAD_MISMATCH',
+            message: `Idempotency key '${key}' reused with mismatched payload digest. Replay with different parameters is forbidden.`,
+            details: { key, expectedDigest: existing.payload_digest, actualDigest: options.payloadDigest },
+          });
+        }
       }
 
       if (existing.status === 'COMPLETED' && existing.response_json) {

@@ -1,0 +1,13 @@
+{
+  "suite": "UNION_BOT_ELECTRON_STORAGE_ERROR_SMOKE",
+  "timestamp": "2026-10-18T21:35:42.551Z",
+  "appStatus": "STORAGE_ERROR_BLOCKED",
+  "storageInitError": "ERR_STORAGE_UNAVAILABLE: Forced storage failure for test verification (UB-P2-R03-05)",
+  "statusCheck": {
+    "status": "STORAGE_ERROR_BLOCKED",
+    "error": "ERR_STORAGE_UNAVAILABLE: Forced storage failure for test verification (UB-P2-R03-05)"
+  },
+  "dispatchBlocked": true,
+  "approveBlocked": true,
+  "result": "PASS"
+}

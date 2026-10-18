@@ -211,7 +211,7 @@ describe('Union Bot Storage Engine & Event Sourcing (P2)', () => {
     );
 
     // 5. PO approves token (UB-P2-R01-001)
-    gate.approveToken(token.tokenId, { id: 'po_admin', role: 'LEADER' });
+    gate.approveToken(token.tokenId, { id: 'po_admin', role: 'LEADER', isTrustedContext: true });
 
     // 6. Consuming with exact payload now succeeds (P2-T02)
     gate.validateAndConsume(token.tokenId, 'EXEC_CLI', actionPayload);

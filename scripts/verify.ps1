@@ -4,7 +4,7 @@
 $ErrorActionPreference = "Stop"
 
 Write-Host "`n========================================================" -ForegroundColor Cyan
-Write-Host "UNION BOT COMPREHENSIVE VERIFICATION SUITE (P2 ROUND 3)" -ForegroundColor Cyan
+Write-Host "UNION BOT COMPREHENSIVE VERIFICATION SUITE (P2 ROUND 4)" -ForegroundColor Cyan
 Write-Host "========================================================`n" -ForegroundColor Cyan
 
 # 1. Strict TypeScript Typecheck across Monorepo
@@ -23,8 +23,8 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 
-# 3. Run TypeScript & Node Unit Tests (111 tests)
-Write-Host "`n--- 3. Running TypeScript & Node Unit Tests (111 tests including 18 P2 vectors & 14 R03 vectors) ---" -ForegroundColor Yellow
+# 3. Run TypeScript & Node Unit/Integration Tests (123 tests)
+Write-Host "`n--- 3. Running TypeScript & Node Unit/Integration Tests (123 tests including P2, R03, and R04 G01..G06, G09, G10, G12 vectors) ---" -ForegroundColor Yellow
 pnpm test:ts
 if ($LASTEXITCODE -ne 0) {
     Write-Host "`n[FATAL] TypeScript unit tests failed!" -ForegroundColor Red
@@ -39,16 +39,24 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 
-# 5. Run Electron Automated GUI Smoke Test (Fail-closed assertions)
-Write-Host "`n--- 5. Running Electron Automated GUI Smoke Test ---" -ForegroundColor Yellow
+# 5. Run Real Windows Electron E2E Tests (R04-G07, G08, G11)
+Write-Host "`n--- 5. Running Real Windows Electron E2E Tests (R04-G07, G08, G11) ---" -ForegroundColor Yellow
+pnpm test:e2e
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "`n[FATAL] Real Windows Electron E2E tests failed!" -ForegroundColor Red
+    exit 1
+}
+
+# 6. Run Electron Automated GUI Smoke Test (Fail-closed assertions)
+Write-Host "`n--- 6. Running Electron Automated GUI Smoke Test ---" -ForegroundColor Yellow
 pnpm smoke:gui
 if ($LASTEXITCODE -ne 0) {
     Write-Host "`n[FATAL] Electron GUI smoke test failed!" -ForegroundColor Red
     exit 1
 }
 
-# 6. Run Strict Secret Scan Audit (Exact SHA256 digest check)
-Write-Host "`n--- 6. Running Strict Secret & Security Audit ---" -ForegroundColor Yellow
+# 7. Run Strict Secret Scan Audit (Exact SHA256 digest check)
+Write-Host "`n--- 7. Running Strict Secret & Security Audit ---" -ForegroundColor Yellow
 pnpm secret-scan
 if ($LASTEXITCODE -ne 0) {
     Write-Host "`n[FATAL] Strict secret scanner check failed!" -ForegroundColor Red
@@ -56,6 +64,6 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Write-Host "`n========================================================" -ForegroundColor Green
-Write-Host "ALL VERIFICATION CHECKS PASSED (Typecheck + 127 Unit/Integration Tests + GUI Smoke + Strict Secret Scan)" -ForegroundColor Green
+Write-Host "ALL VERIFICATION CHECKS PASSED (Typecheck + Build + 142 Tests + GUI Smoke + Strict Secret Scan)" -ForegroundColor Green
 Write-Host "========================================================`n" -ForegroundColor Green
 exit 0
