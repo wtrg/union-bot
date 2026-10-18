@@ -8,6 +8,8 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const http = require('node:http');
 const https = require('node:https');
+const http2 = require('node:http2');
+const net = require('node:net');
 
 export interface CostGuardOptions {
   allowLocalhost?: boolean;
@@ -242,12 +244,87 @@ export function installNodeCostGuardInterceptor(costGuard: CostGuard): () => voi
     return originalHttpsAddRequest.apply(this, arguments as any);
   };
 
+  // 3. Intercept HTTP/2 and raw TCP/TLS socket connections (net.Socket.prototype.connect)
+  const originalHttp2Connect = http2 && typeof http2.connect === 'function' ? http2.connect : null;
+  if (originalHttp2Connect) {
+    http2.connect = function (authority: any, ...args: any[]) {
+      let urlStr: string;
+      if (typeof authority === 'string') {
+        urlStr = authority.startsWith('http') ? authority : `https://${authority}`;
+      } else if (authority instanceof URL) {
+        urlStr = authority.toString();
+      } else {
+        urlStr = `https://${(authority as any)?.hostname || (authority as any)?.host || 'localhost'}`;
+      }
+
+      if (!costGuard.isUrlAllowed(urlStr)) {
+        const violations = costGuard.getViolations();
+        const latest = violations[violations.length - 1] || {
+          url: urlStr,
+          hostname: typeof authority === 'string' ? authority : 'unknown',
+          reason: 'NOT_IN_ALLOWLIST' as const,
+          timestamp: new Date().toISOString()
+        };
+        throw new CostGuardViolationError(latest);
+      }
+      return originalHttp2Connect.call(http2, authority, ...args);
+    };
+  }
+
+  const originalNetSocketConnect = net && net.Socket && net.Socket.prototype ? net.Socket.prototype.connect : null;
+  if (originalNetSocketConnect) {
+    net.Socket.prototype.connect = function (...args: any[]) {
+      let targetHost = 'localhost';
+      let targetPort = '';
+      const firstArg = args[0];
+
+      if (typeof firstArg === 'object' && firstArg !== null) {
+        if (firstArg.path) {
+          return originalNetSocketConnect.apply(this, args);
+        }
+        targetHost = firstArg.host || firstArg.hostname || firstArg.servername || 'localhost';
+        targetPort = firstArg.port ? String(firstArg.port) : '';
+      } else if (typeof firstArg === 'number' || typeof firstArg === 'string') {
+        if (typeof firstArg === 'string' && (firstArg.startsWith('/') || firstArg.startsWith('\\\\'))) {
+          return originalNetSocketConnect.apply(this, args);
+        }
+        targetPort = String(firstArg);
+        if (typeof args[1] === 'string') {
+          targetHost = args[1];
+        }
+      }
+
+      const proto = targetPort === '80' ? 'http:' : 'https:';
+      const portSuffix = targetPort && targetPort !== '80' && targetPort !== '443' ? `:${targetPort}` : '';
+      const urlStr = `${proto}//${targetHost}${portSuffix}/`;
+
+      if (!costGuard.isUrlAllowed(urlStr)) {
+        const violations = costGuard.getViolations();
+        const latest = violations[violations.length - 1] || {
+          url: urlStr,
+          hostname: targetHost,
+          reason: 'NOT_IN_ALLOWLIST' as const,
+          timestamp: new Date().toISOString()
+        };
+        throw new CostGuardViolationError(latest);
+      }
+
+      return originalNetSocketConnect.apply(this, args);
+    };
+  }
+
   return function uninstall() {
     if (originalFetch) {
       globalThis.fetch = originalFetch;
     }
     http.Agent.prototype.addRequest = originalHttpAddRequest;
     https.Agent.prototype.addRequest = originalHttpsAddRequest;
+    if (originalHttp2Connect) {
+      http2.connect = originalHttp2Connect;
+    }
+    if (originalNetSocketConnect) {
+      net.Socket.prototype.connect = originalNetSocketConnect;
+    }
   };
 }
 

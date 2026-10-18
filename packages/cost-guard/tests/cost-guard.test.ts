@@ -2,6 +2,7 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert';
 import * as http from 'node:http';
 import * as https from 'node:https';
+import * as http2 from 'node:http2';
 import { CostGuard, installNodeCostGuardInterceptor, installElectronCostGuardInterceptor, CostGuardViolationError } from '../src/cost-guard.ts';
 
 describe('CostGuard Zero-Cost (0đ) Policy Enforcement', () => {
@@ -165,6 +166,29 @@ describe('CostGuard Zero-Cost (0đ) Policy Enforcement', () => {
       }, (err: any) => {
         assert.ok(err instanceof CostGuardViolationError);
         assert.strictEqual(err.violation.reason, 'PAID_API_BLOCKED');
+        return true;
+      });
+    } finally {
+      uninstall();
+    }
+  });
+
+  test('Runtime Node.js Interceptor blocks http2.connect to paid or unapproved endpoints', () => {
+    const uninstall = installNodeCostGuardInterceptor(guard);
+    try {
+      assert.throws(() => {
+        http2.connect('https://api.openai.com');
+      }, (err: any) => {
+        assert.ok(err instanceof CostGuardViolationError);
+        assert.strictEqual(err.violation.reason, 'PAID_API_BLOCKED');
+        return true;
+      });
+
+      assert.throws(() => {
+        http2.connect('https://unknown-paid-cloud.org');
+      }, (err: any) => {
+        assert.ok(err instanceof CostGuardViolationError);
+        assert.strictEqual(err.violation.reason, 'NOT_IN_ALLOWLIST');
         return true;
       });
     } finally {
