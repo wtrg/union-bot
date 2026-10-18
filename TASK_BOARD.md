@@ -15,8 +15,8 @@
 
 | Pha | Tên Pha | Trạng thái | Số Ticket | Đã Hoàn thành | Tỉ lệ |
 |---|---|---|---|---|---|
-| **P0** | Khảo sát & Khóa Nền móng (Audit & Baseline) | `ACTIVE (P1_ALLOWED)` | 18 | 16 | 88.9% |
-| **P1** | Monorepo Foundation & Toolchain | `IMPLEMENTATION_ALLOWED` | 11 | 0 | 0% |
+| **P0** | Khảo sát & Khóa Nền móng (Audit & Baseline) | `GATE_ACCEPTED_WITH_CARRYOVER` | 18 | 16 (Gate Closed) | 100% (Gate Closed) |
+| **P1** | Monorepo Foundation & Toolchain | `ACTIVE (IN_PROGRESS)` | 18 | 0 | 0% |
 | **P2** | Protocol, Storage & Event Sourcing | `TODO` | 10 | 0 | 0% |
 | **P3** | Desktop Shell & Workspace Window | `TODO` | 15 | 0 | 0% |
 | **P4** | Multi-Provider Browser Integration | `TODO` | 14 | 0 | 0% |
@@ -27,7 +27,7 @@
 | **P9** | Web Provider Capabilities & Extensions | `TODO` | 7 | 0 | 0% |
 | **P10**| Hardening, Adversarial Tests & Acceptance | `TODO` | 14 | 0 | 0% |
 | **P11**| Packaging, Windows Installer & Final Dossier | `TODO` | 12 | 0 | 0% |
-| **Tổng** | **Toàn bộ Lộ trình Union Bot** | **P1 Allowed** | **152** | **16** | **10.5%** |
+| **Tổng** | **Toàn bộ Lộ trình Union Bot** | **P1 Active** | **159** | **16** | **10.1%** |
 
 ---
 
@@ -44,19 +44,19 @@
 |---|---|---|---|---|---|
 | `P0-001` | Repo Baseline & Clean Tree Audit | Antigravity | `reports/audit/REPO_BASELINE.md` | `VERIFIED_LIVE` | `[SOURCE_VERIFIED]` Git init, .gitignore, clean tree verified. |
 | `P0-002` | Legacy Code Module Inventory | Antigravity | `reports/audit/MODULE_INVENTORY.md` | `VERIFIED_LIVE` | `[SOURCE_VERIFIED]` 177 files scanned, 4-tier decision applied. |
-| `P0-003` | Legacy Test Baseline Capture | Antigravity | `reports/qa/BASELINE_TESTS.md` | `FAIL (Baseline)` | `[TEAM_EXECUTED_LOG_INSPECTED]` 118 errors/failures, 94 warnings (exit 1) ghi nhận làm mốc lịch sử. |
-| `P0-003-SEC`| Security & Secret Scan Audit | Antigravity | `reports/audit/SECRET_SCAN_REPORT.md` | `VERIFIED_LIVE` | `[TEAM_EXECUTED_LOG_INSPECTED]` Quét 1.186 files qua 2 roots; 0 leaks thực tế; redacted triage. |
+| `P0-003` | Legacy Test Baseline Capture | Antigravity | `reports/qa/BASELINE_TESTS.md` | `BASELINE_CAPTURED_FAIL` | `[TEAM_EXECUTED_LOG_INSPECTED]` 118 errors/failures, 94 warnings (exit 1) ghi nhận làm mốc lịch sử khảo sát. |
+| `P0-003-SEC`| Security & Secret Scan Audit | Antigravity | `reports/audit/SECRET_SCAN_REPORT.md` | `VERIFIED_LIVE` | `[TEAM_EXECUTED_LOG_INSPECTED]` Quét 1.839 files qua 2 roots; 0 leaks thực tế; redacted triage. |
 | `P0-004` | Legacy Data & Persistence Audit | Antigravity | `docs/architecture/LEGACY_DATA_MAP.md` | `VERIFIED_LIVE` | `[SOURCE_VERIFIED]` 17 tables analyzed, WAL migration planned. |
 | `P0-005` | Environment & Toolchain Lock | Antigravity | `docs/architecture/ENVIRONMENT_LOCK.md` | `VERIFIED_LIVE` | `[SOURCE_VERIFIED]` Node 24, pnpm 12, Python 3.11, Git 2.55 locked. |
 | `P0-006` | Codex App Server Capability Spike | Antigravity | `reports/capability-evidence/CODEX_SPIKE.md` | `VERIFIED_LIVE` | `[TEAM_EXECUTED_LOG_INSPECTED]` Multi-turn RPC passed: init -> thread -> turn -> token stream. |
 | `P0-007` | Antigravity Headless CLI Spike | Antigravity | `reports/capability-evidence/ANTIGRAVITY_SPIKE.md` | `VERIFIED_LIVE` | `[TEAM_EXECUTED_LOG_INSPECTED]` agy -p json executed, token metrics verified. |
-| `P0-008` | Browser Engine & Origin Probe Spike | Antigravity | `reports/capability-evidence/BROWSER_SPIKE.md`, `spikes/electron-browser/` | `CARRY_OVER_P1` | `[NETWORK_PROBE_ONLY]` Strict TLS probe xong (4 origin); Electron spike tối thiểu đang tiến hành trong P1. |
+| `P0-008` | Browser Engine & Origin Probe Spike | Antigravity | `reports/capability-evidence/ELECTRON_BROWSER_SPIKE.md`, `spikes/electron-browser/` | `MINIMAL_SPIKE_ACCEPTED / PRODUCT_INTEGRATION_P1_P4` | `[TEAM_EXECUTED_LOG_INSPECTED]` Electron 33 Spike 4 AI rendered, partition isolation passed; hardening chuyển tiếp P1/P4. |
 | `P0-009` | Cost Guard 0-dong Architecture | Antigravity | `docs/COST_MANIFEST.md`, `docs/security/EGRESS_BOUNDARIES.md`, `packages/cost-guard/` | `VERIFIED_LIVE` | `[SOURCE_VERIFIED]` 3-Layer defense spec; in-process interceptor + 17/17 tests pass. |
 | `P0-010` | Provider Capability Matrix V1 | Antigravity | `docs/providers/CAPABILITY_MATRIX.md` | `VERIFIED_LIVE` | `[SOURCE_VERIFIED]` 6 providers analyzed, truthfulness enforced. |
 | `P0-011` | Monorepo Structure RFC & ADR-000 | Antigravity | `docs/adr/ADR-000-monorepo-foundation.md` | `VERIFIED_LIVE` | `[SOURCE_VERIFIED]` pnpm workspace & TypeScript layout accepted. |
-| `P0-012` | Phase 0 Review Dossier R01–R04 | Antigravity | `reports/handoff/REVIEW_PACKET_R01.md`, `reports/audit/REVIEW_FIX_PLAN_R04.md` | `IN_PROGRESS` | `[TEAM_EXECUTED_LOG_INSPECTED]` Nhận quyết định R04: CHANGES_REQUIRED — P1_IMPLEMENTATION_ALLOWED. |
+| `P0-012` | Phase 0 Review Dossier R01–R05 | Antigravity | `reports/handoff/REVIEW_PACKET_R04.md`, `reports/audit/UNION_BOT_GO_P1_LEADER_REVIEW_R05_AND_P1_DIRECTIVE.md` | `LEADER_GO_P1_ISSUED` | `[REVIEWER_EXECUTED]` Leader review R05 chính thức ban hành GO_P1 anchored to SHA c2d329e. |
 | `P0-013` | Union Bot Brand & Compatibility Inventory | Antigravity | `docs/adr/ADR-001-union-bot-brand-and-compat.md`, `reports/audit/BRAND_MIGRATION_INVENTORY.md` | `VERIFIED_LIVE` | `[SOURCE_VERIFIED]` 3-tier string mapping, 0-breakage strategy locked. |
-| `P0-014` | ChatGPT Leader Handoff Channel Spike | Antigravity | `reports/capability-evidence/LEADER_HANDOFF_SPIKE.md` | `VERIFIED_LIVE` | `[TEAM_EXECUTED_LOG_INSPECTED]` Two-way handshake tested, R00-R04 cycles completed. |
+| `P0-014` | ChatGPT Leader Handoff Channel Spike | Antigravity | `reports/capability-evidence/LEADER_HANDOFF_SPIKE.md` | `VERIFIED_LIVE` | `[TEAM_EXECUTED_LOG_INSPECTED]` Two-way handshake tested, R00-R05 cycles completed. |
 | `P0-015` | Proof-of-Fidelity Rich Response CAS | Antigravity | `docs/providers/FIDELITY_MATRIX.md`, `packages/artifact-store/` | `VERIFIED_LIVE` | `[SOURCE_VERIFIED]` CAS implemented, path traversal blocked, 8/8 tests + TS web roundtrip pass. |
 | `P0-016` | Provider Policy & Automation Matrix | Antigravity | `docs/providers/POLICY_AUTOMATION_MATRIX.md` | `VERIFIED_LIVE` | `[SOURCE_VERIFIED]` Legal/technical permissions mapped, billing blocked. |
 | `P0-017` | Baseline Data Flow & Trust Boundaries | Antigravity | `docs/security/DATA_FLOW_AND_TRUST_BOUNDARIES.md` | `VERIFIED_LIVE` | `[SOURCE_VERIFIED]` 4 trust zones & abuse cases defined. |
@@ -66,18 +66,33 @@
 
 ## 3. Lộ trình Các Pha Tiếp Theo (P1 – P11)
 
-### Phase P1: Monorepo Foundation & Toolchain (11 tickets)
-- `P1-001`: Root workspace setup (`pnpm-workspace.yaml`, `package.json`, `tsconfig.base.json`)
-- `P1-002`: apps/desktop scaffolding (Electron + TypeScript)
-- `P1-003`: apps/workspace-ui scaffolding (React + Vite + Tailwind CSS)
-- `P1-004`: packages/protocol setup
-- `P1-005`: packages/artifact-store linking
-- `P1-006`: packages/orchestrator setup
-- `P1-007`: packages/cost-guard linking & integration
-- `P1-008`: Build orchestration & scripts (`pnpm build`, `pnpm test`, `pnpm lint`)
-- `P1-009`: CI/CD pre-commit hooks (secret scan, type check)
-- `P1-010`: Phase 1 review dossier & review packet R02
-- `P1-011` [V3.1]: Union Bot package metadata, icons, app titles, updater safety
+### Phase P1: Monorepo Foundation & Toolchain (`ACTIVE / IN_PROGRESS`)
+
+> **Quyết định Chuyển pha:** `GO_P1` được Technical Leader phê duyệt chính thức tại Round R05 (gắn với commit `c2d329edb925ecbbab9b707ab6042550e656a7a7`, văn bản chỉ thị `reports/audit/UNION_BOT_GO_P1_LEADER_REVIEW_R05_AND_P1_DIRECTIVE.md`).
+
+#### Wave 1: Security Preflight & Root Monorepo Hardening
+- `UB-P1-SEC-001` [S1/HIGH]: `safeOpenExternal` scheme validation & `setWindowOpenHandler` on WebContentsView (chặn protocol nguy hiểm `file:`, `javascript:`, deny popups)
+- `UB-P1-SEC-002` [S1/HIGH]: Secret scanner strict fixture allowlist (loại bỏ auto-safe theo tên folder; hỗ trợ `.env.*`, `.npmrc`, `*.pem`, `*.key`)
+- `UB-P1-SEC-003` [S1/HIGH]: Screenshot reality check (loại bỏ suffix `_scrubbed` nếu không redact thật; `--no-screenshot` cho auth profiles)
+- `UB-P1-SEC-004` [S2/MEDIUM]: Codex harness subprocess direct argv (`shell=False`, sanitized PATH, redaction)
+- `P1-001`: Root monorepo lockfile (`pnpm-lock.yaml`), packageManager & Node LTS engines lock
+- `P1-007`: Wire Cost Guard interceptor vào Electron main lifecycle & session filters
+- `P1-009`: CI / pre-commit verification script (`scripts/verify.ps1`, strict secret scan, type check)
+
+#### Wave 2: Desktop & UI Foundation
+- `P1-002`: `apps/desktop` Electron 33+ TypeScript main/preload/renderer structure
+- `P1-003`: `apps/workspace-ui` React 18 + Vite + Tailwind CSS scaffolding
+- `P1-004`: `packages/protocol` setup (Zod schemas for MessagePart, Envelope, Fidelity)
+- `P1-005`: `packages/artifact-store` workspace link & cross-package tests
+- `P1-006`: `packages/orchestrator` skeleton (Admission Policy & default DENY_UNKNOWN)
+- `P1-011` [V3.1]: Union Bot branding, metadata, window titles, icons, updater safety
+
+#### Wave 3: Reproducible Build & Verification Gate (GO_P2)
+- `P1-008`: Build orchestration & scripts (`pnpm build`, `pnpm test`, `pnpm lint`, `pnpm typecheck`)
+- `UB-P1-QA-005` [S2/MEDIUM]: Electron probe exit codes, timeout handling & evidence fidelity
+- `UB-P1-ARCH-006` [S2/MEDIUM]: Cost Guard admission gate wiring & deny-before-dispatch
+- `UB-P1-QA-007` [S3/LOW]: Evidence taxonomy & test counters alignment
+- `P1-010`: Phase 1 Review Dossier & `REVIEW_PACKET_P1_R01.md` requesting `GO_P2`
 
 ### Phase P2: Protocol, Storage & Event Sourcing (10 tickets)
 - `P2-001` .. `P2-008`: Zod schemas, SQLite WAL setup, event journal, idempotency

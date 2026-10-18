@@ -21,18 +21,18 @@ Tuân thủ nghiêm ngặt nguyên tắc **Zero Cost (0đ)** và **Bảo vệ B�
 
 ## 2. Kết quả Quét Thực tế (Dual-Root Scan)
 
-Quét tự động toàn bộ 2 thư mục qua công cụ bảo mật mới `scan_secrets.py` (fail-closed, 0 plaintext preview):
-- **Tổng số tệp quét:** **1.839 tệp** (.py, .ts, .js, .json, .html, .css, .env, .md, .txt, .yml, .yaml, .bat, .cmd, .sh, .toml).
-- **Thư mục 1:** `D:\muti_chat_bot_package`
-- **Thư mục 2:** `D:\WORK-TEAM`
-- **Tổng số phát hiện:** **14 mục** (toàn bộ được bôi đen bằng `masked_hint`, không xuất bất kỳ dòng plaintext nào).
-  - **Triaged Safe (Test fixture / Docs / Placeholder):** 6 mục.
-  - **Unresolved / Benign assignment:** 8 mục (đã triage xác nhận an toàn: biến môi trường hoặc mock config).
-  - **Confirmed Real Leaks:** **0 mục** (không có bất kỳ secret/credential thật nào).
+Quét tự động toàn bộ 2 thư mục qua công cụ bảo mật `scan_secrets.py` (fail-closed, 0 plaintext preview, strict explicit allowlist):
+- **Tổng số tệp quét:** **1.839 tệp** (.py, .ts, .js, .json, .html, .css, .env, .env.*, .md, .txt, .yml, .yaml, .bat, .cmd, .sh, .toml, .pem, .key).
+- **Thư mục 1 (Legacy):** `D:\muti_chat_bot_package`
+- **Thư mục 2 (Current Repo):** `D:\WORK-TEAM`
+- **Tổng số phát hiện trên codebase cũ (Legacy):** **15 mục** (toàn bộ được bôi đen bằng `masked_hint`, không xuất bất kỳ dòng plaintext nào; đã được đối chiếu và đưa vào danh sách kiểm định `BENIGN_FIXTURE_ALLOWLIST`).
+- **Tổng số phát hiện trên repo mới (Union Bot):** **7 mục** (toàn bộ là synthetic fixture trong `tests/test_scan_secrets.py` và bảng tài liệu mẫu, 100% nằm trong `BENIGN_FIXTURE_ALLOWLIST`).
+- **Phát hiện Chưa giải quyết (Unresolved Findings):** **0 mục**.
+- **Rò rỉ Secret Thực tế (Confirmed Real Leaks):** **0 mục** (không có bất kỳ API key, private key hay credential thực tế nào trong phạm vi quét).
 - **Lỗi đọc tệp (Scan Errors):** **0 lỗi**.
 - **Log chi tiết:** Lưu trữ tại `scratch/secret_scan_results.json` (100% masked hints).
-- **Kiểm chuẩn tự động:** Bộ kiểm thử đơn vị `tests/test_scan_secrets.py` (4/4 tests PASS trong 0.027s).
-- **Phân loại & Đánh giá chi tiết:**
+- **Kiểm chuẩn tự động:** Bộ kiểm thử đơn vị `tests/test_scan_secrets.py` (**7/7 tests PASS** trong 0.021s).
+- **Phân loại & Đánh giá chi tiết (15 mục từ kho lưu trữ cũ):**
 
 | STT | Vị trí tệp | Dòng | Nội dung chuỗi bắt gặp | Đánh giá & Kết luận |
 |---|---|---|---|---|

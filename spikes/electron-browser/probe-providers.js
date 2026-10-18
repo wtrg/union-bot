@@ -1,6 +1,7 @@
 const { app, BrowserWindow, WebContentsView, session, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const { safeOpenExternal, validateExternalUrl } = require('./safe-external.js');
 
 app.disableHardwareAcceleration();
 
@@ -11,13 +12,17 @@ const PROVIDERS = [
   { name: 'DeepSeek', url: 'https://chat.deepseek.com', partition: 'persist:mcb-web-deepseek' }
 ];
 
+const NO_SCREENSHOT = process.argv.includes('--no-screenshot');
+
 const results = {
   timestamp: new Date().toISOString(),
   electronVersion: process.versions.electron,
   chromeVersion: process.versions.chrome,
   providers: {},
   partitionIsolationTest: null,
-  externalFallbackTest: null
+  externalFallbackTest: null,
+  dangerousSchemeRejectionTest: null,
+  allPassed: false
 };
 
 const outputDir = path.resolve(__dirname, '../../scratch/electron-probe');
@@ -58,16 +63,14 @@ async function runPartitionIsolationTest() {
   };
 }
 
-async function runExternalFallbackTest(window) {
-  console.log('\n--- Running External Fallback Safe Route Test ---');
-  let openExternalCalled = false;
-  let interceptedUrl = null;
+async function runExternalFallbackAndSecurityTest(window) {
+  console.log('\n--- Running External Fallback & Dangerous Scheme Rejection Test (UB-P1-SEC-001) ---');
+  const openedUrls = [];
 
-  // Temporarily override shell.openExternal
+  // Mock shell.openExternal
   const originalOpenExternal = shell.openExternal;
   shell.openExternal = async (url) => {
-    openExternalCalled = true;
-    interceptedUrl = url;
+    openedUrls.push(url);
     return Promise.resolve();
   };
 
@@ -80,27 +83,47 @@ async function runExternalFallbackTest(window) {
   });
   window.contentView.addChildView(testView);
 
-  // Hook new window / external link handling
+  // Hook new window with safeOpenExternal: deny child view creation, filter scheme
   testView.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url);
+    safeOpenExternal(url, shell);
     return { action: 'deny' };
   });
 
-  // Trigger test window open
-  await testView.webContents.loadURL('data:text/html,<html><body><a id="link" href="https://unapproved-external.org" target="_blank">External</a></body></html>');
-  await testView.webContents.executeJavaScript('document.getElementById("link").click()');
+  // 1. Test valid HTTPS external link
+  await testView.webContents.loadURL('data:text/html,<html><body><a id="valid-link" href="https://unapproved-external.org" target="_blank">Valid External</a><a id="file-link" href="file:///C:/Windows/System32/cmd.exe" target="_blank">File</a><a id="js-link" href="javascript:alert(1)" target="_blank">JS</a><a id="ms-link" href="ms-settings:privacy" target="_blank">MS</a></body></html>');
+  
+  await testView.webContents.executeJavaScript('document.getElementById("valid-link").click()');
+  await new Promise(r => setTimeout(r, 200));
 
-  // Wait brief moment for event loop
-  await new Promise(r => setTimeout(r, 500));
+  // 2. Test dangerous schemes
+  await testView.webContents.executeJavaScript('document.getElementById("file-link").click()');
+  await testView.webContents.executeJavaScript('document.getElementById("js-link").click()');
+  await testView.webContents.executeJavaScript('document.getElementById("ms-link").click()');
+  await new Promise(r => setTimeout(r, 400));
 
   shell.openExternal = originalOpenExternal;
   window.contentView.removeChildView(testView);
 
-  console.log(`External fallback called: ${openExternalCalled} for url: ${interceptedUrl}`);
+  const validOpened = openedUrls.includes('https://unapproved-external.org/');
+  const fileOpened = openedUrls.some(u => u.startsWith('file:'));
+  const jsOpened = openedUrls.some(u => u.startsWith('javascript:'));
+  const msOpened = openedUrls.some(u => u.startsWith('ms-'));
+
+  const dangerousBlocked = !fileOpened && !jsOpened && !msOpened;
+  console.log(`Valid HTTPS external opened: ${validOpened} (${openedUrls[0] || 'none'})`);
+  console.log(`Dangerous schemes strictly blocked: ${dangerousBlocked} (file: ${fileOpened}, js: ${jsOpened}, ms: ${msOpened})`);
+
   results.externalFallbackTest = {
-    openExternalCalled,
-    interceptedUrl,
-    passed: openExternalCalled && interceptedUrl === 'https://unapproved-external.org/'
+    openedUrls,
+    validOpened,
+    passed: validOpened
+  };
+
+  results.dangerousSchemeRejectionTest = {
+    fileBlocked: !fileOpened,
+    jsBlocked: !jsOpened,
+    msBlocked: !msOpened,
+    passed: dangerousBlocked
   };
 }
 
@@ -115,6 +138,13 @@ async function probeProvider(window, provider) {
       contextIsolation: true,
       nodeIntegration: false
     }
+  });
+
+  // Attach safeWindowOpenHandler to provider view (UB-P1-SEC-001)
+  view.webContents.setWindowOpenHandler(({ url }) => {
+    console.log(`[ProviderView-${provider.name}] Denied popup, safe routing: ${url}`);
+    safeOpenExternal(url, shell);
+    return { action: 'deny' };
   });
 
   window.contentView.addChildView(view);
@@ -140,50 +170,68 @@ async function probeProvider(window, provider) {
     failDetails = { code: -1, desc: err.message };
   }
 
-  // Allow dynamic scripts to execute
+  // Allow scripts to run and finalize navigation
   await new Promise(r => setTimeout(r, 4000));
 
   const pageTitle = view.webContents.getTitle();
   const currentUrl = view.webContents.getURL();
 
-  // Capture scrubbed screenshot
-  const screenshotFilename = `${provider.name.toLowerCase()}_scrubbed.png`;
+  // Capture raw rendered screenshot if not disabled (UB-P1-SEC-003)
+  const screenshotFilename = `${provider.name.toLowerCase()}_raw_rendered.png`;
   const screenshotPath = path.join(outputDir, screenshotFilename);
   let screenshotBytes = 0;
 
-  try {
-    const image = await view.webContents.capturePage();
-    const pngBuffer = image.toPNG();
-    if (pngBuffer && pngBuffer.length > 0) {
-      fs.writeFileSync(screenshotPath, pngBuffer);
-      screenshotBytes = pngBuffer.length;
+  if (!NO_SCREENSHOT) {
+    try {
+      const image = await view.webContents.capturePage();
+      const pngBuffer = image.toPNG();
+      if (pngBuffer && pngBuffer.length > 0) {
+        fs.writeFileSync(screenshotPath, pngBuffer);
+        screenshotBytes = pngBuffer.length;
+      }
+    } catch (err) {
+      console.log(`[Capture] Surface notice: ${err.message}`);
     }
-  } catch (err) {
-    console.log(`[Capture] Surface notice: ${err.message}`);
   }
 
-  // Assess verdict
+  // Assess verdict (UB-P1-QA-005: do not claim rendered if failed load without recovery)
   let verdict = 'NOT_TESTED';
+  let state = 'UNKNOWN';
   let notes = '';
 
-  if (finishLoad || (pageTitle && pageTitle.length > 0)) {
+  if (finishLoad && pageTitle && pageTitle.length > 0) {
     verdict = 'ELECTRON_RENDERED';
-    notes = `Page rendered in WebContentsView. Title: '${pageTitle}'. Scrubbed screenshot saved (${screenshotBytes} bytes).`;
-  } else if (failLoad) {
+    
+    // Distinguish login-required entry pages from ready state
+    const lowerUrl = currentUrl.toLowerCase();
+    if (lowerUrl.includes('/login') || lowerUrl.includes('/sign_in') || lowerUrl.includes('accounts.google.com')) {
+      state = 'LOGIN_REQUIRED';
+      notes = `Public login page rendered in isolated WebContentsView. Title: '${pageTitle}'. Authenticated session required for prompt dispatch.`;
+    } else {
+      state = 'READY_OR_LANDING';
+      notes = `Landing page rendered in isolated WebContentsView. Title: '${pageTitle}'.`;
+    }
+  } else if (failLoad && !finishLoad) {
     verdict = 'BLOCKED_EXTERNAL';
+    state = 'FAIL_LOAD';
     notes = `Failed to load: ${JSON.stringify(failDetails)}`;
+  } else {
+    verdict = 'PARTIAL_LOAD';
+    state = 'DEGRADED';
+    notes = `Loaded with anomalies. Title: '${pageTitle}', failLoad: ${failLoad}`;
   }
 
-  console.log(`Result: ${verdict} | Title: '${pageTitle}'`);
-  console.log(`Screenshot: ${screenshotFilename} (${screenshotBytes} bytes)`);
+  console.log(`Result: ${verdict} | State: ${state} | Title: '${pageTitle}'`);
+  console.log(`Screenshot: ${NO_SCREENSHOT ? 'DISABLED (--no-screenshot)' : `${screenshotFilename} (${screenshotBytes} bytes)`}`);
 
   results.providers[provider.name] = {
     origin: provider.url,
     partition: provider.partition,
     verdict,
+    state,
     pageTitle,
     currentUrl,
-    screenshot: screenshotFilename,
+    screenshot: NO_SCREENSHOT ? null : screenshotFilename,
     screenshotBytes,
     finishLoad,
     failLoad,
@@ -207,21 +255,33 @@ app.whenReady().then(async () => {
     // 1. Partition Isolation A/B Test
     await runPartitionIsolationTest();
 
-    // 2. External Fallback Test
-    await runExternalFallbackTest(win);
+    // 2. External Fallback & Dangerous Scheme Rejection Test (UB-P1-SEC-001)
+    await runExternalFallbackAndSecurityTest(win);
 
     // 3. Probe each of the 4 providers
     for (const p of PROVIDERS) {
       await probeProvider(win, p);
     }
 
+    // Evaluate overall success
+    const partitionPassed = results.partitionIsolationTest?.passed === true;
+    const fallbackPassed = results.externalFallbackTest?.passed === true;
+    const dangerousBlocked = results.dangerousSchemeRejectionTest?.passed === true;
+    const providersRendered = Object.values(results.providers).filter(p => p.verdict === 'ELECTRON_RENDERED').length >= 4;
+
+    results.allPassed = partitionPassed && fallbackPassed && dangerousBlocked && providersRendered;
+
     // Save final report
     const reportPath = path.join(outputDir, 'electron_probe_report.json');
     fs.writeFileSync(reportPath, JSON.stringify(results, null, 2), 'utf-8');
-    console.log(`\n=== PROBE COMPLETE ===\nReport saved to: ${reportPath}`);
+    console.log(`\n=== PROBE COMPLETE ===\nAll Tests Passed: ${results.allPassed}\nReport saved to: ${reportPath}`);
 
+    if (!results.allPassed) {
+      process.exitCode = 1;
+    }
   } catch (err) {
     console.error('Fatal probe error:', err);
+    process.exitCode = 1;
   } finally {
     win.destroy();
     app.quit();

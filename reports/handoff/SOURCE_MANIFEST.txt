@@ -1,10 +1,10 @@
-# UNION BOT SOURCE MANIFEST — ROUND R04
+# UNION BOT SOURCE MANIFEST — ROUND R05 / P1 WAVE 1
 Branch: main
-Reviewed Base SHA: 8defe3f05c323a039fbedbbe78424bf644b531eb
-Submission Tracking Rule: Target commit SHA is recorded dynamically upon push in REVIEW_PACKET_R04.md and chat handoff (non-self-referential)
+Reviewed Base SHA: c2d329edb925ecbbab9b707ab6042550e656a7a7
+Submission Tracking Rule: Target commit SHA is recorded dynamically upon push in review packets and chat handoff (non-self-referential)
 Repository URL: https://github.com/wtrg/union-bot
 
-Tracked Files (64 files):
+Tracked Files (68 files):
 .gitignore
 MUTI_CHAT_BOT_MASTER_PLAN_FULL_V3.md
 TASK_BOARD.md
@@ -40,6 +40,7 @@ reports/audit/MODULE_INVENTORY.md
 reports/audit/REPO_BASELINE.md
 reports/audit/REVIEW_FIX_PLAN_R04.md
 reports/audit/SECRET_SCAN_REPORT.md
+reports/audit/UNION_BOT_GO_P1_LEADER_REVIEW_R05_AND_P1_DIRECTIVE.md
 reports/capability-evidence/AGY_LIVE.md
 reports/capability-evidence/ANTIGRAVITY_SPIKE.md
 reports/capability-evidence/BROWSER_COMPAT.md
@@ -58,11 +59,14 @@ reports/handoff/SOURCE_MANIFEST.txt
 reports/qa/BASELINE_TESTS.md
 reports/qa/RAW_TAP_OUTPUT.txt
 scan_secrets.py
+scripts/verify.ps1
 spikes/electron-browser/README.md
 spikes/electron-browser/main.js
 spikes/electron-browser/package.json
 spikes/electron-browser/pnpm-lock.yaml
 spikes/electron-browser/probe-providers.js
+spikes/electron-browser/safe-external.js
+spikes/electron-browser/test-safe-external.js
 test_codex_full_rpc.py
 test_codex_spike.py
 test_web_roundtrip.py

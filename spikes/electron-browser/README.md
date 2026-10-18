@@ -1,6 +1,6 @@
-# Electron WebContentsView Browser Spike — Union Bot (P0-008 / P1 Starter)
+# Electron WebContentsView Browser Spike — Union Bot (P0-008 / Phase P1 Wave 1)
 
-Minimal Electron spike demonstrating isolated multi-provider WebContentsView rendering, partition sandboxing, safe external fallback routing, and zero-cost policy enforcement.
+Minimal Electron spike demonstrating isolated multi-provider WebContentsView rendering, partition sandboxing, strict external route scheme validation (`safeOpenExternal`), and zero-cost policy enforcement.
 
 ---
 
@@ -13,27 +13,42 @@ Minimal Electron spike demonstrating isolated multi-provider WebContentsView ren
   - Gemini: `persist:mcb-web-gemini`
   - Claude: `persist:mcb-web-claude`
   - DeepSeek: `persist:mcb-web-deepseek`
-- **Safe Route Handler:** Mọi liên kết mở cửa sổ mới (`window.open`) hoặc domain ngoài luồng được điều hướng an toàn qua trình duyệt mặc định của hệ điều hành (`shell.openExternal`) thay vì mở trong ứng dụng.
+- **Strict Safe External Route Handler (`safe-external.js` / UB-P1-SEC-001):**
+  - Mọi `view.webContents.setWindowOpenHandler` đều trả `{ action: 'deny' }` để chặn mở popup tùy ý.
+  - Bộ kiểm duyệt `safeOpenExternal` chỉ cho phép scheme `https:` và `http:`.
+  - Nghiêm cấm các scheme nguy hiểm như `file:`, `javascript:`, `data:`, `vbscript:`, `shell:`, `ms-settings:`, `powershell:`, `cmd:`.
+  - Cấm embedded credentials trong URL (`https://user:pass@host`) và cấm loopback/private IP addresses.
+- **Xác thực Hiển thị & Ảnh chụp Màn hình (UB-P1-SEC-003):**
+  - Ảnh chụp màn hình kiểm chuẩn bề mặt hiển thị (`_raw_rendered.png`) chỉ thực hiện trên các trang đăng nhập/giới thiệu công khai (public login / landing pages).
+  - Không tuyên bố là ảnh đã "scrub" che dữ liệu cá nhân; hỗ trợ cờ `--no-screenshot` để tắt hoàn toàn tính năng chụp khi phiên làm việc chứa dữ liệu nhạy cảm.
 
 ---
 
-## 2. Hướng dẫn Chạy trên Windows (Windows Execution Guide)
+## 2. Hướng dẫn Chạy Kiểm thử trên Windows
 
-### Cách 1: Chạy tự động kiểm thử 4 nhà cung cấp & Phân vùng (Automated Probe)
+### Bước 1: Kiểm thử Đơn vị Bảo mật Tuyến đường Ngoài (SafeExternal Unit Tests)
+```powershell
+node --test spikes/electron-browser/test-safe-external.js
+```
+Kết quả: **8/8 unit tests PASS** (chặn đứng `file:`, `javascript:`, `ms-settings:`, URL credentials, private IPs).
+
+### Bước 2: Chạy Tự động Kiểm chuẩn 4 Nhà Cung Cấp & Phân Vùng (Automated Probe)
 ```powershell
 cd d:\WORK-TEAM\spikes\electron-browser
+$env:ELECTRON_OVERRIDE_DIST_PATH = "D:\WORK-TEAM\spikes\electron-browser\node_modules\.pnpm\electron@33.4.11\node_modules\electron\dist"
 node ./node_modules/electron/cli.js probe-providers.js
 ```
-Lệnh này sẽ:
-1. Thực thi bài kiểm thử cô lập Cookie A/B giữa 2 partition `persist:mcb-web-test-a` và `persist:mcb-web-test-b`.
-2. Kiểm thử cơ chế Fallback mở trình duyệt ngoài khi gặp liên kết không xác định.
-3. Nạp lần lượt 4 nhà cung cấp (ChatGPT, Gemini, Claude, DeepSeek) trong `WebContentsView`.
-4. Chụp ảnh màn hình kiểm chứng (đã scrub thông tin người dùng) lưu tại `scratch/electron-probe/`.
-5. Xuất báo cáo kết quả `scratch/electron-probe/electron_probe_report.json`.
+(Hoặc thêm `--no-screenshot` để bỏ qua thao tác capturePage).
 
-### Cách 2: Chạy giao diện Desktop hiển thị cửa sổ (Interactive Window)
+Kết quả:
+1. **Partition Isolation A/B Test:** Cookie token tại `persist:mcb-web-test-a` không rò rỉ sang `persist:mcb-web-test-b` (PASS).
+2. **External Fallback & Security Test (UB-P1-SEC-001):** URL HTTPS hợp lệ được điều hướng an toàn; các scheme `file:`, `javascript:`, `ms-settings:` bị chặn đứng hoàn toàn (PASS).
+3. **Nạp 4 Provider AI:** ChatGPT (`READY_OR_LANDING`), Gemini (`READY_OR_LANDING`), Claude (`LOGIN_REQUIRED`), DeepSeek (`LOGIN_REQUIRED`).
+4. Báo cáo lưu tại `scratch/electron-probe/electron_probe_report.json`.
+
+### Bước 3: Chạy Giao diện Desktop Mẫu
 ```powershell
 cd d:\WORK-TEAM\spikes\electron-browser
+$env:ELECTRON_OVERRIDE_DIST_PATH = "D:\WORK-TEAM\spikes\electron-browser\node_modules\.pnpm\electron@33.4.11\node_modules\electron\dist"
 node ./node_modules/electron/cli.js main.js
 ```
-Cửa sổ desktop Windows sẽ mở ra hiển thị `WebContentsView` nhúng ChatGPT trong partition cô lập.

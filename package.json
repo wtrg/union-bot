@@ -4,8 +4,17 @@
   "private": true,
   "description": "Union Bot — Multi-AI Collaboration Desktop Workspace",
   "type": "module",
+  "packageManager": "pnpm@10.2.0",
+  "engines": {
+    "node": ">=22.0.0",
+    "pnpm": ">=9.0.0"
+  },
   "scripts": {
-    "test": "node --experimental-strip-types --test packages/cost-guard/tests/cost-guard.test.ts packages/artifact-store/tests/artifact-store.test.ts"
+    "test": "pnpm test:ts && pnpm test:py",
+    "test:ts": "node --experimental-strip-types --test packages/cost-guard/tests/cost-guard.test.ts packages/artifact-store/tests/artifact-store.test.ts spikes/electron-browser/test-safe-external.js",
+    "test:py": "python -m unittest discover -s tests -p \"test_*.py\"",
+    "secret-scan": "python scan_secrets.py --strict",
+    "verify": "pnpm test && pnpm secret-scan"
   },
   "keywords": [
     "union-bot",
