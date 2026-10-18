@@ -1,1 +1,1 @@
-export * from './cost-guard';
+export * from './cost-guard.ts';

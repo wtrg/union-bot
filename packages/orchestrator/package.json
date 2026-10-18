@@ -1,0 +1,25 @@
+{
+  "name": "@union-bot/orchestrator",
+  "version": "1.0.0",
+  "description": "Cross-agent collaboration orchestrator and AdmissionPolicyGate for Union Bot",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "node --test dist/tests/orchestrator.test.js"
+  },
+  "dependencies": {
+    "@union-bot/protocol": "workspace:*",
+    "@union-bot/cost-guard": "workspace:*",
+    "@union-bot/artifact-store": "workspace:*"
+  },
+  "keywords": [
+    "union-bot",
+    "orchestrator",
+    "admission-gate",
+    "zero-cost"
+  ],
+  "author": "Union Bot Team",
+  "license": "MIT"
+}

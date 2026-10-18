@@ -1,1 +1,1 @@
-export * from './artifact-store';
+export * from './artifact-store.ts';

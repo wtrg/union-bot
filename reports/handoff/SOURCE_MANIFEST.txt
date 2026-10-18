@@ -1,14 +1,32 @@
-# UNION BOT SOURCE MANIFEST — ROUND R05 / P1 WAVE 1
+# UNION BOT SOURCE MANIFEST — ROUND P1 R01
 Branch: main
 Reviewed Base SHA: c2d329edb925ecbbab9b707ab6042550e656a7a7
 Submission Tracking Rule: Target commit SHA is recorded dynamically upon push in review packets and chat handoff (non-self-referential)
 Repository URL: https://github.com/wtrg/union-bot
 
-Tracked Files (68 files):
+Tracked Files (100 files):
 .gitignore
 MUTI_CHAT_BOT_MASTER_PLAN_FULL_V3.md
 TASK_BOARD.md
 UNION_BOT_V3_1_LEADER_ADDENDUM_AND_P0_GO.md
+apps/desktop/package.json
+apps/desktop/scripts/launch.js
+apps/desktop/src/cost-guard.cjs
+apps/desktop/src/main.js
+apps/desktop/src/preload.cjs
+apps/desktop/src/safe-external.js
+apps/desktop/tests/desktop.test.js
+apps/workspace-ui/index.html
+apps/workspace-ui/package.json
+apps/workspace-ui/src/App.tsx
+apps/workspace-ui/src/components/ChatRoom.tsx
+apps/workspace-ui/src/components/Header.tsx
+apps/workspace-ui/src/components/Sidebar.tsx
+apps/workspace-ui/src/main.tsx
+apps/workspace-ui/src/styles.css
+apps/workspace-ui/src/types.ts
+apps/workspace-ui/tsconfig.json
+apps/workspace-ui/vite.config.ts
 audit_legacy.py
 docs/COST_MANIFEST.md
 docs/adr/ADR-000-monorepo-foundation.md
@@ -32,6 +50,17 @@ packages/cost-guard/package.json
 packages/cost-guard/src/cost-guard.ts
 packages/cost-guard/src/index.ts
 packages/cost-guard/tests/cost-guard.test.ts
+packages/orchestrator/package.json
+packages/orchestrator/src/admission-gate.ts
+packages/orchestrator/src/index.ts
+packages/orchestrator/src/orchestrator.ts
+packages/orchestrator/tests/orchestrator.test.ts
+packages/orchestrator/tsconfig.json
+packages/protocol/package.json
+packages/protocol/src/index.ts
+packages/protocol/src/schemas.ts
+packages/protocol/tests/protocol.test.ts
+packages/protocol/tsconfig.json
 pnpm-lock.yaml
 pnpm-workspace.yaml
 probe_websites.py
@@ -47,6 +76,7 @@ reports/capability-evidence/BROWSER_COMPAT.md
 reports/capability-evidence/BROWSER_SPIKE.md
 reports/capability-evidence/CODEX_SPIKE.md
 reports/capability-evidence/ELECTRON_BROWSER_SPIKE.md
+reports/capability-evidence/ELECTRON_GUI_SMOKE_EVIDENCE.json
 reports/capability-evidence/LEADER_HANDOFF_SPIKE.md
 reports/capability-evidence/RICH_RESPONSE_SPIKE.md
 reports/capability-evidence/WEB_ARTIFACT_ROUNDTRIP_EVIDENCE.md
@@ -55,6 +85,7 @@ reports/handoff/REVIEW_PACKET_R01.md
 reports/handoff/REVIEW_PACKET_R02.md
 reports/handoff/REVIEW_PACKET_R03.md
 reports/handoff/REVIEW_PACKET_R04.md
+reports/handoff/REVIEW_PACKET_P1_R01.md
 reports/handoff/SOURCE_MANIFEST.txt
 reports/qa/BASELINE_TESTS.md
 reports/qa/RAW_TAP_OUTPUT.txt
@@ -70,6 +101,7 @@ spikes/electron-browser/test-safe-external.js
 test_codex_full_rpc.py
 test_codex_spike.py
 test_web_roundtrip.py
+tests/integration_packages.test.ts
 tests/test_codex_harness.py
 tests/test_scan_secrets.py
 tsconfig.base.json

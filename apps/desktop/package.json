@@ -1,0 +1,20 @@
+{
+  "name": "@union-bot/desktop",
+  "version": "1.0.0",
+  "description": "Union Bot — Electron desktop application and secure multi-agent workspace",
+  "type": "commonjs",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "node scripts/launch.js",
+    "test": "node --test tests/desktop.test.js"
+  },
+  "dependencies": {
+    "@union-bot/protocol": "workspace:*",
+    "@union-bot/cost-guard": "workspace:*",
+    "@union-bot/artifact-store": "workspace:*",
+    "@union-bot/orchestrator": "workspace:*"
+  },
+  "devDependencies": {
+    "electron": "^33.4.11"
+  }
+}

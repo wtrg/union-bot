@@ -1,0 +1,23 @@
+{
+  "name": "@union-bot/protocol",
+  "version": "1.0.0",
+  "description": "Cross-agent Envelope, MessagePart, and Fidelity schemas for Union Bot",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "node --test dist/tests/protocol.test.js"
+  },
+  "dependencies": {
+    "zod": "^3.23.8"
+  },
+  "keywords": [
+    "union-bot",
+    "protocol",
+    "envelope",
+    "schemas"
+  ],
+  "author": "Union Bot Team",
+  "license": "MIT"
+}

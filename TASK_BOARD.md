@@ -16,7 +16,7 @@
 | Pha | Tên Pha | Trạng thái | Số Ticket | Đã Hoàn thành | Tỉ lệ |
 |---|---|---|---|---|---|
 | **P0** | Khảo sát & Khóa Nền móng (Audit & Baseline) | `GATE_ACCEPTED_WITH_CARRYOVER` | 18 | 16 (Gate Closed) | 100% (Gate Closed) |
-| **P1** | Monorepo Foundation & Toolchain | `ACTIVE (IN_PROGRESS)` | 18 | 0 | 0% |
+| **P1** | Monorepo Foundation & Toolchain | `ACTIVE (WAVES 1 & 2 DONE / WAVE 3 SUBMISSION)` | 18 | 17 | 94.4% |
 | **P2** | Protocol, Storage & Event Sourcing | `TODO` | 10 | 0 | 0% |
 | **P3** | Desktop Shell & Workspace Window | `TODO` | 15 | 0 | 0% |
 | **P4** | Multi-Provider Browser Integration | `TODO` | 14 | 0 | 0% |
@@ -27,7 +27,7 @@
 | **P9** | Web Provider Capabilities & Extensions | `TODO` | 7 | 0 | 0% |
 | **P10**| Hardening, Adversarial Tests & Acceptance | `TODO` | 14 | 0 | 0% |
 | **P11**| Packaging, Windows Installer & Final Dossier | `TODO` | 12 | 0 | 0% |
-| **Tổng** | **Toàn bộ Lộ trình Union Bot** | **P1 Active** | **159** | **16** | **10.1%** |
+| **Tổng** | **Toàn bộ Lộ trình Union Bot** | **P1 Submission Ready** | **159** | **33** | **20.8%** |
 
 ---
 
@@ -66,33 +66,33 @@
 
 ## 3. Lộ trình Các Pha Tiếp Theo (P1 – P11)
 
-### Phase P1: Monorepo Foundation & Toolchain (`ACTIVE / IN_PROGRESS`)
+### Phase P1: Monorepo Foundation & Toolchain (`ACTIVE / WAVES 1 & 2 COMPLETE`)
 
 > **Quyết định Chuyển pha:** `GO_P1` được Technical Leader phê duyệt chính thức tại Round R05 (gắn với commit `c2d329edb925ecbbab9b707ab6042550e656a7a7`, văn bản chỉ thị `reports/audit/UNION_BOT_GO_P1_LEADER_REVIEW_R05_AND_P1_DIRECTIVE.md`).
 
-#### Wave 1: Security Preflight & Root Monorepo Hardening
-- `UB-P1-SEC-001` [S1/HIGH]: `safeOpenExternal` scheme validation & `setWindowOpenHandler` on WebContentsView (chặn protocol nguy hiểm `file:`, `javascript:`, deny popups)
-- `UB-P1-SEC-002` [S1/HIGH]: Secret scanner strict fixture allowlist (loại bỏ auto-safe theo tên folder; hỗ trợ `.env.*`, `.npmrc`, `*.pem`, `*.key`)
-- `UB-P1-SEC-003` [S1/HIGH]: Screenshot reality check (loại bỏ suffix `_scrubbed` nếu không redact thật; `--no-screenshot` cho auth profiles)
-- `UB-P1-SEC-004` [S2/MEDIUM]: Codex harness subprocess direct argv (`shell=False`, sanitized PATH, redaction)
-- `P1-001`: Root monorepo lockfile (`pnpm-lock.yaml`), packageManager & Node LTS engines lock
-- `P1-007`: Wire Cost Guard interceptor vào Electron main lifecycle & session filters
-- `P1-009`: CI / pre-commit verification script (`scripts/verify.ps1`, strict secret scan, type check)
+#### Wave 1: Security Preflight & Root Monorepo Hardening (ALL COMPLETE)
+- `UB-P1-SEC-001` [S1/HIGH]: `safeOpenExternal` scheme validation & `setWindowOpenHandler` on WebContentsView (chặn protocol nguy hiểm `file:`, `javascript:`, deny popups) — **VERIFIED_LIVE**
+- `UB-P1-SEC-002` [S1/HIGH]: Secret scanner strict fixture allowlist (loại bỏ auto-safe theo tên folder; hỗ trợ `.env.*`, `.npmrc`, `*.pem`, `*.key`) — **VERIFIED_LIVE**
+- `UB-P1-SEC-003` [S1/HIGH]: Screenshot reality check (loại bỏ suffix `_scrubbed` nếu không redact thật; `--no-screenshot` cho auth profiles) — **VERIFIED_LIVE**
+- `UB-P1-SEC-004` [S2/MEDIUM]: Codex harness subprocess direct argv (`shell=False`, sanitized PATH, redaction) — **VERIFIED_LIVE**
+- `P1-001`: Root monorepo lockfile (`pnpm-lock.yaml`), packageManager & Node LTS engines lock — **VERIFIED_LIVE**
+- `P1-007`: Wire Cost Guard interceptor vào Electron main lifecycle & session filters — **VERIFIED_LIVE**
+- `P1-009`: CI / pre-commit verification script (`scripts/verify.ps1`, strict secret scan, type check) — **VERIFIED_LIVE**
 
-#### Wave 2: Desktop & UI Foundation
-- `P1-002`: `apps/desktop` Electron 33+ TypeScript main/preload/renderer structure
-- `P1-003`: `apps/workspace-ui` React 18 + Vite + Tailwind CSS scaffolding
-- `P1-004`: `packages/protocol` setup (Zod schemas for MessagePart, Envelope, Fidelity)
-- `P1-005`: `packages/artifact-store` workspace link & cross-package tests
-- `P1-006`: `packages/orchestrator` skeleton (Admission Policy & default DENY_UNKNOWN)
-- `P1-011` [V3.1]: Union Bot branding, metadata, window titles, icons, updater safety
+#### Wave 2: Desktop & UI Foundation (ALL COMPLETE)
+- `P1-002`: `apps/desktop` Electron 33+ TypeScript main/preload/renderer structure with single-instance lock, sandbox, and safeOpenExternal — **VERIFIED_LIVE**
+- `P1-003`: `apps/workspace-ui` React 18 + Vite + modern dark styling with multi-room layout, demo states, and production build — **VERIFIED_LIVE**
+- `P1-004`: `packages/protocol` setup (Zod schemas for MessagePart, Envelope, Fidelity, AdmissionAction) — **VERIFIED_LIVE**
+- `P1-005`: `packages/artifact-store` workspace link & cross-package tests — **VERIFIED_LIVE**
+- `P1-006`: `packages/orchestrator` skeleton (Admission Policy & default DENY_UNKNOWN) — **VERIFIED_LIVE**
+- `P1-011` [V3.1]: Union Bot branding, metadata, window titles, icons, updater safety — **VERIFIED_LIVE**
+- `UB-P1-QA-005` [S2/MEDIUM]: Electron automated GUI smoke test mode (`--smoke`) producing verified evidence — **VERIFIED_LIVE**
+- `UB-P1-ARCH-006` [S2/MEDIUM]: Cost Guard admission gate wiring & deny-before-dispatch — **VERIFIED_LIVE**
+- `UB-P1-QA-007` [S3/LOW]: Evidence taxonomy & test counters alignment (51 TS + 14 Python = 65 tests + GUI Smoke) — **VERIFIED_LIVE**
 
-#### Wave 3: Reproducible Build & Verification Gate (GO_P2)
-- `P1-008`: Build orchestration & scripts (`pnpm build`, `pnpm test`, `pnpm lint`, `pnpm typecheck`)
-- `UB-P1-QA-005` [S2/MEDIUM]: Electron probe exit codes, timeout handling & evidence fidelity
-- `UB-P1-ARCH-006` [S2/MEDIUM]: Cost Guard admission gate wiring & deny-before-dispatch
-- `UB-P1-QA-007` [S3/LOW]: Evidence taxonomy & test counters alignment
-- `P1-010`: Phase 1 Review Dossier & `REVIEW_PACKET_P1_R01.md` requesting `GO_P2`
+#### Wave 3: Reproducible Build & Verification Gate (GO_P2) (IN PROGRESS)
+- `P1-008`: Build orchestration & scripts (`pnpm build`, `pnpm test`, `pnpm smoke:gui`, `pnpm verify`) — **VERIFIED_LIVE**
+- `P1-010`: Phase 1 Review Dossier & `reports/handoff/REVIEW_PACKET_P1_R01.md` requesting `GO_P2` — **SUBMISSION_READY**
 
 ### Phase P2: Protocol, Storage & Event Sourcing (10 tickets)
 - `P2-001` .. `P2-008`: Zod schemas, SQLite WAL setup, event journal, idempotency
