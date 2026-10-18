@@ -2,6 +2,7 @@
 
 - **Packet ID:** `REVIEW_PACKET_R01`
 - **Phase:** `P0` (Audit & Baseline)
+- **Commit SHA:** `13bddccd8e00dde848c2cb78fad2a9ece197346e`
 - **Date:** 2026-10-18
 - **Implementation Owner:** Antigravity
 - **QA & Security Lead:** Codex
