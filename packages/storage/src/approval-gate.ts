@@ -33,12 +33,15 @@ export interface ApproverIdentity {
   id: string;
   name?: string;
   role?: string;
+  contextToken?: string;
+  isTrustedContext?: boolean;
 }
 
 export interface ValidateAndConsumeOptions {
   workspaceId?: string;
   roomId?: string;
   actorId?: string;
+  recipient?: string;
 }
 
 export class ApprovalGateManager {
@@ -133,6 +136,22 @@ export class ApprovalGateManager {
       throw new UnionBotError({
         code: 'ERR_UNTRUSTED_SENDER',
         message: 'Approver identity is required to approve an action token.',
+      });
+    }
+
+    if (approver.isTrustedContext === false) {
+      throw new UnionBotError({
+        code: 'ERR_UNTRUSTED_SENDER',
+        message: 'Approver context is not trusted or verified by main process (UB-P2-R02-003).',
+      });
+    }
+
+    const authorizedRoles = ['LEADER', 'USER', 'ADMIN', 'OPERATOR'];
+    if (approver.role && !authorizedRoles.includes(approver.role)) {
+      throw new UnionBotError({
+        code: 'ERR_UNTRUSTED_SENDER',
+        message: `Approver role '${approver.role}' is not authorized to grant approval.`,
+        details: { approverId: approver.id, role: approver.role },
       });
     }
 
@@ -266,23 +285,7 @@ export class ApprovalGateManager {
       });
     }
 
-    // Scope isolation checks (P2-T17)
-    if (options.workspaceId && row.workspace_id && row.workspace_id !== options.workspaceId) {
-      throw new UnionBotError({
-        code: 'ERR_UNTRUSTED_ACTION',
-        message: `Token workspace scope mismatch: token bound to '${row.workspace_id}', requested by '${options.workspaceId}'`,
-        details: { tokenId, boundWorkspace: row.workspace_id, requestedWorkspace: options.workspaceId },
-      });
-    }
-
-    if (options.roomId && row.room_id && row.room_id !== options.roomId) {
-      throw new UnionBotError({
-        code: 'ERR_UNTRUSTED_ACTION',
-        message: `Token room scope mismatch: token bound to '${row.room_id}', requested by '${options.roomId}'`,
-        details: { tokenId, boundRoom: row.room_id, requestedRoom: options.roomId },
-      });
-    }
-
+    // 1. Action type and versioned canonical payload digest check (UB-P2-R01-002, P2-T03)
     if (row.action_type !== actionType) {
       throw new UnionBotError({
         code: 'ERR_APPROVAL_HASH_MISMATCH',
@@ -291,7 +294,6 @@ export class ApprovalGateManager {
       });
     }
 
-    // Versioned canonical payload digest check (UB-P2-R01-002, P2-T03)
     const canonVersion = row.canonicalization_version || CANONICALIZATION_VERSION;
     const currentDigest = ApprovalGateManager.computePayloadDigest(payload, canonVersion);
     if (row.payload_digest !== currentDigest) {
@@ -302,7 +304,7 @@ export class ApprovalGateManager {
       });
     }
 
-    // Expiration check
+    // 2. Expiration check
     if (new Date(row.expires_at).getTime() < Date.now()) {
       this.db.prepare("UPDATE approvals SET status = 'EXPIRED' WHERE token_id = ?").run(tokenId);
       throw new UnionBotError({
@@ -312,6 +314,7 @@ export class ApprovalGateManager {
       });
     }
 
+    // 3. Status checks (UB-P2-R01-001, P2-T01): PENDING tokens MUST NOT BE CONSUMED!
     if (row.status === 'CONSUMED') {
       throw new UnionBotError({
         code: 'ERR_APPROVAL_ALREADY_CONSUMED',
@@ -320,7 +323,6 @@ export class ApprovalGateManager {
       });
     }
 
-    // CRITICAL (UB-P2-R01-001, P2-T01): PENDING tokens MUST NOT BE CONSUMED!
     if (row.status === 'PENDING') {
       throw new UnionBotError({
         code: 'ERR_APPROVAL_NOT_APPROVED',
@@ -336,6 +338,78 @@ export class ApprovalGateManager {
         details: { tokenId, status: row.status },
       });
     }
+
+    // 3. Scope isolation checks (UB-P2-R02-003, P2-T17, R03-E06)
+    // Fail-Closed: When a token has bound scope, missing request scope MUST DENY
+    if (row.workspace_id) {
+      if (!options.workspaceId) {
+        throw new UnionBotError({
+          code: 'ERR_UNTRUSTED_ACTION',
+          message: `Token requires workspace scope '${row.workspace_id}', but none was provided in request.`,
+          details: { tokenId, requiredWorkspace: row.workspace_id },
+        });
+      }
+      if (row.workspace_id !== options.workspaceId) {
+        throw new UnionBotError({
+          code: 'ERR_UNTRUSTED_ACTION',
+          message: `Token workspace scope mismatch: token bound to '${row.workspace_id}', requested by '${options.workspaceId}'`,
+          details: { tokenId, boundWorkspace: row.workspace_id, requestedWorkspace: options.workspaceId },
+        });
+      }
+    }
+
+    if (row.room_id) {
+      if (!options.roomId) {
+        throw new UnionBotError({
+          code: 'ERR_UNTRUSTED_ACTION',
+          message: `Token requires room scope '${row.room_id}', but none was provided in request.`,
+          details: { tokenId, requiredRoom: row.room_id },
+        });
+      }
+      if (row.room_id !== options.roomId) {
+        throw new UnionBotError({
+          code: 'ERR_UNTRUSTED_ACTION',
+          message: `Token room scope mismatch: token bound to '${row.room_id}', requested by '${options.roomId}'`,
+          details: { tokenId, boundRoom: row.room_id, requestedRoom: options.roomId },
+        });
+      }
+    }
+
+    if (row.actor_id) {
+      if (!options.actorId) {
+        throw new UnionBotError({
+          code: 'ERR_UNTRUSTED_ACTION',
+          message: `Token requires actor scope '${row.actor_id}', but none was provided in request.`,
+          details: { tokenId, requiredActor: row.actor_id },
+        });
+      }
+      if (row.actor_id !== options.actorId) {
+        throw new UnionBotError({
+          code: 'ERR_UNTRUSTED_ACTION',
+          message: `Token actor scope mismatch: token bound to '${row.actor_id}', requested by '${options.actorId}'`,
+          details: { tokenId, boundActor: row.actor_id, requestedActor: options.actorId },
+        });
+      }
+    }
+
+    if (row.recipient) {
+      if (!options.recipient) {
+        throw new UnionBotError({
+          code: 'ERR_UNTRUSTED_ACTION',
+          message: `Token requires recipient scope '${row.recipient}', but none was provided in request.`,
+          details: { tokenId, requiredRecipient: row.recipient },
+        });
+      }
+      if (row.recipient !== options.recipient) {
+        throw new UnionBotError({
+          code: 'ERR_UNTRUSTED_ACTION',
+          message: `Token recipient scope mismatch: token bound to '${row.recipient}', requested by '${options.recipient}'`,
+          details: { tokenId, boundRecipient: row.recipient, requestedRecipient: options.recipient },
+        });
+      }
+    }
+
+
 
     // Atomically consume token via CAS conditional update (P2-T02)
     const nowIso = new Date().toISOString();

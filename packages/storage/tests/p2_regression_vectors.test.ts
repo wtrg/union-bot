@@ -9,7 +9,10 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { createRequire } from 'node:module';
 import { DatabaseSync } from 'node:sqlite';
+
+const require = createRequire(import.meta.url);
 
 import {
   StorageEngine,
@@ -441,28 +444,26 @@ describe('Union Bot Phase P2 Official Regression Vectors (P2-T01 through P2-T18)
   // P2-T13: IPC senderFrame trust boundary (S1)
   // ==========================================
   it('P2-T13: IPC verification denies null/missing senderFrame, navigated frames, and non-main frames', () => {
+    // Import production verification function directly from apps/desktop/src/auth-check.cjs (UB-P2-R02-006)
+    const { isAuthorizedSenderFrame } = require('../../../apps/desktop/src/auth-check.cjs');
     const allowedUrl = 'file:///d:/WORK-TEAM/apps/workspace-ui/dist/index.html';
-
-    function checkAuth(event: any, mainWebContentsId = 1) {
-      if (!event || !event.sender || !event.senderFrame) return false;
-      if (event.sender.id !== mainWebContentsId) return false;
-      if (event.senderFrame.parent !== null) return false;
-      if (event.senderFrame.url !== allowedUrl) return false;
-      return true;
-    }
+    const mockWindow = {
+      webContents: { id: 1 },
+      isDestroyed: () => false,
+    };
 
     // 1. Missing event
-    assert.equal(checkAuth(null), false);
+    assert.equal(isAuthorizedSenderFrame(null, mockWindow, allowedUrl), false);
     // 2. Missing senderFrame
-    assert.equal(checkAuth({ sender: { id: 1 } }), false);
+    assert.equal(isAuthorizedSenderFrame({ sender: { id: 1 } }, mockWindow, allowedUrl), false);
     // 3. Sender is untrusted window/ID
-    assert.equal(checkAuth({ sender: { id: 999 }, senderFrame: { parent: null, url: allowedUrl } }), false);
+    assert.equal(isAuthorizedSenderFrame({ sender: { id: 999 }, senderFrame: { parent: null, url: allowedUrl } }, mockWindow, allowedUrl), false);
     // 4. Nested iframe (parent !== null)
-    assert.equal(checkAuth({ sender: { id: 1 }, senderFrame: { parent: {}, url: allowedUrl } }), false);
+    assert.equal(isAuthorizedSenderFrame({ sender: { id: 1 }, senderFrame: { parent: {}, url: allowedUrl } }, mockWindow, allowedUrl), false);
     // 5. Hostile data: URL
-    assert.equal(checkAuth({ sender: { id: 1 }, senderFrame: { parent: null, url: 'data:text/html,<html>attack</html>' } }), false);
+    assert.equal(isAuthorizedSenderFrame({ sender: { id: 1 }, senderFrame: { parent: null, url: 'data:text/html,<html>attack</html>' } }, mockWindow, allowedUrl), false);
     // 6. Legitimate main frame
-    assert.equal(checkAuth({ sender: { id: 1 }, senderFrame: { parent: null, url: allowedUrl } }), true);
+    assert.equal(isAuthorizedSenderFrame({ sender: { id: 1 }, senderFrame: { parent: null, url: allowedUrl } }, mockWindow, allowedUrl), true);
   });
 
   // ==========================================

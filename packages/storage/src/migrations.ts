@@ -61,13 +61,14 @@ const MIGRATION_1_SQL = `
   CREATE INDEX IF NOT EXISTS idx_envelopes_room ON envelopes (room_id, created_at);
   CREATE INDEX IF NOT EXISTS idx_envelopes_trace ON envelopes (trace_id);
 
-  -- 5. Idempotency Keys (P2-005, C05, UB-P2-R01-005)
+  -- 5. Idempotency Keys (P2-005, C05, UB-P2-R01-005, UB-P2-R02-005)
   CREATE TABLE IF NOT EXISTS idempotency_keys (
     key TEXT PRIMARY KEY,
     target_id TEXT NOT NULL,
     status TEXT NOT NULL,
     payload_digest TEXT,
     response_json TEXT,
+    dispatch_prepared INTEGER DEFAULT 0,
     created_at TEXT NOT NULL,
     expires_at TEXT NOT NULL
   );

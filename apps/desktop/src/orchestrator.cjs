@@ -509,7 +509,7 @@ class Orchestrator {
           ? part.input.estimatedCost
           : (typeof part.estimatedCost === 'number' ? part.estimatedCost : undefined);
 
-        // Enforce approval token verification if submitted from untrusted renderer
+        // Enforce approval token verification if submitted from untrusted renderer (C02, UB-P2-R02-003)
         if (context && context.fromRenderer) {
           const approvalTokenId = part.input?.approvalTokenId;
           if (!approvalTokenId) {
@@ -521,14 +521,37 @@ class Orchestrator {
             };
           }
 
-          const token = this.approvalTokens.get(approvalTokenId);
-          if (!token || token.status !== 'APPROVED') {
-            return {
-              success: false,
-              envelopeId: envelope.id,
-              roomId: envelope.roomId,
-              error: 'Security violation: Action approval token is invalid, expired, or not approved (C02)',
-            };
+          if (this.storage && typeof this.storage.validateAndConsumeApproval === 'function') {
+            try {
+              await this.storage.validateAndConsumeApproval(
+                approvalTokenId,
+                part.tool,
+                null,
+                {
+                  workspaceId: envelope.workspaceId,
+                  roomId: envelope.roomId,
+                  actorId: envelope.sender.id,
+                  recipient: envelope.recipient.id,
+                }
+              );
+            } catch (authErr) {
+              return {
+                success: false,
+                envelopeId: envelope.id,
+                roomId: envelope.roomId,
+                error: `Security violation: ${authErr.message}`,
+              };
+            }
+          } else {
+            const token = this.approvalTokens.get(approvalTokenId);
+            if (!token || token.status !== 'APPROVED') {
+              return {
+                success: false,
+                envelopeId: envelope.id,
+                roomId: envelope.roomId,
+                error: 'Security violation: Action approval token is invalid, expired, or not approved (C02)',
+              };
+            }
           }
         }
 
@@ -552,10 +575,18 @@ class Orchestrator {
       }
     }
 
-    // 5. Store in persistent storage if provided (UB-P2-R01-003, P2-T04)
+    // 5. Store in persistent storage if provided (UB-P2-R01-003, UB-P2-R02-004, P2-T04)
     if (this.storage) {
       try {
-        await this.storage.insertEnvelope(envelope);
+        const storeResult = await this.storage.insertEnvelope(envelope);
+        if (storeResult && storeResult.deduplicated) {
+          return {
+            success: true,
+            envelopeId: envelope.id,
+            roomId: envelope.roomId,
+            deduplicated: true,
+          };
+        }
       } catch (storageErr) {
         return {
           success: false,
@@ -591,7 +622,11 @@ class Orchestrator {
     if (this.storage) {
       try {
         const persisted = await this.storage.getRoomEnvelopes(roomId);
-        if (Array.isArray(persisted) && persisted.length > 0) {
+        if (Array.isArray(persisted)) {
+          this.roomHistories.set(roomId, persisted);
+          for (const env of persisted) {
+            if (env && env.id) this.seenEnvelopeIds.add(env.id);
+          }
           return persisted;
         }
       } catch (err) {

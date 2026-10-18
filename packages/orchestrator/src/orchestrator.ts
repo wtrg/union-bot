@@ -169,10 +169,15 @@ export class Orchestrator {
             };
           }
 
-          // Validate approval token with ApprovalGateManager
+          // Validate approval token with ApprovalGateManager (UB-P2-R02-003, R03-E06)
           if (this.approvalGate) {
             try {
-              this.approvalGate.validateAndConsume(part.approvalTokenId, part.tool, part.input);
+              this.approvalGate.validateAndConsume(part.approvalTokenId, part.tool, part.input, {
+                workspaceId: (envelope as any).workspaceId,
+                roomId: envelope.roomId,
+                actorId: envelope.sender.id,
+                recipient: envelope.recipient.id,
+              });
             } catch (err: any) {
               if (this.idempotency) {
                 this.idempotency.fail(envelope.id, { error: err.message });
@@ -220,20 +225,34 @@ export class Orchestrator {
     };
 
     if (this.storage) {
-      this.storage.transaction(() => {
-        // 5a. Insert envelope into durable table
-        this.storage!.insertEnvelope(envelope);
+      try {
+        this.storage.transaction(() => {
+          // 5a. Insert envelope into durable table
+          this.storage!.insertEnvelope(envelope);
 
-        // 5b. Append event to event journal
-        if (this.eventStore) {
-          this.eventStore.appendEvent(`room:${envelope.roomId}`, 'ENVELOPE_RECORDED', envelope as any);
-        }
+          // 5b. Append event to event journal
+          if (this.eventStore) {
+            this.eventStore.appendEvent(`room:${envelope.roomId}`, 'ENVELOPE_RECORDED', envelope as any);
+          }
 
-        // 5c. Complete idempotency key atomically
+          // 5c. Complete idempotency key atomically
+          if (this.idempotency) {
+            this.idempotency.complete(envelope.id, result as any);
+          }
+        });
+      } catch (txErr: any) {
         if (this.idempotency) {
-          this.idempotency.complete(envelope.id, result as any);
+          try {
+            this.idempotency.fail(envelope.id, { error: txErr.message });
+          } catch {}
         }
-      });
+        return {
+          success: false,
+          envelopeId: envelope.id,
+          roomId: envelope.roomId,
+          error: `Durable transaction aborted: ${txErr.message}`,
+        };
+      }
     } else {
       if (this.eventStore) {
         this.eventStore.appendEvent(`room:${envelope.roomId}`, 'ENVELOPE_RECORDED', envelope as any);

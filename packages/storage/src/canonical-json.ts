@@ -1,25 +1,28 @@
 /**
  * @file canonical-json.ts
- * @description Deterministic recursive canonical JSON serializer and digest generator (UB-P2-R01-002, P2-T03).
+ * @description Deterministic recursive canonical JSON serializer and digest generator (UB-P2-R01-002, UB-P2-R02-007, P2-T03, R03-E12).
  *
  * Guarantees:
  * - Deterministic recursive object key sorting at all depths.
  * - Array element order preserved exactly.
  * - Robust handling of primitives: booleans, numbers, strings, null, and Unicode.
- * - Strict rejection of non-deterministic / dangerous types:
+ * - Fail-closed rejection of non-deterministic / dangerous / non-standard JSON types at all depths:
  *   - Circular references (WeakSet detection)
  *   - NaN and Infinity
- *   - BigInt, Function, Symbol, and undefined root
- * - Versioned cryptographic digest algorithm (v1 default).
+ *   - BigInt, Function, Symbol, and undefined (root, nested objects, and array elements)
+ *   - Sparse arrays
+ * - Versioned cryptographic digest algorithm (v1 default) returning 64-character SHA-256 hex string.
  */
 
 import { createHash } from 'node:crypto';
 import { UnionBotError } from './errors.ts';
 
 export const CANONICALIZATION_VERSION = 1;
+export const SUPPORTED_CANONICALIZATION_VERSIONS = [1] as const;
 
 /**
  * Recursively canonicalizes any JSON-compatible value into a deterministic string representation.
+ * Strictly fail-closed: rejects non-standard types (undefined, function, symbol, bigint, sparse arrays) at all depths.
  */
 export function canonicalizeJson(value: unknown, seen = new WeakSet<object>()): string {
   if (value === null) {
@@ -49,18 +52,11 @@ export function canonicalizeJson(value: unknown, seen = new WeakSet<object>()): 
     return JSON.stringify(value);
   }
 
-  if (valueType === 'bigint' || valueType === 'function' || valueType === 'symbol') {
+  if (valueType === 'bigint' || valueType === 'function' || valueType === 'symbol' || valueType === 'undefined') {
     throw new UnionBotError({
       code: 'ERR_CANONICALIZATION_FAILED',
       message: `Canonicalization rejected unsupported type: ${valueType}`,
       details: { valueType },
-    });
-  }
-
-  if (valueType === 'undefined') {
-    throw new UnionBotError({
-      code: 'ERR_CANONICALIZATION_FAILED',
-      message: 'Canonicalization rejected undefined root value',
     });
   }
 
@@ -79,12 +75,23 @@ export function canonicalizeJson(value: unknown, seen = new WeakSet<object>()): 
       if (Array.isArray(obj)) {
         const elements: string[] = [];
         for (let i = 0; i < obj.length; i++) {
-          const item = obj[i];
-          if (item === undefined || typeof item === 'function' || typeof item === 'symbol') {
-            elements.push('null');
-          } else {
-            elements.push(canonicalizeJson(item, seen));
+          // Detect sparse arrays
+          if (!(i in obj)) {
+            throw new UnionBotError({
+              code: 'ERR_CANONICALIZATION_FAILED',
+              message: `Canonicalization rejected sparse array hole at index ${i}`,
+              details: { index: i },
+            });
           }
+          const item = obj[i];
+          if (item === undefined || typeof item === 'function' || typeof item === 'symbol' || typeof item === 'bigint') {
+            throw new UnionBotError({
+              code: 'ERR_CANONICALIZATION_FAILED',
+              message: `Canonicalization rejected unsupported array element of type '${typeof item}' at index ${i}`,
+              details: { index: i, itemType: typeof item },
+            });
+          }
+          elements.push(canonicalizeJson(item, seen));
         }
         return `[${elements.join(',')}]`;
       }
@@ -95,9 +102,13 @@ export function canonicalizeJson(value: unknown, seen = new WeakSet<object>()): 
 
       for (const key of keys) {
         const val = (obj as Record<string, unknown>)[key];
-        // Standard JSON behavior: omit undefined, function, symbol properties
-        if (val === undefined || typeof val === 'function' || typeof val === 'symbol') {
-          continue;
+        // Strictly reject unsupported property values rather than silently dropping them (UB-P2-R02-007)
+        if (val === undefined || typeof val === 'function' || typeof val === 'symbol' || typeof val === 'bigint') {
+          throw new UnionBotError({
+            code: 'ERR_CANONICALIZATION_FAILED',
+            message: `Canonicalization rejected unsupported property value of type '${typeof val}' at key '${key}'`,
+            details: { key, valType: typeof val },
+          });
         }
         const canonKey = JSON.stringify(key);
         const canonVal = canonicalizeJson(val, seen);
@@ -118,8 +129,17 @@ export function canonicalizeJson(value: unknown, seen = new WeakSet<object>()): 
 
 /**
  * Computes a versioned SHA-256 hexadecimal digest of canonicalized payload.
+ * Returns 64-character lowercase hex string digest.
+ * Verifies version is supported before computing.
  */
 export function computeCanonicalDigest(payload: unknown, version = CANONICALIZATION_VERSION): string {
+  if (!SUPPORTED_CANONICALIZATION_VERSIONS.includes(version as any)) {
+    throw new UnionBotError({
+      code: 'ERR_CANONICALIZATION_FAILED',
+      message: `Unsupported canonicalization version: ${version}. Supported versions: ${SUPPORTED_CANONICALIZATION_VERSIONS.join(', ')}`,
+      details: { version },
+    });
+  }
   const canonicalStr = canonicalizeJson(payload);
   const digestInput = `v${version}:${canonicalStr}`;
   return createHash('sha256').update(digestInput, 'utf8').digest('hex');

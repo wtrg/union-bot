@@ -27,6 +27,7 @@ export interface IdempotencyRecord {
 export interface AcquireOptions {
   payloadDigest?: string;
   ttlMs?: number;
+  hasPositiveProofNoDispatch?: boolean;
 }
 
 export interface OutboxEntry {
@@ -55,6 +56,8 @@ export class IdempotencyManager {
    * If key has mismatched payload digest, strictly throws ERR_PAYLOAD_MISMATCH.
    * If key is UNKNOWN_NEEDS_RECONCILIATION, strictly throws ERR_RECONCILIATION_REQUIRED.
    * If key is PENDING, strictly throws ERR_IDEMPOTENCY_CONFLICT.
+   * If key expired while PENDING without positive proof that external dispatch never occurred,
+   * it transitions to UNKNOWN_NEEDS_RECONCILIATION and throws ERR_RECONCILIATION_REQUIRED (UB-P2-R02-005).
    */
   public acquire(
     key: string,
@@ -66,8 +69,8 @@ export class IdempotencyManager {
     const expiresAt = new Date(now.getTime() + ttlMs).toISOString();
 
     const existing = this.db
-      .prepare('SELECT status, response_json, payload_digest, expires_at FROM idempotency_keys WHERE key = ?')
-      .get(key) as { status: string; response_json: string | null; payload_digest: string | null; expires_at: string } | undefined;
+      .prepare('SELECT status, response_json, payload_digest, expires_at, dispatch_prepared FROM idempotency_keys WHERE key = ?')
+      .get(key) as { status: string; response_json: string | null; payload_digest: string | null; expires_at: string; dispatch_prepared?: number } | undefined;
 
     if (existing) {
       // Check payload digest mismatch (UB-P2-R01-005, P2-T07)
@@ -90,13 +93,27 @@ export class IdempotencyManager {
         };
       }
 
-      // Never auto-reissue an unresolved external dispatch (P2-T06, P2-T07)
+      // Never auto-reissue an unresolved external dispatch (P2-T06, P2-T07, UB-P2-R02-005, R03-E09, R03-E10)
       if (existing.status === 'UNKNOWN_NEEDS_RECONCILIATION') {
         throw new UnionBotError({
           code: 'ERR_RECONCILIATION_REQUIRED',
           message: `Idempotency key '${key}' is in UNKNOWN_NEEDS_RECONCILIATION state. Automatic re-execution is forbidden without external reconciliation.`,
           details: { key, targetId },
         });
+      }
+
+      // Safe retry for failed pre-dispatch requests: allow re-acquisition to PENDING
+      if (existing.status === 'FAILED') {
+        const updateRes = this.db
+          .prepare(`
+            UPDATE idempotency_keys
+            SET status = 'PENDING', response_json = NULL, dispatch_prepared = 0, created_at = ?, expires_at = ?
+            WHERE key = ? AND status = 'FAILED'
+          `)
+          .run(now.toISOString(), expiresAt, key);
+        if (updateRes.changes === 1) {
+          return { isDuplicate: false };
+        }
       }
 
       const isExpired = new Date(existing.expires_at).getTime() < now.getTime();
@@ -108,34 +125,69 @@ export class IdempotencyManager {
         });
       }
 
-      // If expired PENDING without side effect proof, delete expired record before insert
+      // If expired PENDING: fail-closed safety (UB-P2-R02-005)
       if (isExpired && existing.status === 'PENDING') {
-        this.db.prepare("DELETE FROM idempotency_keys WHERE key = ? AND status = 'PENDING'").run(key);
+        const wasPrepared = existing.dispatch_prepared === 1;
+        if (wasPrepared || options.hasPositiveProofNoDispatch !== true) {
+          this.db.prepare(`
+            UPDATE idempotency_keys
+            SET status = 'UNKNOWN_NEEDS_RECONCILIATION'
+            WHERE key = ? AND status = 'PENDING'
+          `).run(key);
+          throw new UnionBotError({
+            code: 'ERR_RECONCILIATION_REQUIRED',
+            message: `Idempotency key '${key}' expired while PENDING with potential external dispatch. Moved to UNKNOWN_NEEDS_RECONCILIATION (UB-P2-R02-005).`,
+            details: { key, targetId },
+          });
+        }
+        // Only if positive proof of no dispatch exists can the record be safely reclaimed
+        this.db.prepare("DELETE FROM idempotency_keys WHERE key = ? AND status = 'PENDING' AND dispatch_prepared = 0").run(key);
       }
     }
 
     // Insert pending with optional payload_digest
-    this.db
-      .prepare(`
-        INSERT INTO idempotency_keys (key, target_id, status, payload_digest, response_json, created_at, expires_at)
-        VALUES (?, ?, 'PENDING', ?, NULL, ?, ?)
-        ON CONFLICT(key) DO UPDATE SET
-          target_id = excluded.target_id,
-          status = 'PENDING',
-          payload_digest = COALESCE(excluded.payload_digest, idempotency_keys.payload_digest),
-          response_json = NULL,
-          created_at = excluded.created_at,
-          expires_at = excluded.expires_at
-        WHERE idempotency_keys.status != 'UNKNOWN_NEEDS_RECONCILIATION'
-      `)
-      .run(key, targetId, options.payloadDigest || null, now.toISOString(), expiresAt);
+    try {
+      this.db
+        .prepare(`
+          INSERT INTO idempotency_keys (key, target_id, status, payload_digest, response_json, dispatch_prepared, created_at, expires_at)
+          VALUES (?, ?, 'PENDING', ?, NULL, 0, ?, ?)
+        `)
+        .run(key, targetId, options.payloadDigest || null, now.toISOString(), expiresAt);
+    } catch (insertErr: any) {
+      throw new UnionBotError({
+        code: 'ERR_IDEMPOTENCY_CONFLICT',
+        message: `Concurrent insert conflict for idempotency key: ${key}`,
+        details: { key, targetId, error: insertErr.message },
+      });
+    }
 
     return { isDuplicate: false };
   }
 
   /**
+   * Marks external dispatch as prepared for a pending idempotency key.
+   */
+  public markDispatchPrepared(key: string): void {
+    const result = this.db
+      .prepare(`
+        UPDATE idempotency_keys
+        SET dispatch_prepared = 1
+        WHERE key = ? AND status = 'PENDING'
+      `)
+      .run(key);
+
+    if (result.changes === 0) {
+      throw new UnionBotError({
+        code: 'ERR_IDEMPOTENCY_CONFLICT',
+        message: `Cannot mark dispatch prepared for idempotency key '${key}': key not found or not in PENDING status.`,
+        details: { key },
+      });
+    }
+  }
+
+  /**
    * Marks the idempotency key as COMPLETED with the given response.
-   * Atomically verifies status is PENDING and asserts changes === 1.
+   * Atomically verifies status is PENDING and asserts changes === 1 (UB-P2-R02-005).
    */
   public complete(key: string, response: Record<string, unknown>): void {
     const result = this.db
@@ -146,8 +198,7 @@ export class IdempotencyManager {
       `)
       .run(JSON.stringify(response), key);
 
-    if (result.changes === 0) {
-      // Check current state
+    if (result.changes !== 1) {
       const row = this.db.prepare('SELECT status FROM idempotency_keys WHERE key = ?').get(key) as any;
       if (!row) {
         throw new UnionBotError({
@@ -155,28 +206,41 @@ export class IdempotencyManager {
           message: `Idempotency key '${key}' not found when attempting to complete.`,
         });
       }
-      if (row.status !== 'COMPLETED') {
-        throw new UnionBotError({
-          code: 'ERR_IDEMPOTENCY_CONFLICT',
-          message: `Cannot complete idempotency key '${key}': current status is ${row.status}`,
-          details: { key, status: row.status },
-        });
-      }
+      throw new UnionBotError({
+        code: 'ERR_IDEMPOTENCY_CONFLICT',
+        message: `Cannot complete idempotency key '${key}': current status is ${row.status} (expected PENDING, changes === 0).`,
+        details: { key, status: row.status },
+      });
     }
   }
 
   /**
    * Marks the idempotency key as FAILED.
-   * Atomically verifies status is PENDING.
+   * Atomically verifies status is PENDING and asserts changes === 1 (UB-P2-R02-005).
    */
   public fail(key: string, errorResponse: Record<string, unknown>): void {
-    this.db
+    const result = this.db
       .prepare(`
         UPDATE idempotency_keys
         SET status = 'FAILED', response_json = ?
         WHERE key = ? AND status = 'PENDING'
       `)
       .run(JSON.stringify(errorResponse), key);
+
+    if (result.changes !== 1) {
+      const row = this.db.prepare('SELECT status FROM idempotency_keys WHERE key = ?').get(key) as any;
+      if (!row) {
+        throw new UnionBotError({
+          code: 'ERR_IDEMPOTENCY_CONFLICT',
+          message: `Idempotency key '${key}' not found when attempting to fail.`,
+        });
+      }
+      throw new UnionBotError({
+        code: 'ERR_IDEMPOTENCY_CONFLICT',
+        message: `Cannot mark idempotency key '${key}' failed: current status is ${row.status} (expected PENDING, changes === 0).`,
+        details: { key, status: row.status },
+      });
+    }
   }
 
   /**

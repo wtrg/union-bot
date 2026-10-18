@@ -18,6 +18,7 @@ const { safeOpenExternal, validateExternalUrl } = require('./safe-external.js');
 const { CostGuard, installElectronCostGuardInterceptor } = require('./cost-guard.cjs');
 const { Orchestrator } = require('./orchestrator.cjs');
 const { StorageServiceClient } = require('./storage-service.cjs');
+const { isAuthorizedSenderFrame } = require('./auth-check.cjs');
 
 // 1. Single Instance Lock
 const gotTheLock = app.requestSingleInstanceLock();
@@ -242,30 +243,14 @@ function createWindow() {
   }
 }
 
-// Strict senderFrame verification enforcing main Window and exact UI frame URL (UB-P2-R01-008, P2-T13)
-function isAuthorizedSenderFrame(event) {
-  if (!event || !event.sender || !event.senderFrame) {
-    return false;
-  }
-  if (!mainWindow || mainWindow.isDestroyed()) {
-    return false;
-  }
-  if (event.sender.id !== mainWindow.webContents.id) {
-    return false;
-  }
-  if (event.senderFrame.parent !== null) {
-    return false;
-  }
-  const frameUrl = event.senderFrame.url;
-  if (!frameUrl || frameUrl !== allowedUiFileUrl) {
-    return false;
-  }
-  return true;
+// Strict senderFrame verification enforcing main Window and exact UI frame URL (UB-P2-R01-008, UB-P2-R02-006, P2-T13, R03-E11)
+function checkSenderAuthorized(event) {
+  return isAuthorizedSenderFrame(event, mainWindow, allowedUiFileUrl);
 }
 
 // IPC Handlers: Strictly routed through Orchestrator with renderer anti-spoofing and origin validation (C03, UB-P2-R01-008)
 ipcMain.handle('union-bot:dispatch-envelope', async (event, envelope) => {
-  if (!isAuthorizedSenderFrame(event)) {
+  if (!checkSenderAuthorized(event)) {
     return { success: false, error: 'Security violation: Unauthorized IPC sender origin or missing frame (UB-P2-R01-008)' };
   }
 
@@ -282,15 +267,22 @@ ipcMain.handle('union-bot:dispatch-envelope', async (event, envelope) => {
 });
 
 ipcMain.handle('union-bot:get-room-history', async (event, roomId) => {
-  if (!isAuthorizedSenderFrame(event)) {
+  if (!checkSenderAuthorized(event)) {
     return [];
   }
   if (typeof roomId !== 'string') return [];
-  return orchestrator.getRoomHistory(roomId);
+  return await orchestrator.getRoomHistoryAsync(roomId);
 });
 
 // App Lifecycle
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+  try {
+    if (storage && storage.ready) {
+      await storage.ready;
+    }
+  } catch (err) {
+    console.error('[UnionBot] Warning: storage init error on startup:', err.message);
+  }
   createWindow();
 
   app.on('activate', () => {

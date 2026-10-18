@@ -2,6 +2,8 @@
  * @file storage-worker.cjs
  * @description Dedicated Node 24 SQLite storage worker process for Union Bot Electron desktop.
  * Runs with system Node (v24+) to execute native node:sqlite DatabaseSync and SQLite WAL storage.
+ * Implements atomic transaction combining idempotency_keys, envelopes, events, and outbox (UB-P2-R02-004),
+ * and provides persistent approval token management (UB-P2-R02-003).
  */
 
 const { DatabaseSync } = require('node:sqlite');
@@ -151,13 +153,47 @@ function handleRequest(msg) {
       }
       case 'insertEnvelope': {
         const envelope = args.envelope;
-        // ensure room exists
         const now = new Date().toISOString();
-        db.prepare('INSERT OR IGNORE INTO rooms (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)')
-          .run(envelope.roomId, envelope.roomId, now, now);
+        const eventId = `evt_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+        const outboxId = `out_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
 
-        db.exec('BEGIN TRANSACTION;');
+        db.exec('BEGIN IMMEDIATE;');
         try {
+          // 1. Idempotency deduplication check in transaction
+          if (envelope.id) {
+            const existing = db.prepare('SELECT status, response_json FROM idempotency_keys WHERE key = ?').get(envelope.id);
+            if (existing) {
+              if (existing.status === 'COMPLETED') {
+                db.exec('COMMIT;');
+                process.send({ id, result: { success: true, envelopeId: envelope.id, deduplicated: true } });
+                break;
+              }
+              if (existing.status === 'UNKNOWN_NEEDS_RECONCILIATION') {
+                throw new Error(`ERR_RECONCILIATION_REQUIRED: Key ${envelope.id} requires external reconciliation`);
+              }
+              if (existing.status === 'PENDING') {
+                throw new Error(`ERR_IDEMPOTENCY_CONFLICT: Key ${envelope.id} is already PENDING`);
+              }
+            } else {
+              db.prepare(`
+                INSERT INTO idempotency_keys (key, target_id, status, payload_digest, response_json, created_at, expires_at)
+                VALUES (?, ?, 'COMPLETED', ?, ?, ?, ?)
+              `).run(
+                envelope.id,
+                envelope.roomId,
+                null,
+                JSON.stringify({ success: true, envelopeId: envelope.id }),
+                now,
+                new Date(Date.now() + 86400000).toISOString()
+              );
+            }
+          }
+
+          // 2. Ensure room exists
+          db.prepare('INSERT OR IGNORE INTO rooms (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)')
+            .run(envelope.roomId, envelope.roomId, now, now);
+
+          // 3. Insert envelope
           db.prepare(`
             INSERT INTO envelopes (
               id, trace_id, correlation_id, room_id, sender_kind, sender_id, sender_role, raw_json, status, created_at
@@ -175,17 +211,22 @@ function handleRequest(msg) {
             new Date(envelope.timestamp || Date.now()).toISOString()
           );
 
-          // Append to event journal
-          const eventId = `evt_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+          // 4. Append to event journal
           db.prepare(`
             INSERT INTO events (event_id, stream_id, event_type, payload_json, metadata_json, occurred_at)
             VALUES (?, ?, 'ENVELOPE_RECORDED', ?, NULL, ?)
           `).run(eventId, `room:${envelope.roomId}`, JSON.stringify(envelope), now);
 
+          // 5. Insert into outbox
+          db.prepare(`
+            INSERT INTO outbox (id, stream_id, event_id, payload_json, status, retry_count, created_at, updated_at)
+            VALUES (?, ?, ?, ?, 'QUEUED', 0, ?, ?)
+          `).run(outboxId, `room:${envelope.roomId}`, eventId, JSON.stringify(envelope), now, now);
+
           db.exec('COMMIT;');
           process.send({ id, result: { success: true, envelopeId: envelope.id } });
         } catch (txErr) {
-          db.exec('ROLLBACK;');
+          try { db.exec('ROLLBACK;'); } catch {}
           throw txErr;
         }
         break;
@@ -196,6 +237,145 @@ function handleRequest(msg) {
           .all(roomId, limit);
         const envelopes = rows.map((r) => JSON.parse(r.raw_json));
         process.send({ id, result: envelopes });
+        break;
+      }
+      case 'createApprovalToken': {
+        const token = args.token;
+        const now = new Date().toISOString();
+        const expiresAt = token.expiresAt || new Date(Date.now() + 3600000).toISOString();
+        db.prepare(`
+          INSERT INTO approvals (
+            token_id, action_type, payload_digest, canonicalization_version, origin,
+            workspace_id, room_id, actor_id, recipient, policy_version,
+            status, created_at, expires_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?)
+        `).run(
+          token.tokenId,
+          token.actionType,
+          token.payloadDigest,
+          token.canonicalizationVersion || 1,
+          token.origin,
+          token.workspaceId || null,
+          token.roomId || null,
+          token.actorId || null,
+          token.recipient || null,
+          token.policyVersion || '1.0.0',
+          token.createdAt || now,
+          expiresAt
+        );
+        process.send({ id, result: { ...token, status: 'PENDING', createdAt: now, expiresAt } });
+        break;
+      }
+      case 'getApprovalToken': {
+        const row = db.prepare('SELECT * FROM approvals WHERE token_id = ?').get(args.tokenId);
+        process.send({ id, result: row || null });
+        break;
+      }
+      case 'approveToken': {
+        const { tokenId, approver } = args;
+        if (!approver || !approver.id) {
+          throw new Error('ERR_UNTRUSTED_SENDER: Approver identity is required');
+        }
+        if (approver.isTrustedContext === false) {
+          throw new Error('ERR_UNTRUSTED_SENDER: Approver context is untrusted');
+        }
+        const allowedRoles = ['LEADER', 'USER', 'ADMIN', 'OPERATOR'];
+        if (approver.role && !allowedRoles.includes(approver.role)) {
+          throw new Error(`ERR_UNTRUSTED_SENDER: Role '${approver.role}' is not authorized to approve tokens`);
+        }
+        const row = db.prepare('SELECT status, expires_at FROM approvals WHERE token_id = ?').get(tokenId);
+        if (!row) {
+          throw new Error(`ERR_UNTRUSTED_ACTION: Approval token not found: ${tokenId}`);
+        }
+        if (new Date(row.expires_at).getTime() < Date.now()) {
+          db.prepare("UPDATE approvals SET status = 'EXPIRED' WHERE token_id = ?").run(tokenId);
+          throw new Error(`ERR_APPROVAL_EXPIRED: Token ${tokenId} has expired`);
+        }
+        if (row.status === 'CONSUMED') {
+          throw new Error(`ERR_APPROVAL_ALREADY_CONSUMED: Token ${tokenId} is already consumed`);
+        }
+        if (row.status === 'REJECTED') {
+          throw new Error(`ERR_UNTRUSTED_ACTION: Token ${tokenId} was rejected`);
+        }
+        const nowIso = new Date().toISOString();
+        const res = db.prepare(`
+          UPDATE approvals
+          SET status = 'APPROVED', approver_id = ?, approved_at = ?
+          WHERE token_id = ? AND status = 'PENDING' AND expires_at > ?
+        `).run(approver.id, nowIso, tokenId, nowIso);
+        if (res.changes === 0) {
+          throw new Error(`ERR_UNTRUSTED_ACTION: Token ${tokenId} is no longer PENDING or has expired`);
+        }
+        process.send({ id, result: { success: true, tokenId, approvedAt: nowIso } });
+        break;
+      }
+      case 'validateAndConsumeApproval': {
+        const { tokenId, actionType, payloadDigest, options = {} } = args;
+        const row = db.prepare('SELECT * FROM approvals WHERE token_id = ?').get(tokenId);
+        if (!row) {
+          throw new Error(`ERR_UNTRUSTED_ACTION: Approval token not found: ${tokenId}`);
+        }
+        if (row.workspace_id) {
+          if (!options.workspaceId) {
+            throw new Error(`ERR_UNTRUSTED_ACTION: Token requires workspace scope '${row.workspace_id}'`);
+          }
+          if (options.workspaceId !== row.workspace_id) {
+            throw new Error(`ERR_UNTRUSTED_ACTION: Token workspace scope mismatch: '${row.workspace_id}' vs '${options.workspaceId}'`);
+          }
+        }
+        if (row.room_id) {
+          if (!options.roomId) {
+            throw new Error(`ERR_UNTRUSTED_ACTION: Token requires room scope '${row.room_id}'`);
+          }
+          if (options.roomId !== row.room_id) {
+            throw new Error(`ERR_UNTRUSTED_ACTION: Token room scope mismatch: '${row.room_id}' vs '${options.roomId}'`);
+          }
+        }
+        if (row.actor_id) {
+          if (!options.actorId) {
+            throw new Error(`ERR_UNTRUSTED_ACTION: Token requires actor scope '${row.actor_id}'`);
+          }
+          if (options.actorId !== row.actor_id) {
+            throw new Error(`ERR_UNTRUSTED_ACTION: Token actor scope mismatch: '${row.actor_id}' vs '${options.actorId}'`);
+          }
+        }
+        if (row.recipient) {
+          if (!options.recipient) {
+            throw new Error(`ERR_UNTRUSTED_ACTION: Token requires recipient scope '${row.recipient}'`);
+          }
+          if (options.recipient !== row.recipient) {
+            throw new Error(`ERR_UNTRUSTED_ACTION: Token recipient scope mismatch: '${row.recipient}' vs '${options.recipient}'`);
+          }
+        }
+        if (row.action_type !== actionType) {
+          throw new Error(`ERR_APPROVAL_HASH_MISMATCH: Action type mismatch: expected ${row.action_type}, received ${actionType}`);
+        }
+        if (payloadDigest && row.payload_digest !== payloadDigest) {
+          throw new Error(`ERR_APPROVAL_HASH_MISMATCH: Payload digest mismatch for token ${tokenId}`);
+        }
+        if (new Date(row.expires_at).getTime() < Date.now()) {
+          db.prepare("UPDATE approvals SET status = 'EXPIRED' WHERE token_id = ?").run(tokenId);
+          throw new Error(`ERR_APPROVAL_EXPIRED: Token ${tokenId} has expired`);
+        }
+        if (row.status === 'PENDING') {
+          throw new Error(`ERR_APPROVAL_NOT_APPROVED: Token ${tokenId} is still PENDING. Human/PO approval required.`);
+        }
+        if (row.status === 'CONSUMED') {
+          throw new Error(`ERR_APPROVAL_ALREADY_CONSUMED: Token ${tokenId} already consumed`);
+        }
+        if (row.status !== 'APPROVED') {
+          throw new Error(`ERR_UNTRUSTED_ACTION: Token ${tokenId} status is ${row.status}`);
+        }
+        const nowIso = new Date().toISOString();
+        const res = db.prepare(`
+          UPDATE approvals
+          SET status = 'CONSUMED', consumed_at = ?
+          WHERE token_id = ? AND status = 'APPROVED' AND expires_at > ?
+        `).run(nowIso, tokenId, nowIso);
+        if (res.changes === 0) {
+          throw new Error(`ERR_APPROVAL_ALREADY_CONSUMED: Token ${tokenId} was consumed concurrently`);
+        }
+        process.send({ id, result: { success: true, tokenId, consumedAt: nowIso } });
         break;
       }
       case 'close': {
