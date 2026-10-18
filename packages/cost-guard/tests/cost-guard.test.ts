@@ -1,5 +1,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert';
+import * as http from 'node:http';
+import * as https from 'node:https';
 import { CostGuard, installNodeCostGuardInterceptor, installElectronCostGuardInterceptor, CostGuardViolationError } from '../src/cost-guard.ts';
 
 describe('CostGuard Zero-Cost (0đ) Policy Enforcement', () => {
@@ -122,5 +124,51 @@ describe('CostGuard Zero-Cost (0đ) Policy Enforcement', () => {
       cancelled = res.cancel;
     });
     assert.strictEqual(cancelled, false, 'Electron interceptor must allow approved chatgpt.com web UI');
+  });
+
+  test('Runtime Node.js Interceptor blocks http.get and http.request to paid or unapproved endpoints', () => {
+    const uninstall = installNodeCostGuardInterceptor(guard);
+    try {
+      assert.throws(() => {
+        http.get('http://api.openai.com/v1/models');
+      }, (err: any) => {
+        assert.ok(err instanceof CostGuardViolationError);
+        assert.strictEqual(err.violation.reason, 'PAID_API_BLOCKED');
+        return true;
+      });
+
+      assert.throws(() => {
+        http.request({ host: 'random-paid-service.com', port: 80, path: '/api' });
+      }, (err: any) => {
+        assert.ok(err instanceof CostGuardViolationError);
+        assert.strictEqual(err.violation.reason, 'NOT_IN_ALLOWLIST');
+        return true;
+      });
+    } finally {
+      uninstall();
+    }
+  });
+
+  test('Runtime Node.js Interceptor blocks https.get and https.request to paid endpoints', () => {
+    const uninstall = installNodeCostGuardInterceptor(guard);
+    try {
+      assert.throws(() => {
+        https.get('https://api.anthropic.com/v1/messages');
+      }, (err: any) => {
+        assert.ok(err instanceof CostGuardViolationError);
+        assert.strictEqual(err.violation.reason, 'PAID_API_BLOCKED');
+        return true;
+      });
+
+      assert.throws(() => {
+        https.request({ host: 'api.deepseek.com', port: 443, path: '/chat' });
+      }, (err: any) => {
+        assert.ok(err instanceof CostGuardViolationError);
+        assert.strictEqual(err.violation.reason, 'PAID_API_BLOCKED');
+        return true;
+      });
+    } finally {
+      uninstall();
+    }
   });
 });

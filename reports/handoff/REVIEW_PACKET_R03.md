@@ -19,7 +19,7 @@
 | **Repository URL** | `https://github.com/wtrg/union-bot` | Public repo, truy cập trực tiếp |
 | **Branch** | `main` | Nhánh phát triển chính |
 | **Trạng thái Remote** | `UP_TO_DATE` | Toàn bộ commit đã được push lên GitHub |
-| **Tổng số bài kiểm thử** | **20/20 bài kiểm thử (100% PASS)** | Chạy qua `node --experimental-strip-types --test` |
+| **Tổng số bài kiểm thử** | **21 unit tests (13 cost-guard + 8 artifact-store) + 1 integration test (100% PASS)** | Chạy qua `node --experimental-strip-types --test` |
 | **Thời gian chạy test** | `< 25ms` | Node 24 native strip types |
 
 ---
@@ -29,9 +29,9 @@
 ### 2.1. Phát hiện P0: Cost Guard chưa có lớp chặn mạng runtime
 - **Vấn đề Leader chỉ ra:** Tài liệu khẳng định Cost Guard chặn được mạng Electron và Node, nhưng repo mới chỉ có hàm kiểm tra URL.
 - **Giải pháp đã hiện thực:**
-  - Bổ sung `installNodeCostGuardInterceptor(costGuard)`: Ghi đè an toàn `globalThis.fetch`, `http.request`, và `https.request`. Khi phát hiện egress vi phạm (như `api.openai.com` hoặc domain ngoài allowlist), ném ngay `CostGuardViolationError`. Cung cấp hàm `uninstall()` phục hồi môi trường.
+  - Bổ sung `installNodeCostGuardInterceptor(costGuard)`: Ghi đè an toàn `globalThis.fetch` và `http.Agent.prototype.addRequest` / `https.Agent.prototype.addRequest` (bắt trọn mọi lời gọi `fetch`, `http.request`, `http.get`, `https.request`, `https.get`). Khi phát hiện egress vi phạm (như `api.openai.com` hoặc domain ngoài allowlist), ném ngay `CostGuardViolationError`. Cung cấp hàm `uninstall()` phục hồi môi trường.
   - Bổ sung `installElectronCostGuardInterceptor(session, costGuard)`: Gắn hook vào `session.webRequest.onBeforeRequest` trên partition của Electron, tự động hủy bỏ kết nối (`callback({ cancel: true })`) nếu vi phạm chính sách 0đ.
-  - Cập nhật bài test `packages/cost-guard/tests/cost-guard.test.ts`: Thêm 2 bài test runtime cho cả Node fetch/http và Electron webRequest. Tổng cộng 11/11 tests PASS (4.58ms).
+  - Cập nhật bài test `packages/cost-guard/tests/cost-guard.test.ts`: Thêm đầy đủ 4 bài test runtime cho cả Node fetch rejection, http.get/request, https.get/request và Electron webRequest. Tổng cộng 13/13 tests PASS (8.8ms).
   - Đồng bộ tài liệu `docs/COST_MANIFEST.md` khớp 100% với mã nguồn và bằng chứng test.
 
 ### 2.2. Phát hiện P1: Artifact Store có nguy cơ Path Traversal

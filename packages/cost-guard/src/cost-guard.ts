@@ -175,13 +175,13 @@ function resolveRequestUrl(urlOrOptions: any, defaultProtocol: string): string {
 }
 
 /**
- * Installs runtime network interceptors for Node.js global fetch, http.request, and https.request.
+ * Installs runtime network interceptors for Node.js global fetch, http.request, http.get, https.request, and https.get.
  * Returns an uninstall function to cleanly restore original network methods.
  */
 export function installNodeCostGuardInterceptor(costGuard: CostGuard): () => void {
   const originalFetch = globalThis.fetch;
-  const originalHttpRequest = http.request;
-  const originalHttpsRequest = https.request;
+  const originalHttpAddRequest = http.Agent.prototype.addRequest;
+  const originalHttpsAddRequest = https.Agent.prototype.addRequest;
 
   // 1. Intercept global fetch
   if (typeof globalThis.fetch === 'function') {
@@ -212,46 +212,42 @@ export function installNodeCostGuardInterceptor(costGuard: CostGuard): () => voi
     };
   }
 
-  // 2. Intercept http.request
-  const interceptedHttpRequest = function (urlOrOptions: any, ...args: any[]): http.ClientRequest {
-    const urlStr = resolveRequestUrl(urlOrOptions, 'http:');
-    if (!costGuard.isUrlAllowed(urlStr)) {
-      const violations = costGuard.getViolations();
-      const latest = violations[violations.length - 1] || {
-        url: urlStr,
-        hostname: 'unknown',
-        reason: 'NOT_IN_ALLOWLIST' as const,
-        timestamp: new Date().toISOString()
-      };
-      throw new CostGuardViolationError(latest);
-    }
-    return (originalHttpRequest as any).call(http, urlOrOptions, ...args);
-  };
-  (http as any).request = interceptedHttpRequest;
+  // 2. Intercept all http and https requests via Agent prototype
+  function checkAgentRequest(opts: any, defaultProtocol: string) {
+    const host = opts.host || opts.hostname || 'localhost';
+    const port = opts.port ? `:${opts.port}` : '';
+    const path = opts.path || opts.pathname || '/';
+    const proto = opts.protocol || defaultProtocol;
+    const urlStr = `${proto}//${host}${port}${path}`;
 
-  // 3. Intercept https.request
-  const interceptedHttpsRequest = function (urlOrOptions: any, ...args: any[]): http.ClientRequest {
-    const urlStr = resolveRequestUrl(urlOrOptions, 'https:');
     if (!costGuard.isUrlAllowed(urlStr)) {
       const violations = costGuard.getViolations();
       const latest = violations[violations.length - 1] || {
         url: urlStr,
-        hostname: 'unknown',
+        hostname: host,
         reason: 'NOT_IN_ALLOWLIST' as const,
         timestamp: new Date().toISOString()
       };
       throw new CostGuardViolationError(latest);
     }
-    return (originalHttpsRequest as any).call(https, urlOrOptions, ...args);
+  }
+
+  http.Agent.prototype.addRequest = function (req: any, opts: any) {
+    checkAgentRequest(opts, 'http:');
+    return originalHttpAddRequest.apply(this, arguments as any);
   };
-  (https as any).request = interceptedHttpsRequest;
+
+  https.Agent.prototype.addRequest = function (req: any, opts: any) {
+    checkAgentRequest(opts, 'https:');
+    return originalHttpsAddRequest.apply(this, arguments as any);
+  };
 
   return function uninstall() {
     if (originalFetch) {
       globalThis.fetch = originalFetch;
     }
-    http.request = originalHttpRequest;
-    https.request = originalHttpsRequest;
+    http.Agent.prototype.addRequest = originalHttpAddRequest;
+    https.Agent.prototype.addRequest = originalHttpsAddRequest;
   };
 }
 
