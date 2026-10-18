@@ -17,6 +17,7 @@ const { pathToFileURL } = require('url');
 const { safeOpenExternal, validateExternalUrl } = require('./safe-external.js');
 const { CostGuard, installElectronCostGuardInterceptor } = require('./cost-guard.cjs');
 const { Orchestrator } = require('./orchestrator.cjs');
+const { StorageServiceClient } = require('./storage-service.cjs');
 
 // 1. Single Instance Lock
 const gotTheLock = app.requestSingleInstanceLock();
@@ -30,7 +31,12 @@ let mainWindow = null;
 const uiDistPath = path.resolve(__dirname, '../../workspace-ui/dist/index.html');
 const allowedUiFileUrl = pathToFileURL(uiDistPath).href;
 const costGuard = new CostGuard();
-const orchestrator = new Orchestrator({ costGuard });
+
+// Connect durable SQLite storage under userData (UB-P2-R01-003, P2-T04)
+const userDataPath = app.getPath('userData');
+const dbFilePath = path.join(userDataPath, 'union_bot.db');
+const storage = new StorageServiceClient(dbFilePath);
+const orchestrator = new Orchestrator({ costGuard, storage });
 
 function createWindow() {
   const isSmoke = process.argv.includes('--smoke');
@@ -236,15 +242,31 @@ function createWindow() {
   }
 }
 
-// IPC Handlers: Strictly routed through Orchestrator with renderer anti-spoofing and origin validation (C03)
+// Strict senderFrame verification enforcing main Window and exact UI frame URL (UB-P2-R01-008, P2-T13)
+function isAuthorizedSenderFrame(event) {
+  if (!event || !event.sender || !event.senderFrame) {
+    return false;
+  }
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return false;
+  }
+  if (event.sender.id !== mainWindow.webContents.id) {
+    return false;
+  }
+  if (event.senderFrame.parent !== null) {
+    return false;
+  }
+  const frameUrl = event.senderFrame.url;
+  if (!frameUrl || frameUrl !== allowedUiFileUrl) {
+    return false;
+  }
+  return true;
+}
+
+// IPC Handlers: Strictly routed through Orchestrator with renderer anti-spoofing and origin validation (C03, UB-P2-R01-008)
 ipcMain.handle('union-bot:dispatch-envelope', async (event, envelope) => {
-  // Origin verification on senderFrame (C03)
-  if (event && event.senderFrame && event.senderFrame.url) {
-    const senderUrl = event.senderFrame.url;
-    const isAllowed = senderUrl === allowedUiFileUrl || senderUrl.startsWith('data:text/html');
-    if (!isAllowed) {
-      return { success: false, error: 'Security violation: Unauthorized IPC sender origin (C03)' };
-    }
+  if (!isAuthorizedSenderFrame(event)) {
+    return { success: false, error: 'Security violation: Unauthorized IPC sender origin or missing frame (UB-P2-R01-008)' };
   }
 
   const result = await orchestrator.dispatchEnvelope(envelope, { fromRenderer: true });
@@ -260,13 +282,8 @@ ipcMain.handle('union-bot:dispatch-envelope', async (event, envelope) => {
 });
 
 ipcMain.handle('union-bot:get-room-history', async (event, roomId) => {
-  // Origin verification on senderFrame (C03)
-  if (event && event.senderFrame && event.senderFrame.url) {
-    const senderUrl = event.senderFrame.url;
-    const isAllowed = senderUrl === allowedUiFileUrl || senderUrl.startsWith('data:text/html');
-    if (!isAllowed) {
-      return [];
-    }
+  if (!isAuthorizedSenderFrame(event)) {
+    return [];
   }
   if (typeof roomId !== 'string') return [];
   return orchestrator.getRoomHistory(roomId);
@@ -295,4 +312,10 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit();
   }
+});
+
+app.on('will-quit', () => {
+  try {
+    storage.close();
+  } catch {}
 });

@@ -4,7 +4,7 @@
 $ErrorActionPreference = "Stop"
 
 Write-Host "`n========================================================" -ForegroundColor Cyan
-Write-Host "UNION BOT COMPREHENSIVE VERIFICATION SUITE (P1 WAVE 2)" -ForegroundColor Cyan
+Write-Host "UNION BOT COMPREHENSIVE VERIFICATION SUITE (P2 ROUND 2)" -ForegroundColor Cyan
 Write-Host "========================================================`n" -ForegroundColor Cyan
 
 # 1. Strict TypeScript Typecheck across Monorepo
@@ -23,8 +23,8 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 
-# 3. Run TypeScript & Node Unit Tests (59 tests)
-Write-Host "`n--- 3. Running TypeScript & Node Unit Tests (59 tests) ---" -ForegroundColor Yellow
+# 3. Run TypeScript & Node Unit Tests (97 tests)
+Write-Host "`n--- 3. Running TypeScript & Node Unit Tests (97 tests including 18 P2 vectors) ---" -ForegroundColor Yellow
 pnpm test:ts
 if ($LASTEXITCODE -ne 0) {
     Write-Host "`n[FATAL] TypeScript unit tests failed!" -ForegroundColor Red
@@ -56,6 +56,6 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Write-Host "`n========================================================" -ForegroundColor Green
-Write-Host "ALL VERIFICATION CHECKS PASSED (Typecheck + 75 Unit Tests + GUI Smoke + Strict Secret Scan)" -ForegroundColor Green
+Write-Host "ALL VERIFICATION CHECKS PASSED (Typecheck + 113 Unit Tests + GUI Smoke + Strict Secret Scan)" -ForegroundColor Green
 Write-Host "========================================================`n" -ForegroundColor Green
 exit 0

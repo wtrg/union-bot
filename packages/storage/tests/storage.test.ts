@@ -204,10 +204,19 @@ describe('Union Bot Storage Engine & Event Sourcing (P2)', () => {
       (err: any) => err instanceof UnionBotError && err.code === 'ERR_APPROVAL_HASH_MISMATCH'
     );
 
-    // 4. Consuming with exact payload succeeds
+    // 4. Consuming while PENDING is strictly rejected (UB-P2-R01-001, P2-T01)
+    assert.throws(
+      () => gate.validateAndConsume(token.tokenId, 'EXEC_CLI', actionPayload),
+      (err: any) => err instanceof UnionBotError && err.code === 'ERR_APPROVAL_NOT_APPROVED'
+    );
+
+    // 5. PO approves token (UB-P2-R01-001)
+    gate.approveToken(token.tokenId, { id: 'po_admin', role: 'LEADER' });
+
+    // 6. Consuming with exact payload now succeeds (P2-T02)
     gate.validateAndConsume(token.tokenId, 'EXEC_CLI', actionPayload);
 
-    // 5. Second use is strictly rejected as ALREADY_CONSUMED
+    // 7. Second use is strictly rejected as ALREADY_CONSUMED (P2-T02)
     assert.throws(
       () => gate.validateAndConsume(token.tokenId, 'EXEC_CLI', actionPayload),
       (err: any) => err instanceof UnionBotError && err.code === 'ERR_APPROVAL_ALREADY_CONSUMED'

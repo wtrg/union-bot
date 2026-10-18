@@ -225,7 +225,7 @@ describe('AdmissionPolicyGate & Orchestrator Zero-Cost (0đ) Policy', () => {
     assert.equal(res2.success, false);
     assert.match(res2.error!, /requires a valid approvalTokenId/);
 
-    // 3. Renderer submits action with valid approval token
+    // 3. Renderer submits action with pending token -> strictly rejected before approval (UB-P2-R01-001)
     const actionInput = { url: 'https://chatgpt.com', estimatedCost: 0 };
     const token = approvalGate.createToken({
       actionType: 'read_web',
@@ -233,7 +233,7 @@ describe('AdmissionPolicyGate & Orchestrator Zero-Cost (0đ) Policy', () => {
       origin: 'ui:test',
     });
 
-    const approvedActionEnv = createEnvelope({
+    const actionEnv = createEnvelope({
       id: 'env_act_3',
       sender: { kind: 'user', id: 'u1', name: 'User', role: 'USER' },
       recipient: { kind: 'room', id: 'general' },
@@ -250,8 +250,14 @@ describe('AdmissionPolicyGate & Orchestrator Zero-Cost (0đ) Policy', () => {
       ],
     });
 
-    const res3 = await orch.dispatchEnvelope(approvedActionEnv, { isFromRenderer: true });
-    assert.equal(res3.success, true);
+    const resPending = await orch.dispatchEnvelope(actionEnv, { isFromRenderer: true });
+    assert.equal(resPending.success, false);
+    assert.match(resPending.error!, /PENDING status/);
+
+    // 4. Operator approves token -> dispatch now succeeds
+    approvalGate.approveToken(token.tokenId, { id: 'po_lead', role: 'LEADER' });
+    const resApproved = await orch.dispatchEnvelope(actionEnv, { isFromRenderer: true });
+    assert.equal(resApproved.success, true);
   });
 
   it('guarantees idempotency deduplication across duplicate sends (P2-005, C01, C05)', async () => {

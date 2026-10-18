@@ -11,3 +11,4 @@ export * from './idempotency.ts';
 export * from './approval-gate.ts';
 export * from './workspace-validator.ts';
 export * from './backup-manager.ts';
+export * from './canonical-json.ts';

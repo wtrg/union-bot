@@ -115,6 +115,14 @@ BENIGN_FIXTURE_ALLOWLIST = [
             "e1585a8b92753b31cad9eb5bc523b69475a5a5413e3b67ab39fe647471bb9381"
         ],
         "reason": "Protocol unit test authStatus enum value fixture"
+    },
+    {
+        "path_suffix": "reports/audit/REVIEW_FIX_PLAN_P2_R01.md",
+        "rule_id": "SEC-001",
+        "expected_match_sha256": [
+            "e1585a8b92753b31cad9eb5bc523b69475a5a5413e3b67ab39fe647471bb9381"
+        ],
+        "reason": "Leader audit fix plan documentation quoting legacy authStatus enum"
     }
 ]
 

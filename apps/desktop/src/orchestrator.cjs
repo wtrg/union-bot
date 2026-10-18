@@ -42,7 +42,23 @@ const FidelityLevelSchema = z.enum([
   'L3_INTERACTIVE_CANVAS',
 ]);
 
+const SemanticPreservationLabelSchema = z.enum([
+  'original_bytes',
+  'structured_copy',
+  'rendered_preview',
+  'screenshot_only',
+  'external_reference',
+  'unavailable',
+]);
+
 const ContentFidelitySchema = z.enum([
+  'original_bytes',
+  'structured_copy',
+  'rendered_preview',
+  'screenshot_only',
+  'external_reference',
+  'unavailable',
+  // Backward compatibility legacy labels
   'RAW_BINARY',
   'SEMANTIC_INTERACTIVE',
   'STRUCTURED_DOC',
@@ -55,6 +71,8 @@ const SenderKindSchema = z.enum(['agent', 'human', 'user', 'system']);
 const RecipientKindSchema = z.enum(['agent', 'room', 'system', 'broadcast']);
 
 const AuthStatusSchema = z.enum([
+  'UNKNOWN',
+  'NOT_VERIFIED',
   'AUTHENTICATED',
   'ANONYMOUS',
   'EXPIRED',
@@ -62,6 +80,7 @@ const AuthStatusSchema = z.enum([
 ]);
 
 const EvidenceProvenanceSchema = z.enum([
+  'UNVERIFIED',
   'LIVE_WEB',
   'LOCAL_RPC',
   'CLI_HEADLESS',
@@ -82,8 +101,8 @@ const ProviderIdentitySchema = z.object({
   sessionId: z.string().optional(),
   partitionKey: z.string().optional(),
   capabilityVersion: z.string().default('1.0.0'),
-  authStatus: AuthStatusSchema.default('AUTHENTICATED'),
-  evidenceProvenance: EvidenceProvenanceSchema.default('LOCAL_RPC'),
+  authStatus: AuthStatusSchema.default('NOT_VERIFIED'),
+  evidenceProvenance: EvidenceProvenanceSchema.default('UNVERIFIED'),
 });
 
 const TextMessagePartSchema = z.object({
@@ -156,6 +175,13 @@ const EnvelopeStatusSchema = z.enum([
 ]);
 
 const EnvelopeSchema = z.object({
+  schemaVersion: z
+    .string()
+    .refine(
+      (v) => v === SCHEMA_VERSION,
+      (v) => ({ message: `Unsupported or future schemaVersion '${v}'. Current supported version is '${SCHEMA_VERSION}'` })
+    )
+    .default(SCHEMA_VERSION),
   id: z.string().min(1),
   traceId: z.string().min(1),
   correlationId: z.string().optional(),
@@ -166,7 +192,7 @@ const EnvelopeSchema = z.object({
   roomId: z.string().min(1),
   parts: z.array(MessagePartSchema).min(1),
   fidelity: FidelityLevelSchema,
-  status: EnvelopeStatusSchema.default('acknowledged'),
+  status: EnvelopeStatusSchema.default('pending'),
   metadata: z.record(z.unknown()).optional(),
 });
 
@@ -182,10 +208,20 @@ const ApprovalTokenSchema = z.object({
   tokenId: z.string().min(1),
   actionType: z.string().min(1),
   payloadDigest: z.string().regex(/^[0-9a-fA-F]{64}$/, 'Payload digest must be valid SHA256 hex'),
+  canonicalizationVersion: z.number().int().positive().default(1),
   origin: z.string().min(1),
+  workspaceId: z.string().optional(),
+  roomId: z.string().optional(),
+  actorId: z.string().optional(),
+  recipient: z.string().optional(),
+  policyVersion: z.string().default('1.0.0'),
   status: ApprovalStatusSchema.default('PENDING'),
   createdAt: z.string(),
   expiresAt: z.string(),
+  approverId: z.string().optional(),
+  approvedAt: z.string().optional(),
+  rejectedAt: z.string().optional(),
+  rejectionReason: z.string().optional(),
   consumedAt: z.string().optional(),
 });
 
@@ -228,11 +264,17 @@ const UnionBotErrorCodeSchema = z.enum([
   'ERR_UNTRUSTED_SENDER',
   'ERR_UNTRUSTED_ACTION',
   'ERR_APPROVAL_EXPIRED',
+  'ERR_APPROVAL_NOT_APPROVED',
   'ERR_APPROVAL_ALREADY_CONSUMED',
   'ERR_APPROVAL_HASH_MISMATCH',
+  'ERR_CANONICALIZATION_FAILED',
+  'ERR_PAYLOAD_MISMATCH',
+  'ERR_UNSUPPORTED_SCHEMA_VERSION',
   'ERR_PATH_TRAVERSAL_DENIED',
   'ERR_SCHEMA_VALIDATION_FAILED',
   'ERR_STORAGE_CORRUPTION',
+  'ERR_MIGRATION_FAILED',
+  'ERR_MIGRATION_TAMPERED',
   'ERR_IDEMPOTENCY_CONFLICT',
   'ERR_RECONCILIATION_REQUIRED',
   'ERR_NETWORK_DISCONNECTED',
@@ -401,6 +443,20 @@ class Orchestrator {
     for (const r of initialRooms) {
       this.roomHistories.set(r, []);
     }
+
+    // Preload persisted history from storage if available
+    if (this.storage && typeof this.storage.getRoomEnvelopes === 'function') {
+      for (const r of initialRooms) {
+        this.storage.getRoomEnvelopes(r).then((envs) => {
+          if (Array.isArray(envs)) {
+            this.roomHistories.set(r, envs);
+            for (const e of envs) {
+              if (e.id) this.seenEnvelopeIds.add(e.id);
+            }
+          }
+        }).catch(() => {});
+      }
+    }
   }
 
   /**
@@ -496,7 +552,21 @@ class Orchestrator {
       }
     }
 
-    // 5. Store in room history and mark idempotency seen
+    // 5. Store in persistent storage if provided (UB-P2-R01-003, P2-T04)
+    if (this.storage) {
+      try {
+        await this.storage.insertEnvelope(envelope);
+      } catch (storageErr) {
+        return {
+          success: false,
+          envelopeId: envelope.id,
+          roomId: envelope.roomId,
+          error: `Storage failure: ${storageErr.message}`,
+        };
+      }
+    }
+
+    // 6. In-memory cache & idempotency tracking
     this.seenEnvelopeIds.add(envelope.id);
     const room = this.roomHistories.get(envelope.roomId) || [];
     room.push(envelope);
@@ -514,6 +584,20 @@ class Orchestrator {
   }
 
   getRoomHistory(roomId) {
+    return this.roomHistories.get(roomId) || [];
+  }
+
+  async getRoomHistoryAsync(roomId) {
+    if (this.storage) {
+      try {
+        const persisted = await this.storage.getRoomEnvelopes(roomId);
+        if (Array.isArray(persisted) && persisted.length > 0) {
+          return persisted;
+        }
+      } catch (err) {
+        console.error('[Orchestrator] Error reading persistent history:', err);
+      }
+    }
     return this.roomHistories.get(roomId) || [];
   }
 

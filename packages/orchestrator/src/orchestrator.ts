@@ -211,20 +211,7 @@ export class Orchestrator {
       }
     }
 
-    // 5. Durable Event Persistence (P2-003, P2-004)
-    if (this.storage) {
-      this.storage.insertEnvelope(envelope);
-    }
-    if (this.eventStore) {
-      this.eventStore.appendEvent(`room:${envelope.roomId}`, 'ENVELOPE_RECORDED', envelope as any);
-    }
-
-    // 6. In-Memory Projection
-    const room = this.roomHistories.get(envelope.roomId) || [];
-    room.push(envelope);
-    this.roomHistories.set(envelope.roomId, room);
-
-    // 7. Complete Idempotency
+    // 5. Durable Event Persistence & Idempotency in a Single Atomic Transaction (UB-P2-R01-004, P2-T05)
     const result: DispatchResult = {
       success: true,
       envelopeId: envelope.id,
@@ -232,9 +219,34 @@ export class Orchestrator {
       status: 'acknowledged',
     };
 
-    if (this.idempotency) {
-      this.idempotency.complete(envelope.id, result as any);
+    if (this.storage) {
+      this.storage.transaction(() => {
+        // 5a. Insert envelope into durable table
+        this.storage!.insertEnvelope(envelope);
+
+        // 5b. Append event to event journal
+        if (this.eventStore) {
+          this.eventStore.appendEvent(`room:${envelope.roomId}`, 'ENVELOPE_RECORDED', envelope as any);
+        }
+
+        // 5c. Complete idempotency key atomically
+        if (this.idempotency) {
+          this.idempotency.complete(envelope.id, result as any);
+        }
+      });
+    } else {
+      if (this.eventStore) {
+        this.eventStore.appendEvent(`room:${envelope.roomId}`, 'ENVELOPE_RECORDED', envelope as any);
+      }
+      if (this.idempotency) {
+        this.idempotency.complete(envelope.id, result as any);
+      }
     }
+
+    // 6. In-Memory Projection (Updated ONLY after durable transaction commits)
+    const room = this.roomHistories.get(envelope.roomId) || [];
+    room.push(envelope);
+    this.roomHistories.set(envelope.roomId, room);
 
     return result;
   }

@@ -41,10 +41,27 @@ export const FidelityLevelSchema = z.enum([
 export type FidelityLevel = z.infer<typeof FidelityLevelSchema>;
 
 /**
- * 6 Content Preservation Fidelity tiers (CAS & Rich Response Preservation)
+ * 6 Semantic Content Preservation Fidelity tiers from V3.1 (UB-P2-R01-009, P2-T14)
  * Distinct from UI presentation levels L0-L3.
  */
+export const SemanticPreservationLabelSchema = z.enum([
+  'original_bytes',
+  'structured_copy',
+  'rendered_preview',
+  'screenshot_only',
+  'external_reference',
+  'unavailable',
+]);
+export type SemanticPreservationLabel = z.infer<typeof SemanticPreservationLabelSchema>;
+
 export const ContentFidelitySchema = z.enum([
+  'original_bytes',
+  'structured_copy',
+  'rendered_preview',
+  'screenshot_only',
+  'external_reference',
+  'unavailable',
+  // Backward compatibility legacy labels (mapped losslessly to the 6 semantic labels)
   'RAW_BINARY',
   'SEMANTIC_INTERACTIVE',
   'STRUCTURED_DOC',
@@ -54,6 +71,31 @@ export const ContentFidelitySchema = z.enum([
 ]);
 export type ContentFidelity = z.infer<typeof ContentFidelitySchema>;
 
+export function normalizeContentFidelity(fidelity: ContentFidelity): SemanticPreservationLabel {
+  switch (fidelity) {
+    case 'original_bytes':
+    case 'RAW_BINARY':
+      return 'original_bytes';
+    case 'structured_copy':
+    case 'STRUCTURED_DOC':
+    case 'SEMANTIC_INTERACTIVE':
+    case 'VECTOR_EMBEDDING':
+      return 'structured_copy';
+    case 'rendered_preview':
+    case 'LOSSLESS_PREVIEW':
+    case 'LOSSLESS_EXPORT':
+      return 'rendered_preview';
+    case 'screenshot_only':
+      return 'screenshot_only';
+    case 'external_reference':
+      return 'external_reference';
+    case 'unavailable':
+      return 'unavailable';
+    default:
+      return 'unavailable';
+  }
+}
+
 export const SenderKindSchema = z.enum(['agent', 'human', 'user', 'system']);
 export type SenderKind = z.infer<typeof SenderKindSchema>;
 
@@ -61,6 +103,8 @@ export const RecipientKindSchema = z.enum(['agent', 'room', 'system', 'broadcast
 export type RecipientKind = z.infer<typeof RecipientKindSchema>;
 
 export const AuthStatusSchema = z.enum([
+  'UNKNOWN',
+  'NOT_VERIFIED',
   'AUTHENTICATED',
   'ANONYMOUS',
   'EXPIRED',
@@ -69,6 +113,7 @@ export const AuthStatusSchema = z.enum([
 export type AuthStatus = z.infer<typeof AuthStatusSchema>;
 
 export const EvidenceProvenanceSchema = z.enum([
+  'UNVERIFIED',
   'LIVE_WEB',
   'LOCAL_RPC',
   'CLI_HEADLESS',
@@ -85,7 +130,8 @@ export const TransferStatusSchema = z.enum([
 export type TransferStatus = z.infer<typeof TransferStatusSchema>;
 
 /**
- * 6 AI & Multi-account Provider Identity contract
+ * 6 AI & Multi-account Provider Identity contract (UB-P2-R01-009, P2-T15)
+ * Defaults to unverified/not authenticated; never assumes live access without proof.
  */
 export const ProviderIdentitySchema = z.object({
   provider: ProviderKindSchema,
@@ -94,8 +140,8 @@ export const ProviderIdentitySchema = z.object({
   sessionId: z.string().optional(),
   partitionKey: z.string().optional(),
   capabilityVersion: z.string().default('1.0.0'),
-  authStatus: AuthStatusSchema.default('AUTHENTICATED'),
-  evidenceProvenance: EvidenceProvenanceSchema.default('LOCAL_RPC'),
+  authStatus: AuthStatusSchema.default('NOT_VERIFIED'),
+  evidenceProvenance: EvidenceProvenanceSchema.default('UNVERIFIED'),
 });
 export type ProviderIdentity = z.infer<typeof ProviderIdentitySchema>;
 
@@ -185,7 +231,13 @@ export type EnvelopeStatus = z.infer<typeof EnvelopeStatusSchema>;
 
 // Envelope
 export const EnvelopeSchema = z.object({
-  schemaVersion: z.string().default(SCHEMA_VERSION),
+  schemaVersion: z
+    .string()
+    .refine(
+      (v) => v === SCHEMA_VERSION,
+      (v) => ({ message: `Unsupported or future schemaVersion '${v}'. Current supported version is '${SCHEMA_VERSION}'` })
+    )
+    .default(SCHEMA_VERSION),
   id: z.string().min(1),
   traceId: z.string().min(1),
   correlationId: z.string().optional(),
@@ -196,12 +248,12 @@ export const EnvelopeSchema = z.object({
   roomId: z.string().min(1),
   parts: z.array(MessagePartSchema).min(1),
   fidelity: FidelityLevelSchema,
-  status: EnvelopeStatusSchema.default('acknowledged'),
+  status: EnvelopeStatusSchema.default('pending'),
   metadata: z.record(z.unknown()).optional(),
 });
 export type Envelope = z.infer<typeof EnvelopeSchema>;
 
-// Approval Token Schema (P2-006 & C02)
+// Approval Token Schema (P2-006, C02, UB-P2-R01-001, UB-P2-R01-002)
 export const ApprovalStatusSchema = z.enum([
   'PENDING',
   'APPROVED',
@@ -215,10 +267,20 @@ export const ApprovalTokenSchema = z.object({
   tokenId: z.string().min(1),
   actionType: z.string().min(1),
   payloadDigest: z.string().regex(/^[0-9a-fA-F]{64}$/, 'Payload digest must be valid SHA256 hex'),
+  canonicalizationVersion: z.number().int().positive().default(1),
   origin: z.string().min(1),
+  workspaceId: z.string().optional(),
+  roomId: z.string().optional(),
+  actorId: z.string().optional(),
+  recipient: z.string().optional(),
+  policyVersion: z.string().default('1.0.0'),
   status: ApprovalStatusSchema.default('PENDING'),
   createdAt: z.string(),
   expiresAt: z.string(),
+  approverId: z.string().optional(),
+  approvedAt: z.string().optional(),
+  rejectedAt: z.string().optional(),
+  rejectionReason: z.string().optional(),
   consumedAt: z.string().optional(),
 });
 export type ApprovalToken = z.infer<typeof ApprovalTokenSchema>;
@@ -296,18 +358,24 @@ export const AdmissionDecisionSchema = z.object({
 });
 export type AdmissionDecision = z.infer<typeof AdmissionDecisionSchema>;
 
-// Error Taxonomy (P2-011)
+// Error Taxonomy (P2-011, Wave A, UB-P2-R01-001, UB-P2-R01-002, UB-P2-R01-006)
 export const UnionBotErrorCodeSchema = z.enum([
   'ERR_COST_LIMIT_EXCEEDED',
   'ERR_UNKNOWN_COST_DENIED',
   'ERR_UNTRUSTED_SENDER',
   'ERR_UNTRUSTED_ACTION',
   'ERR_APPROVAL_EXPIRED',
+  'ERR_APPROVAL_NOT_APPROVED',
   'ERR_APPROVAL_ALREADY_CONSUMED',
   'ERR_APPROVAL_HASH_MISMATCH',
+  'ERR_CANONICALIZATION_FAILED',
+  'ERR_PAYLOAD_MISMATCH',
+  'ERR_UNSUPPORTED_SCHEMA_VERSION',
   'ERR_PATH_TRAVERSAL_DENIED',
   'ERR_SCHEMA_VALIDATION_FAILED',
   'ERR_STORAGE_CORRUPTION',
+  'ERR_MIGRATION_FAILED',
+  'ERR_MIGRATION_TAMPERED',
   'ERR_IDEMPOTENCY_CONFLICT',
   'ERR_RECONCILIATION_REQUIRED',
   'ERR_NETWORK_DISCONNECTED',
