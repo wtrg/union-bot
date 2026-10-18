@@ -8,7 +8,7 @@
 > **Kho lưu trữ (Remote Repository):** `https://github.com/wtrg/union-bot`  
 > **Branch:** `main`  
 > **Base Reviewed SHA (R05 Anchor):** `c2d329edb925ecbbab9b707ab6042550e656a7a7`  
-> **Target Submission Head SHA:** *[Được gán động khi commit & push lên Git]*  
+> **Target Submission Head SHA:** `abbda6c9c2e21fc0689c6d1ead997d217afa70ee`  
 > **Thời điểm lập hồ sơ:** 2026-10-18T22:50:00+07:00  
 
 ---
