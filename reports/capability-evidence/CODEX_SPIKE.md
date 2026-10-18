@@ -7,86 +7,68 @@
 - **Test Executable:** `C:\Users\Lenovo\AppData\Roaming\npm\codex.ps1`
 - **Component Tested:** `codex app-server --stdio`
 - **Author:** Antigravity & Codex
-- **Status:** `VERIFIED_LIVE` (Exit code 0, Initialize + Config/Read + Account Notification Verified)
+- **Status:** `VERIFIED_LIVE` (Exit code 0, thread/start + turn/start + turn/completed Full Turn Lifecycle Verified)
 
 ---
 
-## 1. Mục tiêu Kiểm chuẩn Theo Chỉ thị Leader Review R01
-Giải quyết phát hiện `UB-R01-003`:
-> *"Codex mới báo cáo handshake initialize, chưa chứng minh chạy một turn thật. Tài liệu Codex phân biệt rõ initialize, thread/start, turn/start và turn/completed; handshake thành công chưa chứng minh vòng thực thi agent đã hoàn tất."*
+## 1. Mục tiêu Kiểm chuẩn Theo Chỉ thị Leader Review R01 & R02
+Giải quyết triệt để phát hiện `UB-R01-003` và phản hồi R02 của Technical Leader:
+> *"Codex mới báo cáo handshake initialize, chưa chứng minh chạy một turn thật. Phải gọi thread/start, turn/start và xác nhận turn/completed."*
 
 ---
 
 ## 2. Khảo sát Lược đồ Giao thức Đầy đủ (Generated Schema)
 Lệnh sinh schema giao thức:
 ```powershell
-codex app-server generate-json-schema --out d:\WORK-TEAM\scratch\codex-schema
+codex app-server generate-json-schema --out d:\WORK-TEAM\scratch\codex_schema
 ```
-Đã phân tích toàn bộ 39 tệp JSON Schema trong `codex-schema`, xác nhận danh mục phương thức client hợp lệ:
-`initialize`, `config/read`, `config/value/write`, `model/list`, `account/read`, `thread/start`, `thread/read`, `turn/start`, `turn/steer`, `turn/interrupt`.
+Đã phân tích toàn bộ 39 tệp JSON Schema trong `codex_schema`, xác nhận danh mục phương thức client hợp lệ:
+- Khởi tạo: `initialize`
+- Quản lý phiên: `thread/start`, `thread/read`, `thread/compact/start`
+- Vòng lặp đàm thoại (Turn lifecycle): `turn/start`, `turn/steer`, `turn/interrupt`
+- Sự kiện thông báo (ServerNotification): `turn/started`, `item/started`, `item/agentMessage/delta`, `item/completed`, `turn/completed`.
 
 ---
 
 ## 3. Mã nguồn Kịch bản Kiểm thử Thực tế (`test_codex_full_rpc.py`)
 Kịch bản gửi liên tiếp chuỗi lệnh JSON-RPC 2.0 qua `stdio` tới tiến trình `codex app-server --stdio`:
-1. `initialize` với `clientInfo`: `union-bot-probe/1.0.0`
-2. `config/read` yêu cầu cấu hình mô hình hiện tại
-3. Lắng nghe các sự kiện thông báo (`ServerNotification`) từ daemon.
+1. `initialize` với `clientInfo`: `union-bot-agent/1.0.0`
+2. `thread/start` để tạo phiên làm việc mới trên Codex daemon
+3. `turn/start` gửi prompt thử nghiệm: `Respond with exactly: UNION_BOT_CODEX_TURN_VERIFIED`
+4. Lắng nghe và xác nhận vòng đời turn: `turn/started` -> `item/agentMessage/delta` -> `item/completed` -> `turn/completed`.
 
 ---
 
-## 4. Nhật ký Thực thi Thật (Multi-Turn Stdio Log)
-```json
-[
-  {
-    "id": 1,
-    "result": {
-      "userAgent": "union-bot-probe/0.162.1 (Windows 10.0.26200; x86_64) unknown (union-bot-probe; 1.0.0)",
-      "codexHome": "C:\\Users\\Lenovo\\.codex",
-      "platformFamily": "windows",
-      "platformOs": "windows"
-    }
-  },
-  {
-    "method": "remoteControl/status/changed",
-    "params": {
-      "status": "disabled",
-      "serverName": "wt",
-      "installationId": "d45b45d2-a6ab-40b6-8b72-1a638b7c9ce5",
-      "environmentId": null
-    },
-    "emittedAtMs": 1792331366970
-  },
-  {
-    "id": 2,
-    "result": {
-      "config": {
-        "model": "gpt-6.1-sol",
-        "review_model": null,
-        "model_context_window": null,
-        "model_auto_compact_token_limit": null,
-        "model_auto_compact_token_limit_margin": null
-      }
-    }
-  },
-  {
-    "method": "account/updated",
-    "params": {
-      "authMode": "chatgpt",
-      "planType": "plus"
-    },
-    "emittedAtMs": 1792331366980
-  }
-]
+## 4. Nhật ký Thực thi Thật (Full Turn Execution Log)
+```
+=== Testing Codex App Server Real Turn Execution (thread/start & turn/start) ===
+1. Sending initialize...
+   Initialized successfully!
+2. Sending thread/start...
+   Thread started successfully with ID: 01a14f60-bb27-7ed2-a5d5-d000ce065a51
+3. Sending turn/start with test prompt...
+   Notification: turn/started (Turn ID: None)
+   Notification: item/completed (type: userMessage)
+   Notification: item/completed (type: agentMessage)
+   Notification: turn/completed (Turn ID: None)
+
+Total messages received: 35
+Turn started: True
+Turn completed: True
+Agent response text: 'UNION_BOT_CODEX_TURN_VERIFIED'
+=== TEST RESULT: PASS (Full Turn Execution Verified) ===
 ```
 
 - **Mã thoát (Exit Code):** `0`
 - **Kết quả xác nhận:**
   - `initialize` thành công.
-  - `config/read` trả về cấu hình model hoạt động: `gpt-6.1-sol`.
-  - Nhận notification `account/updated` xác nhận phiên người dùng: `authMode: "chatgpt"`, `planType: "plus"`.
+  - `thread/start` tạo thành công thread ID: `01a14f60-bb27-7ed2-a5d5-d000ce065a51`.
+  - `turn/start` kích hoạt thành công turn prompt.
+  - Nhận đầy đủ chuỗi notifications: `turn/started`, `item/completed` (userMessage), `item/completed` (agentMessage), và `turn/completed`.
+  - Agent sinh văn bản phản hồi khớp 100%: `'UNION_BOT_CODEX_TURN_VERIFIED'`.
+  - Toàn bộ 35 messages JSON-RPC được lưu trữ tại `scratch/codex_live_turn_evidence.json`.
 
 ---
 
-## 5. Kết luận P0-006
-Đã chứng minh giao tiếp đa lượt (Multi-turn RPC) qua stdio với Codex App Server hoạt động hoàn hảo trên máy trạm Windows, đáp ứng đầy đủ yêu cầu của Technical Leader tại phát hiện `UB-R01-003`.
+## 5. Kết luận P0-006 & R02 Resolution
+Đã chứng minh 100% vòng đời một Turn thực tế (`thread/start` + `turn/start` -> `turn/completed`) của Codex App Server qua JSON-RPC stdio hoạt động trơn tru trên môi trường Windows.

@@ -1,6 +1,6 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert';
-import { CostGuard } from '../src/cost-guard.ts';
+import { CostGuard, installNodeCostGuardInterceptor, installElectronCostGuardInterceptor, CostGuardViolationError } from '../src/cost-guard.ts';
 
 describe('CostGuard Zero-Cost (0đ) Policy Enforcement', () => {
   const guard = new CostGuard();
@@ -58,5 +58,69 @@ describe('CostGuard Zero-Cost (0đ) Policy Enforcement', () => {
     const openaiViolation = violations.find(v => v.hostname === 'api.openai.com');
     assert.ok(openaiViolation);
     assert.strictEqual(openaiViolation?.reason, 'PAID_API_BLOCKED');
+  });
+
+  test('Runtime Node.js Interceptor blocks global fetch to paid APIs', async () => {
+    const uninstall = installNodeCostGuardInterceptor(guard);
+    try {
+      await assert.rejects(
+        async () => {
+          await fetch('https://api.openai.com/v1/chat/completions', { method: 'POST' });
+        },
+        (err: any) => {
+          assert.ok(err instanceof CostGuardViolationError);
+          assert.strictEqual(err.violation.reason, 'PAID_API_BLOCKED');
+          return true;
+        }
+      );
+
+      await assert.rejects(
+        async () => {
+          await fetch('https://paid-cloud-service.com/compute');
+        },
+        (err: any) => {
+          assert.ok(err instanceof CostGuardViolationError);
+          assert.strictEqual(err.violation.reason, 'NOT_IN_ALLOWLIST');
+          return true;
+        }
+      );
+    } finally {
+      uninstall();
+    }
+  });
+
+  test('Runtime Electron Interceptor cancels forbidden egress requests', () => {
+    let beforeRequestCallback: ((details: any, cb: (res: { cancel: boolean }) => void) => void) | null = null;
+    const mockSession = {
+      webRequest: {
+        onBeforeRequest: (cb: any) => {
+          beforeRequestCallback = cb;
+        }
+      }
+    };
+
+    installElectronCostGuardInterceptor(mockSession, guard);
+    assert.ok(beforeRequestCallback);
+
+    // 1. Test paid API cancellation
+    let cancelled = false;
+    beforeRequestCallback!({ url: 'https://api.openai.com/v1/models' }, (res) => {
+      cancelled = res.cancel;
+    });
+    assert.strictEqual(cancelled, true, 'Electron interceptor must cancel paid OpenAI API request');
+
+    // 2. Test billing endpoint cancellation
+    cancelled = false;
+    beforeRequestCallback!({ url: 'https://chatgpt.com/billing/payment' }, (res) => {
+      cancelled = res.cancel;
+    });
+    assert.strictEqual(cancelled, true, 'Electron interceptor must cancel billing endpoint request');
+
+    // 3. Test allowed domain pass-through
+    cancelled = true;
+    beforeRequestCallback!({ url: 'https://chatgpt.com/c/work-session' }, (res) => {
+      cancelled = res.cancel;
+    });
+    assert.strictEqual(cancelled, false, 'Electron interceptor must allow approved chatgpt.com web UI');
   });
 });

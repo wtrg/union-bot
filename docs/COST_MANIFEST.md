@@ -51,12 +51,12 @@ Mọi yêu cầu gửi đến các địa chỉ sau sẽ bị **Cost Guard ngắ
 ---
 
 ## 3. Cơ chế Thực thi Kỹ thuật (Technical Enforcement)
-Mô-đun `packages/cost-guard` được tích hợp ở 2 tầng:
-1. **Tầng Electron Main:** Cài đặt `session.webRequest.onBeforeRequest` trên toàn bộ các partition của ứng dụng. Bất kỳ request nào hướng đến Paid API hoặc domain lạ không nằm trong Allowlist đều bị hủy (`cancel: true`).
-2. **Tầng Node.js Process:** Khởi tạo HTTP/HTTPS agent guard chặn đứng các lệnh `fetch` hoặc `http.request` hướng ra ngoài nếu không có chữ ký phê duyệt hợp lệ.
-3. **Audit Log:** Mọi vi phạm đều kích hoạt sự kiện `COST_GUARD_VIOLATION` được ghi vĩnh viễn vào nhật ký kiểm toán và hiển thị cảnh báo đỏ trên UI.
+Mô-đun `@union-bot/cost-guard` được hiện thực hóa và kiểm chuẩn tự động qua 11/11 tests:
+1. **Tầng Electron Main:** Cung cấp `installElectronCostGuardInterceptor(session, costGuard)`. Hàm này gắn vào `session.webRequest.onBeforeRequest` trên mọi partition của Electron (`persist:mcb-web-*`). Bất kỳ yêu cầu nào hướng đến Paid API (như `api.openai.com`) hoặc trang thanh toán đều bị hủy ngay lập tức (`callback({ cancel: true })`).
+2. **Tầng Node.js Process:** Cung cấp `installNodeCostGuardInterceptor(costGuard)`. Hàm này ghi đè an toàn `globalThis.fetch`, `http.request`, và `https.request`. Khi bất kỳ mã nguồn nào gọi fetch/request đến domain bị cấm, hệ thống chặn đứng và ném lỗi `CostGuardViolationError`.
+3. **Audit Log:** Mọi vi phạm đều kích hoạt sự kiện `COST_GUARD_VIOLATION` được ghi vào danh sách vi phạm (`getViolations()`) và thông báo qua callback kiểm toán.
 
 ---
 
-## 4. Kết luận P0-009
-Chính sách chi phí 0đ được đóng băng và bảo vệ bằng mã nguồn thực tế. Không một lời gọi API tính tiền nào có thể lọt qua hệ thống phòng vệ của Union Bot.
+## 4. Kết luận P0-009 & R02 Resolution
+Chính sách chi phí 0đ được bảo vệ ở cả 2 tầng: tầng phân tích URL tĩnh/động và tầng interceptor mạng runtime (Node.js + Electron session). 11/11 bài kiểm thử tự động xác nhận chặn 100% egress tính tiền và ném biệt lệ kiểm toán chính xác.

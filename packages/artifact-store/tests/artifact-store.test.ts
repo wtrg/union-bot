@@ -4,9 +4,17 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { ArtifactStore } from '../src/artifact-store.ts';
 
+import * as os from 'node:os';
+
 describe('ArtifactStore Content-Addressable Storage & Fidelity Verification', () => {
-  const testStoreDir = path.resolve('d:/WORK-TEAM/scratch/test-artifact-store');
-  const store = new ArtifactStore(testStoreDir);
+  let testStoreDir: string;
+  let store: ArtifactStore;
+
+  test('Setup dynamic temporary CAS store directory', () => {
+    testStoreDir = fs.mkdtempSync(path.join(os.tmpdir(), 'union-bot-cas-test-'));
+    store = new ArtifactStore(testStoreDir);
+    assert.ok(fs.existsSync(testStoreDir));
+  });
 
   test('Stores and retrieves arbitrary binary data with verified SHA256 hash', () => {
     // 1. Prepare sample binary file content (e.g. mock PDF / document)
@@ -77,5 +85,49 @@ describe('ArtifactStore Content-Addressable Storage & Fidelity Verification', ()
     assert.throws(() => {
       store.readBytes(bogusHash);
     }, /not found in store/);
+  });
+
+  test('Rejects path traversal attempts in readBytes', () => {
+    const maliciousPaths = [
+      '../../etc/passwd',
+      '..\\..\\windows\\win.ini',
+      '../test',
+      'a/../../../secret.txt',
+      '0123456789abcdef/../../etc/passwd'
+    ];
+
+    for (const badHash of maliciousPaths) {
+      assert.throws(() => {
+        store.readBytes(badHash);
+      }, /Invalid SHA256 digest format/);
+    }
+  });
+
+  test('Rejects invalid non-hex characters in readBytes', () => {
+    const invalidHashes = [
+      '',
+      'not-a-hash',
+      '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdeg', // 'g' is not hex
+      '0123456789abcdef' // too short
+    ];
+
+    for (const badHash of invalidHashes) {
+      assert.throws(() => {
+        store.readBytes(badHash);
+      }, /Invalid SHA256 digest format/);
+    }
+  });
+
+  test('hasArtifact gracefully returns false for invalid hash or path traversal', () => {
+    assert.strictEqual(store.hasArtifact('../../etc/passwd'), false);
+    assert.strictEqual(store.hasArtifact('not-a-hash'), false);
+    assert.strictEqual(store.hasArtifact(''), false);
+  });
+
+  test('Cleans up temporary directory after tests complete', () => {
+    if (testStoreDir && fs.existsSync(testStoreDir)) {
+      fs.rmSync(testStoreDir, { recursive: true, force: true });
+    }
+    assert.strictEqual(fs.existsSync(testStoreDir), false);
   });
 });

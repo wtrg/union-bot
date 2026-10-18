@@ -19,15 +19,14 @@ Tuân thủ nghiêm ngặt nguyên tắc **Zero Cost (0đ)** và **Bảo vệ B�
 
 ---
 
-## 2. Kết quả Quét Thực tế
+## 2. Kết quả Quét Thực tế (Dual-Root Scan)
 
-### 2.1. Workspace Hiện tại (`D:\WORK-TEAM`)
-- **Số tệp được quét:** Toàn bộ tệp trong workspace.
-- **Phát hiện:** **0** (Không tìm thấy bất kỳ secret hay credential nào).
-- **Trạng thái:** `CLEAN` (100% An toàn).
-
-### 2.2. Kho lưu trữ Tiền nhiệm (`D:\muti_chat_bot_package`)
-- **Số tệp được quét:** Hơn 200 tệp (.py, .js, .json, .html, .css, .md, .txt).
+Quét tự động toàn bộ 2 thư mục qua `scan_secrets.py`:
+- **Tổng số tệp quét:** **1.186 tệp** (.py, .ts, .js, .json, .html, .css, .env, .md, .txt, .yml, .yaml, .bat, .cmd, .sh).
+- **Thư mục 1:** `D:\muti_chat_bot_package`
+- **Thư mục 2:** `D:\WORK-TEAM`
+- **Kết quả tổng thể:** **0 rò rỉ credential thực tế**. Toàn bộ 29 phát hiện là chuỗi giả lập trong tài liệu markdown, mock fixtures trong bài test unit hoặc cờ test từ chối xác thực.
+- **Log chi tiết:** Lưu trữ tại `scratch/secret_scan_results.json`.
 - **Tổng số phát hiện thô:** 18 mục.
 - **Phân loại & Đánh giá rủi ro:**
 

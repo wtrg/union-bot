@@ -3,6 +3,11 @@
  * Enforces strict Zero-Cost (0 VND) policy by blocking paid API endpoints
  * and validating egress against approved allowlists.
  */
+import { createRequire } from 'node:module';
+
+const require = createRequire(import.meta.url);
+const http = require('node:http');
+const https = require('node:https');
 
 export interface CostGuardOptions {
   allowLocalhost?: boolean;
@@ -141,4 +146,130 @@ export class CostGuard {
       }
     }
   }
+}
+
+export class CostGuardViolationError extends Error {
+  public readonly violation: CostGuardViolation;
+  constructor(violation: CostGuardViolation) {
+    super(`[COST_GUARD_VIOLATION] Egress blocked to "${violation.url}" (${violation.reason}) by Union Bot Zero-Cost (0 VND) Policy.`);
+    this.name = 'CostGuardViolationError';
+    this.violation = violation;
+  }
+}
+
+function resolveRequestUrl(urlOrOptions: any, defaultProtocol: string): string {
+  if (typeof urlOrOptions === 'string') {
+    return urlOrOptions;
+  }
+  if (urlOrOptions instanceof URL) {
+    return urlOrOptions.toString();
+  }
+  if (urlOrOptions && typeof urlOrOptions === 'object') {
+    const protocol = urlOrOptions.protocol || defaultProtocol;
+    const host = urlOrOptions.hostname || urlOrOptions.host || 'localhost';
+    const port = urlOrOptions.port ? `:${urlOrOptions.port}` : '';
+    const pathname = urlOrOptions.path || urlOrOptions.pathname || '/';
+    return `${protocol}//${host}${port}${pathname}`;
+  }
+  return '';
+}
+
+/**
+ * Installs runtime network interceptors for Node.js global fetch, http.request, and https.request.
+ * Returns an uninstall function to cleanly restore original network methods.
+ */
+export function installNodeCostGuardInterceptor(costGuard: CostGuard): () => void {
+  const originalFetch = globalThis.fetch;
+  const originalHttpRequest = http.request;
+  const originalHttpsRequest = https.request;
+
+  // 1. Intercept global fetch
+  if (typeof globalThis.fetch === 'function') {
+    globalThis.fetch = async function costGuardFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+      let urlStr: string;
+      if (typeof input === 'string') {
+        urlStr = input;
+      } else if (input instanceof URL) {
+        urlStr = input.toString();
+      } else if (input && typeof (input as any).url === 'string') {
+        urlStr = (input as any).url;
+      } else {
+        urlStr = String(input);
+      }
+
+      if (!costGuard.isUrlAllowed(urlStr)) {
+        const violations = costGuard.getViolations();
+        const latest = violations[violations.length - 1] || {
+          url: urlStr,
+          hostname: 'unknown',
+          reason: 'NOT_IN_ALLOWLIST' as const,
+          timestamp: new Date().toISOString()
+        };
+        throw new CostGuardViolationError(latest);
+      }
+
+      return originalFetch.call(globalThis, input, init);
+    };
+  }
+
+  // 2. Intercept http.request
+  const interceptedHttpRequest = function (urlOrOptions: any, ...args: any[]): http.ClientRequest {
+    const urlStr = resolveRequestUrl(urlOrOptions, 'http:');
+    if (!costGuard.isUrlAllowed(urlStr)) {
+      const violations = costGuard.getViolations();
+      const latest = violations[violations.length - 1] || {
+        url: urlStr,
+        hostname: 'unknown',
+        reason: 'NOT_IN_ALLOWLIST' as const,
+        timestamp: new Date().toISOString()
+      };
+      throw new CostGuardViolationError(latest);
+    }
+    return (originalHttpRequest as any).call(http, urlOrOptions, ...args);
+  };
+  (http as any).request = interceptedHttpRequest;
+
+  // 3. Intercept https.request
+  const interceptedHttpsRequest = function (urlOrOptions: any, ...args: any[]): http.ClientRequest {
+    const urlStr = resolveRequestUrl(urlOrOptions, 'https:');
+    if (!costGuard.isUrlAllowed(urlStr)) {
+      const violations = costGuard.getViolations();
+      const latest = violations[violations.length - 1] || {
+        url: urlStr,
+        hostname: 'unknown',
+        reason: 'NOT_IN_ALLOWLIST' as const,
+        timestamp: new Date().toISOString()
+      };
+      throw new CostGuardViolationError(latest);
+    }
+    return (originalHttpsRequest as any).call(https, urlOrOptions, ...args);
+  };
+  (https as any).request = interceptedHttpsRequest;
+
+  return function uninstall() {
+    if (originalFetch) {
+      globalThis.fetch = originalFetch;
+    }
+    http.request = originalHttpRequest;
+    https.request = originalHttpsRequest;
+  };
+}
+
+/**
+ * Installs Electron session network request interceptor.
+ * Blocks forbidden egress in Electron WebContentsView or BrowserWindow before sending.
+ */
+export function installElectronCostGuardInterceptor(session: any, costGuard: CostGuard): void {
+  if (!session || !session.webRequest || !session.webRequest.onBeforeRequest) {
+    throw new Error('Invalid Electron session object provided to installElectronCostGuardInterceptor.');
+  }
+
+  session.webRequest.onBeforeRequest((details: any, callback: (response: { cancel: boolean }) => void) => {
+    const url = details.url;
+    if (!costGuard.isUrlAllowed(url)) {
+      callback({ cancel: true });
+      return;
+    }
+    callback({ cancel: false });
+  });
 }

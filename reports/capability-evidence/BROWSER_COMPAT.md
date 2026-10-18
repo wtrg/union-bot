@@ -15,14 +15,16 @@ Không chỉ dừng lại ở tuyên bố thiết kế phân vùng `persist:mcb-
 
 ---
 
-## 2. Bảng Ma trận Kiểm chứng Trình duyệt 4 Nhà Cung Cấp
+## 2. Bảng Ma trận Kiểm chứng Trình duyệt 4 Nhà Cung Cấp (Strict TLS Certificate Verification)
+
+Toàn bộ phép đo được thực hiện với cơ chế xác thực chứng chỉ TLS nghiêm ngặt (`ssl.create_default_context()`, `verify_mode=CERT_REQUIRED`):
 
 | STT | Nhà cung cấp | Origin URL | HTTP Status | Thời gian phản hồi | Hạ tầng Máy chủ & Cơ chế Bảo vệ | Phân tích Thách thức Kỹ thuật | Chế độ Vận hành Đạt Chuẩn (Mode) | Trạng thái Nghiệm thu |
 |---|---|---|---|---|---|---|---|---|
-| 1 | **ChatGPT Web** | `https://chatgpt.com` | `403 Forbidden` (WAF Challenge) | 4.198s | Cloudflare (`cf-ray: a4c8021be8c503d3-HKG`) | Cloudflare Bot Management chặn tự động bằng script; trong Chromium `WebContentsView` người dùng tương tác bình thường qua cookie phiên. | `EMBEDDED_WEBCONTENTSVIEW_MANUAL_SHARE` | `VERIFIED_LIVE` (Đang chạy phiên live qua browser MCP) |
-| 2 | **Google Gemini Web** | `https://gemini.google.com` | `200 OK` | 0.574s | Google Frontend (`ESF`) | Phản hồi trực tiếp trang ứng dụng; yêu cầu xác thực Google Account trong partition cô lập. | `EMBEDDED_WEBCONTENTSVIEW_MANUAL_SHARE` | `VERIFIED_LIVE` (Đo mạng thành công) |
-| 3 | **Claude Web** | `https://claude.ai` | `403 Forbidden` (Turnstile Gate) | 0.357s | Cloudflare (`cf-ray: a4c80221d9f106ff-HKG`) | Cloudflare Turnstile CAPTCHA chặn các request không có môi trường DOM trình duyệt thực tế. | `EMBEDDED_WEBCONTENTSVIEW_MANUAL_SHARE` | `VERIFIED_LIVE` (Đo mạng thành công) |
-| 4 | **DeepSeek Web** | `https://chat.deepseek.com` | `202 Accepted` | 0.202s | Amazon CloudFront | Tải trang SPA chính thức; kết nối ổn định dưới 250ms. | `EMBEDDED_WEBCONTENTSVIEW_MANUAL_SHARE` | `VERIFIED_LIVE` (Đo mạng thành công) |
+| 1 | **ChatGPT Web** | `https://chatgpt.com` | `403 Forbidden` (WAF Challenge) | 0.222s | Cloudflare (`cf-ray: a4c8283d0f3add3a-HKG`) | Cloudflare Bot Management chặn tự động bằng script; trong Chromium `WebContentsView` người dùng tương tác bình thường qua cookie phiên. | `EMBEDDED_WEBCONTENTSVIEW_MANUAL_SHARE` | `VERIFIED_LIVE` (TLS Valid, đo trực tiếp) |
+| 2 | **Google Gemini Web** | `https://gemini.google.com` | `200 OK` | 0.363s | Google Frontend (`ESF`) | Phản hồi trực tiếp trang ứng dụng; yêu cầu xác thực Google Account trong partition cô lập. | `EMBEDDED_WEBCONTENTSVIEW_MANUAL_SHARE` | `VERIFIED_LIVE` (TLS Valid, đo trực tiếp) |
+| 3 | **Claude Web** | `https://claude.ai` | `403 Forbidden` (Turnstile Gate) | 0.380s | Cloudflare (`cf-ray: a4c82841bfb2095e-HKG`) | Cloudflare Turnstile CAPTCHA chặn các request không có môi trường DOM trình duyệt thực tế. | `EMBEDDED_WEBCONTENTSVIEW_MANUAL_SHARE` | `VERIFIED_LIVE` (TLS Valid, đo trực tiếp) |
+| 4 | **DeepSeek Web** | `https://chat.deepseek.com` | `202 Accepted` | 0.135s | Amazon CloudFront | Tải trang SPA chính thức; kết nối ổn định dưới 200ms. | `EMBEDDED_WEBCONTENTSVIEW_MANUAL_SHARE` | `VERIFIED_LIVE` (TLS Valid, đo trực tiếp) |
 
 ---
 

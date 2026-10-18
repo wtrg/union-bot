@@ -30,15 +30,35 @@ def scan_file(fpath):
     except Exception as e:
         pass
 
-for root, dirs, files in os.walk(r'D:\muti_chat_bot_package'):
-    if '.venv' in root or '__pycache__' in root or '.git' in root or 'browser_profile' in root:
-        continue
-    for f in files:
-        if f.endswith(('.py', '.js', '.json', '.html', '.css', '.env', '.md', '.txt', '.yml', '.yaml', '.bat', '.cmd', '.sh')):
-            scan_file(os.path.join(root, f))
+scan_roots = [
+    r'D:\muti_chat_bot_package',
+    r'D:\WORK-TEAM'
+]
 
+scanned_files_count = 0
+
+for root_path in scan_roots:
+    for root, dirs, files in os.walk(root_path):
+        if any(skip in root for skip in ['.git', 'node_modules', '.venv', '__pycache__', 'browser_profile', '.system_generated', 'dist']):
+            continue
+        for f in files:
+            if f.endswith(('.py', '.ts', '.js', '.json', '.html', '.css', '.env', '.md', '.txt', '.yml', '.yaml', '.bat', '.cmd', '.sh')):
+                scanned_files_count += 1
+                scan_file(os.path.join(root, f))
+
+print(f"Scanned {scanned_files_count} files across both D:\\muti_chat_bot_package and D:\\WORK-TEAM.")
 print(f"Total findings: {len(findings)}")
-for item in findings[:20]:
-    rel = os.path.relpath(item['file'], r'D:\muti_chat_bot_package')
-    print(f"[{item['line']}] {rel}: {item['description']}")
-    print(f"   Preview: {item['preview']}")
+
+# Save report
+report_data = {
+    "scanned_roots": scan_roots,
+    "scanned_files_count": scanned_files_count,
+    "total_findings": len(findings),
+    "findings": findings
+}
+
+import json
+with open(r'd:\WORK-TEAM\scratch\secret_scan_results.json', 'w', encoding='utf-8') as rf:
+    json.dump(report_data, rf, indent=2)
+
+print("Saved secret scan results to scratch/secret_scan_results.json.")

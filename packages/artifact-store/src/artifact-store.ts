@@ -91,19 +91,41 @@ export class ArtifactStore {
   }
 
   /**
+   * Validates that a string is a standard 64-character lowercase or uppercase hex SHA-256 digest.
+   */
+  public static isValidSha256(hash: string): boolean {
+    return typeof hash === 'string' && /^[a-f0-9]{64}$/i.test(hash.trim());
+  }
+
+  private validateSha256(sha256: string): string {
+    const trimmed = (sha256 || '').trim().toLowerCase();
+    if (!ArtifactStore.isValidSha256(trimmed)) {
+      throw new Error(`Invalid SHA256 digest format: "${sha256}". Must be a valid 64-character hexadecimal string.`);
+    }
+    return trimmed;
+  }
+
+  /**
    * Retrieves raw bytes by SHA256 digest, verifying integrity.
    */
   public readBytes(sha256: string): Buffer {
-    const prefix = sha256.substring(0, 2);
-    const targetPath = path.join(this.baseDir, prefix, sha256);
+    const validHash = this.validateSha256(sha256);
+    const prefix = validHash.substring(0, 2);
+    const targetPath = path.resolve(this.baseDir, prefix, validHash);
+
+    // Defense-in-depth: Ensure target path cannot escape baseDir
+    if (!targetPath.startsWith(this.baseDir)) {
+      throw new Error(`Path traversal attempt detected for artifact ${sha256}`);
+    }
+
     if (!fs.existsSync(targetPath)) {
-      throw new Error(`Artifact with SHA256 ${sha256} not found in store.`);
+      throw new Error(`Artifact with SHA256 ${validHash} not found in store.`);
     }
 
     const buffer = fs.readFileSync(targetPath);
     const computedHash = ArtifactStore.hashBuffer(buffer);
-    if (computedHash !== sha256) {
-      throw new Error(`Integrity check failed for ${sha256}: computed ${computedHash}`);
+    if (computedHash !== validHash) {
+      throw new Error(`Integrity check failed for ${validHash}: computed ${computedHash}`);
     }
 
     return buffer;
@@ -113,7 +135,15 @@ export class ArtifactStore {
    * Checks if an artifact exists by SHA256.
    */
   public hasArtifact(sha256: string): boolean {
-    const prefix = sha256.substring(0, 2);
-    return fs.existsSync(path.join(this.baseDir, prefix, sha256));
+    if (!ArtifactStore.isValidSha256(sha256)) {
+      return false;
+    }
+    const validHash = sha256.trim().toLowerCase();
+    const prefix = validHash.substring(0, 2);
+    const targetPath = path.resolve(this.baseDir, prefix, validHash);
+    if (!targetPath.startsWith(this.baseDir)) {
+      return false;
+    }
+    return fs.existsSync(targetPath);
   }
 }
