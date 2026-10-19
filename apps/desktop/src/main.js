@@ -456,7 +456,7 @@ function createWindow() {
               workspaceId: 'ws_h05',
               recipient: 'agent_coder',
             });
-            const approveRes = await window.unionBotAPI.approveToken('tok_h05_kill');
+            const approveRes = await window.unionBotAPI.approveToken('tok_h05_kill', { confirmedByUser: true });
             const envelope = {
               id: 'env_h05_kill_001',
               traceId: 'trc_h05_001',
@@ -630,8 +630,7 @@ function createWindow() {
               recipient: recipientA.id,
             });
 
-            // 4. Main process validates approver and issues approval decision
-            await window.unionBotAPI.approveToken(tokenIdA);
+            await window.unionBotAPI.approveToken(tokenIdA, { confirmedByUser: true });
             const tokenApproved = await window.unionBotAPI.getApprovalToken(tokenIdA);
 
             // 5. Renderer sends envelope containing Action A
@@ -695,7 +694,7 @@ function createWindow() {
               workspaceId: 'ws_h07',
               recipient: 'agent_writer',
             });
-            await window.unionBotAPI.approveToken(tokenIdB);
+            await window.unionBotAPI.approveToken(tokenIdB, { confirmedByUser: true });
 
             // Dispatch with modified recipient (rogue agent)
             const modifiedRecipientEnvelope = {
@@ -828,7 +827,7 @@ function createWindow() {
               parts: [{ kind: 'text', text: 'Should be denied' }]
             });
 
-            const approveBlocked = await window.unionBotAPI.approveToken('tok_blocked');
+            const approveBlocked = await window.unionBotAPI.approveToken('tok_blocked', { confirmedByUser: true });
 
             return {
               initialStatus,
@@ -881,6 +880,165 @@ function createWindow() {
         process.exit(0);
       } catch (err) {
         console.error('[R05-H08] Exception:', err);
+        app.quit();
+        process.exit(1);
+      }
+    });
+    return;
+  }
+
+  // 7h. R06-E2E: Full Windows Electron Verification for Round R06 (R06-B01, R06-B03, R06-B06)
+  if (process.argv.includes('--r06-e2e')) {
+    mainWindow.webContents.once('did-finish-load', async () => {
+      try {
+        console.log('[R06-E2E] Running Real Windows Electron R06 Verification...');
+
+        const r06Result = await mainWindow.webContents.executeJavaScript(`
+          (async () => {
+            // 1. Vector R06-B03: approveToken requires confirmedByUser: true
+            const tokenB03 = 'tok_r06_b03';
+            await window.unionBotAPI.createApprovalToken({
+              tokenId: tokenB03,
+              actionType: 'write_file',
+              payloadDigest: 'dummy_digest_b03',
+              origin: 'desktop_ui',
+              roomId: 'orchestration',
+              workspaceId: 'ws_r06',
+              recipient: 'agent_coder',
+            });
+
+            // Call approveToken without confirmedByUser -> must be rejected
+            const unconfirmedRes = await window.unionBotAPI.approveToken(tokenB03);
+            const tokenAfterUnconfirmed = await window.unionBotAPI.getApprovalToken(tokenB03);
+
+            // Call approveToken with confirmedByUser: true -> must succeed
+            const confirmedRes = await window.unionBotAPI.approveToken(tokenB03, { confirmedByUser: true });
+            const tokenAfterConfirmed = await window.unionBotAPI.getApprovalToken(tokenB03);
+
+            // 2. Vector R06-B01: Multi-action envelope rejected fail-closed
+            const actionInput1 = { tool: 'write_file', estimatedCost: 0, path: 'a.txt', content: 'action 1' };
+            const { digest: digest1 } = await window.unionBotAPI.computeActionDigest(actionInput1);
+
+            const actionInput2 = { tool: 'write_file', estimatedCost: 0, path: 'b.txt', content: 'action 2' };
+            const { digest: digest2 } = await window.unionBotAPI.computeActionDigest(actionInput2);
+
+            const validTokenId = 'tok_r06_valid_action2';
+            await window.unionBotAPI.createApprovalToken({
+              tokenId: validTokenId,
+              actionType: 'write_file',
+              payloadDigest: digest2,
+              origin: 'desktop_ui',
+              roomId: 'orchestration',
+              workspaceId: 'ws_r06',
+              recipient: 'agent_coder',
+            });
+            await window.unionBotAPI.approveToken(validTokenId, { confirmedByUser: true });
+
+            const multiActionEnvelope = {
+              id: 'env_r06_multi_001',
+              traceId: 'trc_r06_001',
+              roomId: 'orchestration',
+              workspaceId: 'ws_r06',
+              timestamp: Date.now(),
+              sender: { kind: 'user', id: 'usr_r06', name: 'R06 User', role: 'USER' },
+              recipient: { kind: 'agent', id: 'agent_coder' },
+              fidelity: 'L0_RAW_TEXT',
+              parts: [
+                {
+                  kind: 'action',
+                  tool: 'write_file',
+                  callId: 'call_r06_action1',
+                  status: 'requested',
+                  input: actionInput1,
+                  approvalTokenId: 'tok_fake_action1',
+                },
+                {
+                  kind: 'action',
+                  tool: 'write_file',
+                  callId: 'call_r06_action2',
+                  status: 'requested',
+                  input: actionInput2,
+                  approvalTokenId: validTokenId,
+                },
+              ],
+            };
+
+            const multiDispatchRes = await window.unionBotAPI.dispatchEnvelope(multiActionEnvelope);
+            const validTokenAfterDispatch = await window.unionBotAPI.getApprovalToken(validTokenId);
+
+            // 3. Vector R06-B06 in test mode: testKillWorker is permitted in test mode
+            const testModeKillRes = await window.unionBotAPI.testKillWorker();
+
+            return {
+              unconfirmedRes,
+              tokenAfterUnconfirmed,
+              confirmedRes,
+              tokenAfterConfirmed,
+              multiDispatchRes,
+              validTokenAfterDispatch,
+              testModeKillRes,
+            };
+          })()
+        `);
+
+        const b03UnconfirmedDenied = r06Result.unconfirmedRes?.success === false &&
+          String(r06Result.unconfirmedRes?.error).includes('ERR_HUMAN_CONFIRMATION_REQUIRED');
+        const b03TokenRemainedPending = r06Result.tokenAfterUnconfirmed?.status === 'PENDING';
+        const b03ConfirmedApproved = r06Result.confirmedRes?.success === true;
+        const b03TokenBecameApproved = r06Result.tokenAfterConfirmed?.status === 'APPROVED';
+
+        const b01MultiActionDenied = r06Result.multiDispatchRes?.success === false &&
+          String(r06Result.multiDispatchRes?.error).includes('ERR_MULTI_ACTION_UNSUPPORTED');
+        const b01ValidTokenNotConsumed = r06Result.validTokenAfterDispatch?.status === 'APPROVED';
+
+        const b06TestModeAllowed = r06Result.testModeKillRes?.success === true;
+
+        console.log('[R06-E2E] R06-B03 Unconfirmed approval rejected:', b03UnconfirmedDenied);
+        console.log('[R06-E2E] R06-B03 Token remained PENDING:', b03TokenRemainedPending);
+        console.log('[R06-E2E] R06-B03 Confirmed approval succeeded:', b03ConfirmedApproved);
+        console.log('[R06-E2E] R06-B03 Token became APPROVED:', b03TokenBecameApproved);
+        console.log('[R06-E2E] R06-B01 Multi-action envelope rejected fail-closed:', b01MultiActionDenied);
+        console.log('[R06-E2E] R06-B01 Valid token not consumed (status APPROVED):', b01ValidTokenNotConsumed);
+        console.log('[R06-E2E] R06-B06 Test mode permitted kill worker:', b06TestModeAllowed);
+
+        const allPassed = b03UnconfirmedDenied &&
+          b03TokenRemainedPending &&
+          b03ConfirmedApproved &&
+          b03TokenBecameApproved &&
+          b01MultiActionDenied &&
+          b01ValidTokenNotConsumed &&
+          b06TestModeAllowed;
+
+        const report = {
+          suite: 'UNION_BOT_ELECTRON_R06_E2E_EVIDENCE',
+          timestamp: new Date().toISOString(),
+          userDataDir,
+          vectors: {
+            'R06-B01': { multiActionDenied: b01MultiActionDenied, validTokenNotConsumed: b01ValidTokenNotConsumed },
+            'R06-B03': { unconfirmedDenied: b03UnconfirmedDenied, confirmedApproved: b03ConfirmedApproved },
+            'R06-B06': { testModeAllowed: b06TestModeAllowed },
+          },
+          result: allPassed ? 'PASS' : 'FAIL',
+        };
+
+        const reportDir = path.resolve(__dirname, '../../../reports/capability-evidence');
+        if (!fs.existsSync(reportDir)) fs.mkdirSync(reportDir, { recursive: true });
+        fs.writeFileSync(
+          path.join(reportDir, 'ELECTRON_R06_E2E_EVIDENCE.json'),
+          JSON.stringify(report, null, 2),
+          'utf-8'
+        );
+
+        if (!allPassed) {
+          app.quit();
+          process.exit(1);
+        }
+
+        console.log('[R06-E2E] ALL_R06_E2E_CHECKS_PASSED');
+        app.quit();
+        process.exit(0);
+      } catch (err) {
+        console.error('[R06-E2E] Exception:', err);
         app.quit();
         process.exit(1);
       }
@@ -1099,15 +1257,33 @@ ipcMain.handle('union-bot:compute-action-digest', async (event, input) => {
   }
 });
 
-ipcMain.handle('union-bot:approve-token', async (event, { tokenId, decisionContext } = {}) => {
+ipcMain.handle('union-bot:approve-token', async (event, payload) => {
   if (appStatus !== 'READY') {
     return { success: false, error: `ERR_STORAGE_UNAVAILABLE: Desktop storage is not ready (${appStatus}) (UB-P2-R03-05)` };
   }
   if (!checkSenderAuthorized(event)) {
     return { success: false, error: 'Security violation: Unauthorized IPC sender origin or missing frame (UB-P2-R01-008)' };
   }
+
+  const tokenId = typeof payload === 'string' ? payload : payload?.tokenId;
+  const decisionContext = typeof payload === 'object' ? payload?.decisionContext : undefined;
+
   if (!tokenId || typeof tokenId !== 'string') {
     return { success: false, error: 'ERR_UNTRUSTED_ACTION: tokenId is required' };
+  }
+
+  // F03 / R06-B03: Human Consent Requirement
+  // Renderer must provide explicit user confirmation before approval token is activated
+  const isConfirmedByUser = Boolean(
+    decisionContext &&
+    (decisionContext.confirmedByUser === true || decisionContext.userConfirmed === true)
+  );
+
+  if (!isConfirmedByUser) {
+    return {
+      success: false,
+      error: 'ERR_HUMAN_CONFIRMATION_REQUIRED: Action approval requires explicit user confirmation (confirmedByUser: true) (R05-F03)',
+    };
   }
 
   // Server-side TrustedPrincipal minted by main process - NEVER take untrusted role from renderer (UB-P2-R03-02)
@@ -1138,6 +1314,25 @@ ipcMain.handle('union-bot:get-approval-token', async (event, tokenId) => {
 });
 
 ipcMain.handle('union-bot:test-kill-worker', async (event) => {
+  const isTestMode =
+    process.env.NODE_ENV === 'test' ||
+    process.argv.some((arg) =>
+      arg.startsWith('--r04-e2e') ||
+      arg.startsWith('--r05-e2e') ||
+      arg.startsWith('--r06-e2e') ||
+      arg === '--smoke' ||
+      arg === '--test' ||
+      arg === '--headless' ||
+      arg.startsWith('--test-')
+    );
+
+  if (!isTestMode) {
+    return {
+      success: false,
+      error: 'ERR_TEST_IPC_DISABLED: Test IPC channels are strictly disabled in production mode (R05-F03)',
+    };
+  }
+
   if (!checkSenderAuthorized(event)) {
     return { success: false, error: 'Unauthorized IPC sender origin (UB-P2-R01-008)' };
   }

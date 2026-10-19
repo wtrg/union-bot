@@ -144,7 +144,20 @@ export class Orchestrator {
       }
     }
 
-    // 4. Action Parts & Approval Token Validation (C02, P2-006)
+    // 4. Action Parts & Approval Token Validation (C02, P2-006, R06-F01)
+    const actionParts = envelope.parts.filter((p) => p.kind === 'action');
+    if (actionParts.length > 1) {
+      if (this.idempotency) {
+        this.idempotency.fail(envelope.id, { error: 'ERR_MULTI_ACTION_UNSUPPORTED' });
+      }
+      return {
+        success: false,
+        envelopeId: envelope.id,
+        roomId: envelope.roomId,
+        error: 'ERR_MULTI_ACTION_UNSUPPORTED: Multiple action parts per envelope are not supported in atomic approval protocol',
+      };
+    }
+
     for (const part of envelope.parts) {
       if (part.kind === 'action') {
         // C02: Untrusted action parts from renderer cannot self-claim status='completed' or run tools unapproved

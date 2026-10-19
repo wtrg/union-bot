@@ -194,138 +194,158 @@ function isVerifiedLegacyFingerprint(db, appliedChecksum) {
  * Applies migrations or reconciles verified legacy schema.
  */
 function runSchemaMigrations(db) {
-  // Ensure schema_migrations table exists
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS schema_migrations (
-      version INTEGER PRIMARY KEY,
-      name TEXT NOT NULL,
-      checksum TEXT NOT NULL,
-      applied_at TEXT NOT NULL
-    );
-  `);
-
-  // Ensure legacy table structures with missing columns/indices are upgraded safely (UB-P2-R03-04, R04-G06, R05-H03)
   const existingTables = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all().map((r) => r.name);
-  if (existingTables.includes('idempotency_keys')) {
-    const idempotencyCols = db.prepare('PRAGMA table_info(idempotency_keys)').all();
-    if (!idempotencyCols.some((c) => c.name === 'dispatch_prepared')) {
-      db.exec('ALTER TABLE idempotency_keys ADD COLUMN dispatch_prepared INTEGER DEFAULT 0;');
-    }
-  }
-  if (existingTables.includes('events')) {
-    db.exec(`
-      CREATE INDEX IF NOT EXISTS idx_events_occurred_at ON events (occurred_at);
-      CREATE INDEX IF NOT EXISTS idx_events_type ON events (event_type);
-    `);
-  }
-  if (existingTables.includes('envelopes')) {
-    db.exec(`
-      CREATE INDEX IF NOT EXISTS idx_envelopes_trace ON envelopes (trace_id);
-    `);
-  }
-  if (existingTables.includes('outbox')) {
-    db.exec(`
-      CREATE INDEX IF NOT EXISTS idx_outbox_status ON outbox (status);
-    `);
-  }
-
-  const appliedRows = db
-    .prepare('SELECT version, name, checksum FROM schema_migrations ORDER BY version ASC')
-    .all();
-
-  const appliedMap = new Map(appliedRows.map((r) => [r.version, r]));
   const maxCodeVersion = Math.max(...MIGRATIONS.map((m) => m.version), 0);
+  let appliedRows = [];
 
-  // 1. Verify integrity of existing applied migrations
-  for (const applied of appliedRows) {
-    if (applied.version > maxCodeVersion) {
-      const err = new Error(
-        `Database version ${applied.version} is newer than supported code version ${maxCodeVersion}. Refusing write migration to prevent database corruption.`
-      );
-      err.code = 'ERR_UNSUPPORTED_SCHEMA_VERSION';
-      err.details = { databaseVersion: applied.version, maxCodeVersion };
-      throw err;
-    }
+  // 1. Verify integrity of existing schema_migrations BEFORE executing any DDL or writes (R05-F02, R06-B02)
+  if (existingTables.includes('schema_migrations')) {
+    appliedRows = db
+      .prepare('SELECT version, name, checksum FROM schema_migrations ORDER BY version ASC')
+      .all();
 
-    const expectedMigration = MIGRATIONS.find((m) => m.version === applied.version);
-    if (!expectedMigration) {
-      const err = new Error(`Unknown migration version ${applied.version} recorded in database.`);
-      err.code = 'ERR_MIGRATION_TAMPERED';
-      err.details = { version: applied.version };
-      throw err;
-    }
+    for (const applied of appliedRows) {
+      if (applied.version > maxCodeVersion) {
+        const err = new Error(
+          `Database version ${applied.version} is newer than supported code version ${maxCodeVersion}. Refusing write migration to prevent database corruption.`
+        );
+        err.code = 'ERR_UNSUPPORTED_SCHEMA_VERSION';
+        err.details = { databaseVersion: applied.version, maxCodeVersion };
+        throw err;
+      }
 
-    if (applied.checksum !== expectedMigration.checksum) {
-      // Check if this is a verified legacy schema fingerprint that can be upgraded safely (UB-P2-R04-01, R05-H03)
-      if (isVerifiedLegacyFingerprint(db, applied.checksum)) {
-        // Upgrade legacy schema atomically to full canonical parity
-        db.exec('BEGIN IMMEDIATE TRANSACTION;');
-        try {
-          // 1. Ensure dag_nodes and snapshots exist
-          db.exec(`
-            CREATE TABLE IF NOT EXISTS dag_nodes (
-              task_id TEXT NOT NULL,
-              node_id TEXT NOT NULL,
-              name TEXT NOT NULL,
-              dependencies_json TEXT NOT NULL,
-              assigned_role TEXT NOT NULL,
-              assigned_provider TEXT,
-              revision INTEGER DEFAULT 1,
-              attempt INTEGER DEFAULT 1,
-              correlation_id TEXT NOT NULL,
-              recovery_state TEXT NOT NULL,
-              raw_json TEXT NOT NULL,
-              updated_at TEXT NOT NULL,
-              PRIMARY KEY (task_id, node_id)
-            );
-            CREATE INDEX IF NOT EXISTS idx_dag_recovery ON dag_nodes (recovery_state);
+      const expectedMigration = MIGRATIONS.find((m) => m.version === applied.version);
+      if (!expectedMigration) {
+        const err = new Error(`Unknown migration version ${applied.version} recorded in database.`);
+        err.code = 'ERR_MIGRATION_TAMPERED';
+        err.details = { version: applied.version };
+        throw err;
+      }
 
-            CREATE TABLE IF NOT EXISTS snapshots (
-              stream_id TEXT PRIMARY KEY,
-              last_sequence_id INTEGER NOT NULL,
-              state_json TEXT NOT NULL,
-              created_at TEXT NOT NULL
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_events_occurred_at ON events (occurred_at);
-            CREATE INDEX IF NOT EXISTS idx_events_type ON events (event_type);
-            CREATE INDEX IF NOT EXISTS idx_envelopes_trace ON envelopes (trace_id);
-            CREATE INDEX IF NOT EXISTS idx_outbox_status ON outbox (status);
-          `);
-
-          // 2. Ensure dispatch_prepared exists in idempotency_keys
-          const idempotencyCols = db.prepare('PRAGMA table_info(idempotency_keys)').all();
-          if (!idempotencyCols.some((c) => c.name === 'dispatch_prepared')) {
-            db.exec('ALTER TABLE idempotency_keys ADD COLUMN dispatch_prepared INTEGER DEFAULT 0;');
-          }
-
-          // 3. Update checksum to canonical
-          db.prepare('UPDATE schema_migrations SET checksum = ? WHERE version = ?').run(
-            expectedMigration.checksum,
-            applied.version
+      if (applied.checksum !== expectedMigration.checksum) {
+        // If not a recognized legacy fingerprint, strictly reject as tampered BEFORE touching anything
+        if (!isVerifiedLegacyFingerprint(db, applied.checksum)) {
+          const err = new Error(
+            `Migration version ${applied.version} checksum mismatch! Expected ${expectedMigration.checksum}, database has ${applied.checksum}. Migration definitions must not be modified after application.`
           );
-
-          db.exec('COMMIT;');
-          continue;
-        } catch (upgradeErr) {
-          try { db.exec('ROLLBACK;'); } catch {}
-          const err = new Error(`ERR_MIGRATION_FAILED: Legacy database upgrade failed and was rolled back: ${upgradeErr.message}`);
-          err.code = 'ERR_MIGRATION_FAILED';
+          err.code = 'ERR_MIGRATION_TAMPERED';
+          err.details = { version: applied.version, expected: expectedMigration.checksum, actual: applied.checksum };
           throw err;
         }
       }
+    }
+  }
 
-      // If not a recognized legacy fingerprint, strictly reject as tampered
-      const err = new Error(
-        `Migration version ${applied.version} checksum mismatch! Expected ${expectedMigration.checksum}, database has ${applied.checksum}. Migration definitions must not be modified after application.`
+  // 2. Ensure schema_migrations tracker table exists (only reached if DB is valid or fresh)
+  if (!existingTables.includes('schema_migrations')) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS schema_migrations (
+        version INTEGER PRIMARY KEY,
+        name TEXT NOT NULL,
+        checksum TEXT NOT NULL,
+        applied_at TEXT NOT NULL
       );
-      err.code = 'ERR_MIGRATION_TAMPERED';
-      err.details = { version: applied.version, expected: expectedMigration.checksum, actual: applied.checksum };
+    `);
+  }
+
+  const appliedMap = new Map(appliedRows.map((r) => [r.version, r]));
+
+  // 3. Atomically reconcile verified legacy schema fingerprints inside a transaction (UB-P2-R04-01, R05-H03)
+  for (const applied of appliedRows) {
+    const expectedMigration = MIGRATIONS.find((m) => m.version === applied.version);
+    if (expectedMigration && applied.checksum !== expectedMigration.checksum && isVerifiedLegacyFingerprint(db, applied.checksum)) {
+      db.exec('BEGIN IMMEDIATE TRANSACTION;');
+      try {
+        // Ensure dag_nodes and snapshots exist
+        db.exec(`
+          CREATE TABLE IF NOT EXISTS dag_nodes (
+            task_id TEXT NOT NULL,
+            node_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            dependencies_json TEXT NOT NULL,
+            assigned_role TEXT NOT NULL,
+            assigned_provider TEXT,
+            revision INTEGER DEFAULT 1,
+            attempt INTEGER DEFAULT 1,
+            correlation_id TEXT NOT NULL,
+            recovery_state TEXT NOT NULL,
+            raw_json TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (task_id, node_id)
+          );
+          CREATE INDEX IF NOT EXISTS idx_dag_recovery ON dag_nodes (recovery_state);
+
+          CREATE TABLE IF NOT EXISTS snapshots (
+            stream_id TEXT PRIMARY KEY,
+            last_sequence_id INTEGER NOT NULL,
+            state_json TEXT NOT NULL,
+            created_at TEXT NOT NULL
+          );
+
+          CREATE INDEX IF NOT EXISTS idx_events_occurred_at ON events (occurred_at);
+          CREATE INDEX IF NOT EXISTS idx_events_type ON events (event_type);
+          CREATE INDEX IF NOT EXISTS idx_envelopes_trace ON envelopes (trace_id);
+          CREATE INDEX IF NOT EXISTS idx_outbox_status ON outbox (status);
+        `);
+
+        // Ensure dispatch_prepared exists in idempotency_keys
+        const idempotencyCols = db.prepare('PRAGMA table_info(idempotency_keys)').all();
+        if (!idempotencyCols.some((c) => c.name === 'dispatch_prepared')) {
+          db.exec('ALTER TABLE idempotency_keys ADD COLUMN dispatch_prepared INTEGER DEFAULT 0;');
+        }
+
+        // Update checksum to canonical
+        db.prepare('UPDATE schema_migrations SET checksum = ? WHERE version = ?').run(
+          expectedMigration.checksum,
+          applied.version
+        );
+
+        db.exec('COMMIT;');
+      } catch (upgradeErr) {
+        try { db.exec('ROLLBACK;'); } catch {}
+        const err = new Error(`ERR_MIGRATION_FAILED: Legacy database upgrade failed and was rolled back: ${upgradeErr.message}`);
+        err.code = 'ERR_MIGRATION_FAILED';
+        throw err;
+      }
+    }
+  }
+
+  // 4. Upgrade missing columns/indices for existing legacy tables safely inside transaction if needed
+  if (existingTables.includes('idempotency_keys') || existingTables.includes('events')) {
+    db.exec('BEGIN IMMEDIATE TRANSACTION;');
+    try {
+      if (existingTables.includes('idempotency_keys')) {
+        const idempotencyCols = db.prepare('PRAGMA table_info(idempotency_keys)').all();
+        if (!idempotencyCols.some((c) => c.name === 'dispatch_prepared')) {
+          db.exec('ALTER TABLE idempotency_keys ADD COLUMN dispatch_prepared INTEGER DEFAULT 0;');
+        }
+      }
+      if (existingTables.includes('events')) {
+        db.exec(`
+          CREATE INDEX IF NOT EXISTS idx_events_occurred_at ON events (occurred_at);
+          CREATE INDEX IF NOT EXISTS idx_events_type ON events (event_type);
+        `);
+      }
+      if (existingTables.includes('envelopes')) {
+        db.exec(`
+          CREATE INDEX IF NOT EXISTS idx_envelopes_trace ON envelopes (trace_id);
+        `);
+      }
+      if (existingTables.includes('outbox')) {
+        db.exec(`
+          CREATE INDEX IF NOT EXISTS idx_outbox_status ON outbox (status);
+        `);
+      }
+      db.exec('COMMIT;');
+    } catch (legErr) {
+      try { db.exec('ROLLBACK;'); } catch {}
+      const err = new Error(`ERR_MIGRATION_FAILED: Legacy schema adjustment failed: ${legErr.message}`);
+      err.code = 'ERR_MIGRATION_FAILED';
       throw err;
     }
   }
 
-  // 2. Apply pending migrations inside atomic transactions
+  // 5. Apply pending migrations inside atomic transactions
   let appliedCount = 0;
   for (const m of MIGRATIONS) {
     if (!appliedMap.has(m.version)) {

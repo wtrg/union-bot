@@ -548,6 +548,13 @@ class Orchestrator {
             error: idempErr.message,
           };
         }
+        // F05 / R06-B05: Fail-closed on storage error - never fallback to in-memory cache to return fake cached ACK!
+        return {
+          success: false,
+          envelopeId: envelope.id,
+          roomId: envelope.roomId,
+          error: `ERR_STORAGE_UNAVAILABLE: Durable storage idempotency check failed: ${idempErr.message || 'Storage worker unavailable'}`,
+        };
       }
     }
 
@@ -569,7 +576,17 @@ class Orchestrator {
       };
     }
 
-    // 4. Action parts evaluation & CostGuard admission policy (UB-P2-R03-01, R04-G12, C02, P2-006)
+    // 4. Action parts evaluation & CostGuard admission policy (UB-P2-R03-01, R04-G12, C02, P2-006, R06-F01)
+    const actionParts = envelope.parts.filter((p) => p && p.kind === 'action');
+    if (actionParts.length > 1) {
+      return {
+        success: false,
+        envelopeId: envelope.id,
+        roomId: envelope.roomId,
+        error: 'ERR_MULTI_ACTION_UNSUPPORTED: Multiple action parts per envelope are not supported in atomic approval protocol',
+      };
+    }
+
     let approvalRequirement = null;
 
     for (const part of envelope.parts) {

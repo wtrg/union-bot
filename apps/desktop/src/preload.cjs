@@ -30,7 +30,19 @@ contextBridge.exposeInMainWorld('unionBotAPI', {
   },
 
   approveToken: async (tokenId, decisionContext) => {
-    return ipcRenderer.invoke('union-bot:approve-token', { tokenId, decisionContext });
+    let payload = {};
+    if (typeof tokenId === 'object' && tokenId !== null) {
+      payload = {
+        tokenId: tokenId.tokenId,
+        decisionContext: tokenId.decisionContext || decisionContext,
+      };
+    } else {
+      payload = {
+        tokenId,
+        decisionContext,
+      };
+    }
+    return ipcRenderer.invoke('union-bot:approve-token', payload);
   },
 
   getApprovalToken: async (tokenId) => {

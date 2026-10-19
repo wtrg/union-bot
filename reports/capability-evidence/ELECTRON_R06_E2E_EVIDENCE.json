@@ -1,0 +1,19 @@
+{
+  "suite": "UNION_BOT_ELECTRON_R06_E2E_EVIDENCE",
+  "timestamp": "2026-10-19T07:34:27.828Z",
+  "userDataDir": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\ub-test-r06-e2e-1792395266579",
+  "vectors": {
+    "R06-B01": {
+      "multiActionDenied": true,
+      "validTokenNotConsumed": true
+    },
+    "R06-B03": {
+      "unconfirmedDenied": true,
+      "confirmedApproved": true
+    },
+    "R06-B06": {
+      "testModeAllowed": true
+    }
+  },
+  "result": "PASS"
+}
