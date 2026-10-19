@@ -2,17 +2,21 @@
  * @file storage-worker.cjs
  * @description Dedicated Node 24 SQLite storage worker process for Union Bot Electron desktop.
  * Runs with system Node (v24+) to execute native node:sqlite DatabaseSync and SQLite WAL storage.
- * Implements atomic transaction combining idempotency_keys, envelopes, events, and outbox (UB-P2-R02-004),
- * and provides persistent approval token management (UB-P2-R02-003).
+ * Implements atomic transaction combining idempotency_keys, envelopes, events, outbox, and approval consumption (UB-P2-R02-004, UB-P2-R04-02),
+ * and provides persistent approval token management (UB-P2-R02-003, UB-P2-R04-01).
  */
 
 const { DatabaseSync } = require('node:sqlite');
 const fs = require('node:fs');
 const path = require('node:path');
 const { computeEnvelopeDigest } = require('./canonical-json.cjs');
+const { runSchemaMigrations } = require('./schema-definition.cjs');
 
 function maybeInjectFault(checkpoint, args) {
-  if (process.env.UNION_BOT_TEST_FAULT_INJECTION === '1' && args && args.injectFaultAt === checkpoint) {
+  if (process.env.UNION_BOT_TEST_FAULT_INJECTION !== '1') {
+    return;
+  }
+  if (args && args.injectFaultAt === checkpoint) {
     if (args.faultAction === 'kill') {
       process.exit(42);
     }
@@ -37,117 +41,11 @@ function initDb(dbPath) {
   db.exec('PRAGMA foreign_keys = ON;');
   db.exec('PRAGMA busy_timeout = 5000;');
 
-  // Run schema migration v1
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS schema_migrations (
-      version INTEGER PRIMARY KEY,
-      name TEXT NOT NULL,
-      checksum TEXT NOT NULL,
-      applied_at TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS rooms (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS events (
-      sequence_id INTEGER PRIMARY KEY AUTOINCREMENT,
-      event_id TEXT UNIQUE NOT NULL,
-      stream_id TEXT NOT NULL,
-      event_type TEXT NOT NULL,
-      payload_json TEXT NOT NULL,
-      metadata_json TEXT,
-      occurred_at TEXT NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS idx_events_stream_seq ON events (stream_id, sequence_id);
-
-    CREATE TABLE IF NOT EXISTS envelopes (
-      id TEXT PRIMARY KEY,
-      trace_id TEXT NOT NULL,
-      correlation_id TEXT,
-      room_id TEXT NOT NULL,
-      sender_kind TEXT NOT NULL,
-      sender_id TEXT NOT NULL,
-      sender_role TEXT,
-      raw_json TEXT NOT NULL,
-      status TEXT NOT NULL,
-      created_at TEXT NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS idx_envelopes_room ON envelopes (room_id, created_at);
-
-    CREATE TABLE IF NOT EXISTS idempotency_keys (
-      key TEXT PRIMARY KEY,
-      target_id TEXT NOT NULL,
-      status TEXT NOT NULL,
-      payload_digest TEXT,
-      response_json TEXT,
-      dispatch_prepared INTEGER NOT NULL DEFAULT 0,
-      created_at TEXT NOT NULL,
-      expires_at TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS outbox (
-      id TEXT PRIMARY KEY,
-      stream_id TEXT NOT NULL,
-      event_id TEXT NOT NULL,
-      payload_json TEXT NOT NULL,
-      status TEXT NOT NULL,
-      retry_count INTEGER DEFAULT 0,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS approvals (
-      token_id TEXT PRIMARY KEY,
-      action_type TEXT NOT NULL,
-      payload_digest TEXT NOT NULL,
-      canonicalization_version INTEGER DEFAULT 1,
-      origin TEXT NOT NULL,
-      workspace_id TEXT,
-      room_id TEXT,
-      actor_id TEXT,
-      recipient TEXT,
-      policy_version TEXT DEFAULT '1.0.0',
-      status TEXT NOT NULL,
-      created_at TEXT NOT NULL,
-      expires_at TEXT NOT NULL,
-      approver_id TEXT,
-      approved_at TEXT,
-      rejected_at TEXT,
-      rejection_reason TEXT,
-      consumed_at TEXT
-    );
-
-    CREATE TABLE IF NOT EXISTS audit_ledger (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      event_type TEXT NOT NULL,
-      summary TEXT NOT NULL,
-      details_json TEXT,
-      created_at TEXT NOT NULL
-    );
-  `);
-
-  // Auto-migration for legacy databases missing dispatch_prepared (UB-P2-R03-04)
-  const idempotencyCols = db.prepare('PRAGMA table_info(idempotency_keys)').all();
-  if (!idempotencyCols.some((c) => c.name === 'dispatch_prepared')) {
-    db.exec('ALTER TABLE idempotency_keys ADD COLUMN dispatch_prepared INTEGER NOT NULL DEFAULT 0;');
-  }
-
-  const now = new Date().toISOString();
-  const hasMigration = db.prepare('SELECT version FROM schema_migrations WHERE version = 1').get();
-  if (!hasMigration) {
-    db.prepare('INSERT INTO schema_migrations (version, name, checksum, applied_at) VALUES (?, ?, ?, ?)').run(
-      1,
-      '001_initial_p2_schema',
-      'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
-      now
-    );
-  }
+  // Run authoritative schema migrations with checksum & parity verification (UB-P2-R04-01, R05-H01..H03)
+  runSchemaMigrations(db);
 
   // Ensure default rooms
+  const now = new Date().toISOString();
   const defaultRooms = ['orchestration', 'agent-dev', 'qa-audit', 'review-briefing'];
   const insertRoom = db.prepare('INSERT OR IGNORE INTO rooms (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)');
   for (const r of defaultRooms) {
@@ -178,15 +76,33 @@ function handleRequest(msg) {
         process.send({ id, result: rows });
         break;
       }
+      case 'getIdempotencyRecord': {
+        const row = db.prepare('SELECT key, target_id, status, payload_digest, response_json, dispatch_prepared, created_at, expires_at FROM idempotency_keys WHERE key = ?').get(args.key);
+        process.send({
+          id,
+          result: row ? {
+            key: row.key,
+            targetId: row.target_id,
+            status: row.status,
+            payloadDigest: row.payload_digest,
+            responseJson: row.response_json,
+            dispatchPrepared: row.dispatch_prepared,
+            createdAt: row.created_at,
+            expiresAt: row.expires_at,
+          } : null,
+        });
+        break;
+      }
       case 'insertEnvelope': {
         const envelope = args.envelope;
+        const approvalReq = args.approval;
         const now = new Date().toISOString();
         const eventId = `evt_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
         const outboxId = `out_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
 
         db.exec('BEGIN IMMEDIATE;');
         try {
-          // 1. Idempotency deduplication check in transaction (UB-P2-R03-03, R04-G04)
+          // 1. Idempotency deduplication check in transaction (UB-P2-R03-03, R04-G04, R05-H05, R05-H06)
           const envelopeDigest = computeEnvelopeDigest(envelope);
           if (envelope.id) {
             const existing = db.prepare('SELECT status, response_json, payload_digest FROM idempotency_keys WHERE key = ?').get(envelope.id);
@@ -245,11 +161,65 @@ function handleRequest(msg) {
 
           maybeInjectFault('after_idempotency', args);
 
-          // 2. Ensure room exists
+          // 2. Atomic Approval Token Consumption in same transaction (UB-P2-R04-02, R05-H04)
+          if (approvalReq && approvalReq.tokenId) {
+            const { tokenId, actionType, payloadDigest, scope = {} } = approvalReq;
+            if (!payloadDigest || typeof payloadDigest !== 'string' || !/^[0-9a-fA-F]{64}$/.test(payloadDigest)) {
+              throw new Error('ERR_APPROVAL_HASH_MISMATCH: Non-empty 64-char hex payload digest is required (UB-P2-R03-01)');
+            }
+            const tokenRow = db.prepare('SELECT * FROM approvals WHERE token_id = ?').get(tokenId);
+            if (!tokenRow) {
+              throw new Error(`ERR_UNTRUSTED_ACTION: Approval token not found: ${tokenId}`);
+            }
+            if (tokenRow.workspace_id && (!scope.workspaceId || scope.workspaceId !== tokenRow.workspace_id)) {
+              throw new Error(`ERR_UNTRUSTED_ACTION: Token workspace scope mismatch: '${tokenRow.workspace_id}' vs '${scope.workspaceId}'`);
+            }
+            if (tokenRow.room_id && (!scope.roomId || scope.roomId !== tokenRow.room_id)) {
+              throw new Error(`ERR_UNTRUSTED_ACTION: Token room scope mismatch: '${tokenRow.room_id}' vs '${scope.roomId}'`);
+            }
+            if (tokenRow.actor_id && (!scope.actorId || scope.actorId !== tokenRow.actor_id)) {
+              throw new Error(`ERR_UNTRUSTED_ACTION: Token actor scope mismatch: '${tokenRow.actor_id}' vs '${scope.actorId}'`);
+            }
+            if (tokenRow.recipient && (!scope.recipient || scope.recipient !== tokenRow.recipient)) {
+              throw new Error(`ERR_UNTRUSTED_ACTION: Token recipient scope mismatch: '${tokenRow.recipient}' vs '${scope.recipient}'`);
+            }
+            if (tokenRow.action_type !== actionType) {
+              throw new Error(`ERR_APPROVAL_HASH_MISMATCH: Action type mismatch: expected ${tokenRow.action_type}, received ${actionType}`);
+            }
+            if (tokenRow.payload_digest !== payloadDigest) {
+              throw new Error(`ERR_APPROVAL_HASH_MISMATCH: Payload digest mismatch for token ${tokenId}`);
+            }
+            if (new Date(tokenRow.expires_at).getTime() < Date.now()) {
+              db.prepare("UPDATE approvals SET status = 'EXPIRED' WHERE token_id = ?").run(tokenId);
+              throw new Error(`ERR_APPROVAL_EXPIRED: Token ${tokenId} has expired`);
+            }
+            if (tokenRow.status === 'CONSUMED') {
+              throw new Error(`ERR_APPROVAL_ALREADY_CONSUMED: Token ${tokenId} already consumed`);
+            }
+            if (tokenRow.status !== 'APPROVED') {
+              throw new Error(`ERR_APPROVAL_NOT_APPROVED: Token ${tokenId} is still in ${tokenRow.status} status. Explicit human approval required.`);
+            }
+
+            const consumeRes = db.prepare(`
+              UPDATE approvals
+              SET status = 'CONSUMED', consumed_at = ?
+              WHERE token_id = ? AND status = 'APPROVED' AND payload_digest = ? AND expires_at > ?
+            `).run(now, tokenId, payloadDigest, now);
+
+            if (consumeRes.changes !== 1) {
+              throw new Error(`ERR_APPROVAL_ALREADY_CONSUMED: Failed to atomically consume token ${tokenId}`);
+            }
+
+            maybeInjectFault('after_approval_consume', args);
+          }
+
+          // 3. Ensure room exists
           db.prepare('INSERT OR IGNORE INTO rooms (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)')
             .run(envelope.roomId, envelope.roomId, now, now);
 
-          // 3. Insert envelope
+          maybeInjectFault('before_envelope_insert', args);
+
+          // 4. Insert envelope
           db.prepare(`
             INSERT INTO envelopes (
               id, trace_id, correlation_id, room_id, sender_kind, sender_id, sender_role, raw_json, status, created_at
@@ -269,7 +239,7 @@ function handleRequest(msg) {
 
           maybeInjectFault('after_envelope', args);
 
-          // 4. Append to event journal
+          // 5. Append to event journal
           db.prepare(`
             INSERT INTO events (event_id, stream_id, event_type, payload_json, metadata_json, occurred_at)
             VALUES (?, ?, 'ENVELOPE_RECORDED', ?, NULL, ?)
@@ -277,7 +247,7 @@ function handleRequest(msg) {
 
           maybeInjectFault('after_event', args);
 
-          // 5. Insert into outbox
+          // 6. Insert into outbox
           db.prepare(`
             INSERT INTO outbox (id, stream_id, event_id, payload_json, status, retry_count, created_at, updated_at)
             VALUES (?, ?, ?, ?, 'QUEUED', 0, ?, ?)

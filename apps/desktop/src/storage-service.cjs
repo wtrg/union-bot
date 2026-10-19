@@ -1,6 +1,6 @@
 /**
  * @file storage-service.cjs
- * @description Persistent SQLite Storage client for Electron Desktop Main Process (UB-P2-R01-003, UB-P2-R02-001, UB-P2-R02-004).
+ * @description Persistent SQLite Storage client for Electron Desktop Main Process (UB-P2-R01-003, UB-P2-R02-001, UB-P2-R02-004, UB-P2-R04-01, UB-P2-R04-02).
  * Connects to SQLite either in-process (if node:sqlite is present) or via dedicated storage-worker (Node 24).
  * Enforces Fail-Closed durability: no silent in-memory fallback in production mode.
  */
@@ -8,7 +8,9 @@
 const cp = require('node:child_process');
 const path = require('node:path');
 const fs = require('node:fs');
+const { EventEmitter } = require('node:events');
 const { computeEnvelopeDigest } = require('./canonical-json.cjs');
+const { runSchemaMigrations } = require('./schema-definition.cjs');
 
 function findSystemNode() {
   if (process.env.SYSTEM_NODE_PATH) {
@@ -30,8 +32,9 @@ function findSystemNode() {
   return 'node';
 }
 
-class StorageServiceClient {
+class StorageServiceClient extends EventEmitter {
   constructor(dbPath, options = {}) {
+    super();
     this.dbPath = dbPath;
     this.allowNonDurableDemo = options.allowNonDurableDemo === true;
     this.forceWorker = options.forceWorker === true;
@@ -106,7 +109,6 @@ class StorageServiceClient {
         this.worker.on('message', (msg) => {
           const { id, result, error } = msg;
           if (id === 0 && !initCompleted) {
-            // Worker init message ACK
             initCompleted = true;
             clearTimeout(initTimer);
             if (error) {
@@ -137,6 +139,7 @@ class StorageServiceClient {
         this.worker.on('error', (err) => {
           console.error('[StorageWorker] Process error:', err.message);
           this.rejectAllPending(new Error(`ERR_STORAGE_UNAVAILABLE: Storage worker process error: ${err.message}`));
+          this.emit('worker-error', err);
           if (!initCompleted) {
             initCompleted = true;
             clearTimeout(initTimer);
@@ -153,7 +156,8 @@ class StorageServiceClient {
             console.warn(`[StorageWorker] Exited with code ${code} / signal ${signal}`);
           }
           this.worker = null;
-          this.rejectAllPending(new Error(`ERR_STORAGE_UNAVAILABLE: Storage worker exited with code ${code} (UB-P2-R02-001)`));
+          this.emit('worker-exit', { code, signal });
+          this.rejectAllPending(new Error(`ERR_STORAGE_UNAVAILABLE: Storage worker exited with code ${code} (UB-P2-R02-001, R04-C03)`));
           if (!initCompleted) {
             initCompleted = true;
             clearTimeout(initTimer);
@@ -204,109 +208,11 @@ class StorageServiceClient {
     this.nativeDb.exec('PRAGMA foreign_keys = ON;');
     this.nativeDb.exec('PRAGMA busy_timeout = 5000;');
 
-    this.nativeDb.exec(`
-      CREATE TABLE IF NOT EXISTS schema_migrations (
-        version INTEGER PRIMARY KEY,
-        name TEXT NOT NULL,
-        checksum TEXT NOT NULL,
-        applied_at TEXT NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS rooms (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS events (
-        sequence_id INTEGER PRIMARY KEY AUTOINCREMENT,
-        event_id TEXT UNIQUE NOT NULL,
-        stream_id TEXT NOT NULL,
-        event_type TEXT NOT NULL,
-        payload_json TEXT NOT NULL,
-        metadata_json TEXT,
-        occurred_at TEXT NOT NULL
-      );
-      CREATE INDEX IF NOT EXISTS idx_events_stream_seq ON events (stream_id, sequence_id);
-      CREATE TABLE IF NOT EXISTS envelopes (
-        id TEXT PRIMARY KEY,
-        trace_id TEXT NOT NULL,
-        correlation_id TEXT,
-        room_id TEXT NOT NULL,
-        sender_kind TEXT NOT NULL,
-        sender_id TEXT NOT NULL,
-        sender_role TEXT,
-        raw_json TEXT NOT NULL,
-        status TEXT NOT NULL,
-        created_at TEXT NOT NULL
-      );
-      CREATE INDEX IF NOT EXISTS idx_envelopes_room ON envelopes (room_id, created_at);
-      CREATE TABLE IF NOT EXISTS idempotency_keys (
-        key TEXT PRIMARY KEY,
-        target_id TEXT NOT NULL,
-        status TEXT NOT NULL,
-        payload_digest TEXT,
-        response_json TEXT,
-        dispatch_prepared INTEGER NOT NULL DEFAULT 0,
-        created_at TEXT NOT NULL,
-        expires_at TEXT NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS outbox (
-        id TEXT PRIMARY KEY,
-        stream_id TEXT NOT NULL,
-        event_id TEXT NOT NULL,
-        payload_json TEXT NOT NULL,
-        status TEXT NOT NULL,
-        retry_count INTEGER DEFAULT 0,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS approvals (
-        token_id TEXT PRIMARY KEY,
-        action_type TEXT NOT NULL,
-        payload_digest TEXT NOT NULL,
-        canonicalization_version INTEGER DEFAULT 1,
-        origin TEXT NOT NULL,
-        workspace_id TEXT,
-        room_id TEXT,
-        actor_id TEXT,
-        recipient TEXT,
-        policy_version TEXT DEFAULT '1.0.0',
-        status TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        expires_at TEXT NOT NULL,
-        approver_id TEXT,
-        approved_at TEXT,
-        rejected_at TEXT,
-        rejection_reason TEXT,
-        consumed_at TEXT
-      );
-      CREATE TABLE IF NOT EXISTS audit_ledger (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        event_type TEXT NOT NULL,
-        summary TEXT NOT NULL,
-        details_json TEXT,
-        created_at TEXT NOT NULL
-      );
-    `);
-
-    // Auto-migration for legacy databases missing dispatch_prepared (UB-P2-R03-04)
-    const idempotencyCols = this.nativeDb.prepare('PRAGMA table_info(idempotency_keys)').all();
-    if (!idempotencyCols.some((c) => c.name === 'dispatch_prepared')) {
-      this.nativeDb.exec('ALTER TABLE idempotency_keys ADD COLUMN dispatch_prepared INTEGER NOT NULL DEFAULT 0;');
-    }
-
-    const now = new Date().toISOString();
-    const hasMigration = this.nativeDb.prepare('SELECT version FROM schema_migrations WHERE version = 1').get();
-    if (!hasMigration) {
-      this.nativeDb.prepare('INSERT INTO schema_migrations (version, name, checksum, applied_at) VALUES (?, ?, ?, ?)').run(
-        1,
-        '001_initial_p2_schema',
-        'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
-        now
-      );
-    }
+    // Run authoritative schema migrations with checksum & parity verification (UB-P2-R04-01, R05-H01..H03)
+    runSchemaMigrations(this.nativeDb);
 
     const defaultRooms = ['orchestration', 'agent-dev', 'qa-audit', 'review-briefing'];
+    const now = new Date().toISOString();
     const insertRoom = this.nativeDb.prepare('INSERT OR IGNORE INTO rooms (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)');
     for (const r of defaultRooms) {
       insertRoom.run(r, r, now, now);
@@ -330,6 +236,9 @@ class StorageServiceClient {
       }
       case 'getRooms':
         return Promise.resolve(Array.from(this.fallbackRooms.values()));
+      case 'getIdempotencyRecord': {
+        return Promise.resolve(null);
+      }
       case 'insertEnvelope': {
         const envelope = args.envelope;
         const list = this.fallbackEnvelopes.get(envelope.roomId) || [];
@@ -338,14 +247,34 @@ class StorageServiceClient {
         return Promise.resolve({ success: true, envelopeId: envelope.id, nonDurableDemo: true });
       }
       case 'getRoomEnvelopes': {
-        const { roomId, limit = 100 } = args;
-        const list = this.fallbackEnvelopes.get(roomId) || [];
-        return Promise.resolve(list.slice(-limit));
+        const list = this.fallbackEnvelopes.get(args.roomId) || [];
+        return Promise.resolve(list.slice(0, args.limit || 100));
+      }
+      case 'createApprovalToken': {
+        const token = args.token;
+        this.fallbackApprovals.set(token.tokenId, token);
+        return Promise.resolve({ ...token, status: 'PENDING' });
+      }
+      case 'getApprovalToken': {
+        return Promise.resolve(this.fallbackApprovals.get(args.tokenId) || null);
+      }
+      case 'approveToken': {
+        const t = this.fallbackApprovals.get(args.tokenId);
+        if (!t) return Promise.reject(new Error(`ERR_UNTRUSTED_ACTION: Approval token not found: ${args.tokenId}`));
+        t.status = 'APPROVED';
+        return Promise.resolve({ success: true, tokenId: args.tokenId });
+      }
+      case 'validateAndConsumeApproval': {
+        const t = this.fallbackApprovals.get(args.tokenId);
+        if (!t) return Promise.reject(new Error(`ERR_UNTRUSTED_ACTION: Approval token not found: ${args.tokenId}`));
+        if (t.status !== 'APPROVED') return Promise.reject(new Error(`ERR_APPROVAL_NOT_APPROVED: Token status: ${t.status}`));
+        t.status = 'CONSUMED';
+        return Promise.resolve({ success: true, tokenId: args.tokenId });
       }
       case 'close':
         return Promise.resolve(true);
       default:
-        return Promise.reject(new Error(`Unknown method ${method}`));
+        return Promise.reject(new Error(`Fallback unhandled method ${method}`));
     }
   }
 
@@ -363,15 +292,29 @@ class StorageServiceClient {
             const rows = this.nativeDb.prepare('SELECT id, name, created_at, updated_at FROM rooms').all();
             return Promise.resolve(rows);
           }
+          case 'getIdempotencyRecord': {
+            const row = this.nativeDb.prepare('SELECT key, target_id, status, payload_digest, response_json, dispatch_prepared, created_at, expires_at FROM idempotency_keys WHERE key = ?').get(args.key);
+            return Promise.resolve(row ? {
+              key: row.key,
+              targetId: row.target_id,
+              status: row.status,
+              payloadDigest: row.payload_digest,
+              responseJson: row.response_json,
+              dispatchPrepared: row.dispatch_prepared,
+              createdAt: row.created_at,
+              expiresAt: row.expires_at,
+            } : null);
+          }
           case 'insertEnvelope': {
             const envelope = args.envelope;
+            const approvalReq = args.approval;
             const now = new Date().toISOString();
             const eventId = `evt_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
             const outboxId = `out_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
 
             this.nativeDb.exec('BEGIN IMMEDIATE;');
             try {
-              // 1. Idempotency deduplication in transaction (UB-P2-R03-03, R04-G04)
+              // 1. Idempotency deduplication in transaction (UB-P2-R03-03, R04-G04, R05-H05, R05-H06)
               const envelopeDigest = computeEnvelopeDigest(envelope);
               if (envelope.id) {
                 const existing = this.nativeDb.prepare('SELECT status, response_json, payload_digest FROM idempotency_keys WHERE key = ?').get(envelope.id);
@@ -426,11 +369,61 @@ class StorageServiceClient {
                 }
               }
 
-              // 2. Ensure room exists
+              // 2. Atomic Approval Token Consumption in same transaction (UB-P2-R04-02, R05-H04)
+              if (approvalReq && approvalReq.tokenId) {
+                const { tokenId, actionType, payloadDigest, scope = {} } = approvalReq;
+                if (!payloadDigest || typeof payloadDigest !== 'string' || !/^[0-9a-fA-F]{64}$/.test(payloadDigest)) {
+                  throw new Error('ERR_APPROVAL_HASH_MISMATCH: Non-empty 64-char hex payload digest is required (UB-P2-R03-01)');
+                }
+                const tokenRow = this.nativeDb.prepare('SELECT * FROM approvals WHERE token_id = ?').get(tokenId);
+                if (!tokenRow) {
+                  throw new Error(`ERR_UNTRUSTED_ACTION: Approval token not found: ${tokenId}`);
+                }
+                if (tokenRow.workspace_id && (!scope.workspaceId || scope.workspaceId !== tokenRow.workspace_id)) {
+                  throw new Error(`ERR_UNTRUSTED_ACTION: Token workspace scope mismatch: '${tokenRow.workspace_id}' vs '${scope.workspaceId}'`);
+                }
+                if (tokenRow.room_id && (!scope.roomId || scope.roomId !== tokenRow.room_id)) {
+                  throw new Error(`ERR_UNTRUSTED_ACTION: Token room scope mismatch: '${tokenRow.room_id}' vs '${scope.roomId}'`);
+                }
+                if (tokenRow.actor_id && (!scope.actorId || scope.actorId !== tokenRow.actor_id)) {
+                  throw new Error(`ERR_UNTRUSTED_ACTION: Token actor scope mismatch: '${tokenRow.actor_id}' vs '${scope.actorId}'`);
+                }
+                if (tokenRow.recipient && (!scope.recipient || scope.recipient !== tokenRow.recipient)) {
+                  throw new Error(`ERR_UNTRUSTED_ACTION: Token recipient scope mismatch: '${tokenRow.recipient}' vs '${scope.recipient}'`);
+                }
+                if (tokenRow.action_type !== actionType) {
+                  throw new Error(`ERR_APPROVAL_HASH_MISMATCH: Action type mismatch: expected ${tokenRow.action_type}, received ${actionType}`);
+                }
+                if (tokenRow.payload_digest !== payloadDigest) {
+                  throw new Error(`ERR_APPROVAL_HASH_MISMATCH: Payload digest mismatch for token ${tokenId}`);
+                }
+                if (new Date(tokenRow.expires_at).getTime() < Date.now()) {
+                  this.nativeDb.prepare("UPDATE approvals SET status = 'EXPIRED' WHERE token_id = ?").run(tokenId);
+                  throw new Error(`ERR_APPROVAL_EXPIRED: Token ${tokenId} has expired`);
+                }
+                if (tokenRow.status === 'CONSUMED') {
+                  throw new Error(`ERR_APPROVAL_ALREADY_CONSUMED: Token ${tokenId} already consumed`);
+                }
+                if (tokenRow.status !== 'APPROVED') {
+                  throw new Error(`ERR_APPROVAL_NOT_APPROVED: Token ${tokenId} is still in ${tokenRow.status} status. Explicit human approval required.`);
+                }
+
+                const consumeRes = this.nativeDb.prepare(`
+                  UPDATE approvals
+                  SET status = 'CONSUMED', consumed_at = ?
+                  WHERE token_id = ? AND status = 'APPROVED' AND payload_digest = ? AND expires_at > ?
+                `).run(now, tokenId, payloadDigest, now);
+
+                if (consumeRes.changes !== 1) {
+                  throw new Error(`ERR_APPROVAL_ALREADY_CONSUMED: Failed to atomically consume token ${tokenId}`);
+                }
+              }
+
+              // 3. Ensure room exists
               this.nativeDb.prepare('INSERT OR IGNORE INTO rooms (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)')
                 .run(envelope.roomId, envelope.roomId, now, now);
 
-              // 3. Insert envelope
+              // 4. Insert envelope
               this.nativeDb.prepare(`
                 INSERT INTO envelopes (
                   id, trace_id, correlation_id, room_id, sender_kind, sender_id, sender_role, raw_json, status, created_at
@@ -448,13 +441,13 @@ class StorageServiceClient {
                 new Date(envelope.timestamp || Date.now()).toISOString()
               );
 
-              // 4. Append to event journal
+              // 5. Append to event journal
               this.nativeDb.prepare(`
                 INSERT INTO events (event_id, stream_id, event_type, payload_json, metadata_json, occurred_at)
                 VALUES (?, ?, 'ENVELOPE_RECORDED', ?, NULL, ?)
               `).run(eventId, `room:${envelope.roomId}`, JSON.stringify(envelope), now);
 
-              // 5. Insert into outbox
+              // 6. Insert into outbox
               this.nativeDb.prepare(`
                 INSERT INTO outbox (id, stream_id, event_id, payload_json, status, retry_count, created_at, updated_at)
                 VALUES (?, ?, ?, ?, 'QUEUED', 0, ?, ?)
@@ -469,8 +462,7 @@ class StorageServiceClient {
           }
           case 'getRoomEnvelopes': {
             const { roomId, limit = 100 } = args;
-            const rows = this.nativeDb
-              .prepare('SELECT raw_json FROM envelopes WHERE room_id = ? ORDER BY rowid ASC LIMIT ?')
+            const rows = this.nativeDb.prepare('SELECT raw_json FROM envelopes WHERE room_id = ? ORDER BY rowid ASC LIMIT ?')
               .all(roomId, limit);
             const envelopes = rows.map((r) => JSON.parse(r.raw_json));
             return Promise.resolve(envelopes);
@@ -654,8 +646,17 @@ class StorageServiceClient {
     });
   }
 
-  async insertEnvelope(envelope) {
-    return this.sendRequest('insertEnvelope', { envelope });
+  async insertEnvelope(envelope, options = {}) {
+    return this.sendRequest('insertEnvelope', {
+      envelope,
+      approval: options.approval,
+      injectFaultAt: options.injectFaultAt,
+      faultAction: options.faultAction,
+    });
+  }
+
+  async getIdempotencyRecord(key) {
+    return this.sendRequest('getIdempotencyRecord', { key });
   }
 
   async getRoomEnvelopes(roomId, limit = 100) {

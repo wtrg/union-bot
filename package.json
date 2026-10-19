@@ -15,9 +15,9 @@
     "typecheck": "tsc --noEmit && tsc --noEmit -p apps/workspace-ui/tsconfig.json",
     "build": "pnpm --filter @union-bot/workspace-ui build",
     "test": "pnpm test:ts && pnpm test:py && pnpm test:e2e",
-    "test:ts": "node --experimental-strip-types --test packages/cost-guard/tests/cost-guard.test.ts packages/artifact-store/tests/artifact-store.test.ts packages/protocol/tests/protocol.test.ts packages/storage/tests/storage.test.ts packages/storage/tests/p2_regression_vectors.test.ts packages/storage/tests/r03_integration_vectors.test.ts packages/storage/tests/r04_approval_security.test.ts packages/storage/tests/r04_idempotency_schema.test.ts packages/storage/tests/r04_worker_faults.test.ts packages/orchestrator/tests/orchestrator.test.ts tests/integration_packages.test.ts tests/cross_compatibility.test.ts tests/verify-failure-propagation.test.js spikes/electron-browser/test-safe-external.js apps/desktop/tests/desktop.test.js",
+    "test:ts": "node --experimental-strip-types --test packages/cost-guard/tests/cost-guard.test.ts packages/artifact-store/tests/artifact-store.test.ts packages/protocol/tests/protocol.test.ts packages/storage/tests/storage.test.ts packages/storage/tests/p2_regression_vectors.test.ts packages/storage/tests/r03_integration_vectors.test.ts packages/storage/tests/r04_approval_security.test.ts packages/storage/tests/r04_idempotency_schema.test.ts packages/storage/tests/r04_worker_faults.test.ts packages/storage/tests/r05_schema_cross_engine.test.ts packages/storage/tests/r05_approval_atomic_idempotency.test.ts packages/orchestrator/tests/orchestrator.test.ts tests/integration_packages.test.ts tests/cross_compatibility.test.ts tests/verify-failure-propagation.test.js spikes/electron-browser/test-safe-external.js apps/desktop/tests/desktop.test.js",
     "test:py": "python -m unittest discover -s tests -p \"test_*.py\"",
-    "test:e2e": "node --test tests/e2e/desktop-r04.test.js",
+    "test:e2e": "node --test tests/e2e/desktop-r04.test.js tests/e2e/desktop-r05.test.js",
     "smoke:gui": "node apps/desktop/scripts/launch.js --smoke",
     "secret-scan": "python scan_secrets.py --strict",
     "verify": "pnpm lint && pnpm typecheck && pnpm build && pnpm test && pnpm smoke:gui && pnpm secret-scan"

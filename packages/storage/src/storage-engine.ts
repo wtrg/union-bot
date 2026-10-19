@@ -104,6 +104,24 @@ export class StorageEngine {
     return rows.map((r) => JSON.parse(r.raw_json) as Envelope);
   }
 
+  public getIdempotencyRecord(key: string): any {
+    const row = this.db
+      .prepare('SELECT key, target_id, status, payload_digest, response_json, dispatch_prepared, created_at, expires_at FROM idempotency_keys WHERE key = ?')
+      .get(key) as any;
+    if (!row) return null;
+    return {
+      key: row.key,
+      targetId: row.target_id,
+      status: row.status,
+      payloadDigest: row.payload_digest,
+      responseJson: row.response_json,
+      dispatchPrepared: row.dispatch_prepared,
+      createdAt: row.created_at,
+      expiresAt: row.expires_at,
+    };
+  }
+
+
   // --- Transaction Support ---
   public transaction<T>(fn: () => T): T {
     this.db.exec('BEGIN TRANSACTION;');

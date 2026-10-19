@@ -21,6 +21,14 @@ contextBridge.exposeInMainWorld('unionBotAPI', {
     return ipcRenderer.invoke('union-bot:get-app-status');
   },
 
+  createApprovalToken: async (tokenData) => {
+    return ipcRenderer.invoke('union-bot:create-approval-token', tokenData);
+  },
+
+  computeActionDigest: async (input) => {
+    return ipcRenderer.invoke('union-bot:compute-action-digest', input);
+  },
+
   approveToken: async (tokenId, decisionContext) => {
     return ipcRenderer.invoke('union-bot:approve-token', { tokenId, decisionContext });
   },
@@ -36,5 +44,18 @@ contextBridge.exposeInMainWorld('unionBotAPI', {
     return () => {
       ipcRenderer.removeListener('union-bot:envelope-received', subscription);
     };
+  },
+
+  onAppStatusChanged: (callback) => {
+    if (typeof callback !== 'function') return () => {};
+    const subscription = (_event, status) => callback(status);
+    ipcRenderer.on('union-bot:app-status-changed', subscription);
+    return () => {
+      ipcRenderer.removeListener('union-bot:app-status-changed', subscription);
+    };
+  },
+
+  testKillWorker: async () => {
+    return ipcRenderer.invoke('union-bot:test-kill-worker');
   },
 });

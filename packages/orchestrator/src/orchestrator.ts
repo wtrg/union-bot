@@ -23,7 +23,10 @@ import {
   IdempotencyManager,
   ApprovalGateManager,
   UnionBotError,
+  computeEnvelopeDigest,
+  extractActionSemanticInput,
 } from '../../storage/src/index.ts';
+
 import { AdmissionPolicyGate } from './admission-gate.ts';
 
 export interface DispatchContext {
@@ -129,7 +132,8 @@ export class Orchestrator {
 
     // 3. Idempotency Check (P2-005, C01, C05)
     if (this.idempotency) {
-      const acq = this.idempotency.acquire(envelope.id, envelope.roomId);
+      const envelopeDigest = computeEnvelopeDigest(envelope);
+      const acq = this.idempotency.acquire(envelope.id, envelope.roomId, { payloadDigest: envelopeDigest });
       if (acq.isDuplicate && acq.cachedResponse) {
         return {
           success: true,
@@ -194,10 +198,11 @@ export class Orchestrator {
 
           // 4c. Validate and consume approval token ONLY after admission policy passes (R04-G12)
 
-          // Validate approval token with ApprovalGateManager (UB-P2-R02-003, R03-E06, R04-G12)
+          // Validate approval token with ApprovalGateManager (UB-P2-R02-003, R03-E06, R04-G12, R04-C02)
           if (this.approvalGate) {
             try {
-              this.approvalGate.validateAndConsume(part.approvalTokenId, part.tool, part.input, {
+              const semanticInput = extractActionSemanticInput(part.input);
+              this.approvalGate.validateAndConsume(part.approvalTokenId, part.tool, semanticInput, {
                 workspaceId: (envelope as any).workspaceId,
                 roomId: envelope.roomId,
                 actorId: envelope.sender.id,

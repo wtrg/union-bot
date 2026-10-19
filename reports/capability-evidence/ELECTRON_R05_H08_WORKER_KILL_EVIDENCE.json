@@ -1,0 +1,11 @@
+{
+  "suite": "UNION_BOT_ELECTRON_R05_H08_EVIDENCE",
+  "timestamp": "2026-10-19T06:34:27.635Z",
+  "case4": {
+    "initialReady": true,
+    "transitionedBlocked": true,
+    "dispatchDenied": true,
+    "approveDenied": true
+  },
+  "result": "PASS"
+}

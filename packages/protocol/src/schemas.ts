@@ -246,6 +246,8 @@ export const EnvelopeSchema = z.object({
   sender: SenderSchema,
   recipient: RecipientSchema,
   roomId: z.string().min(1),
+  workspaceId: z.string().optional(),
+  policyVersion: z.string().optional(),
   parts: z.array(MessagePartSchema).min(1),
   fidelity: FidelityLevelSchema,
   status: EnvelopeStatusSchema.default('pending'),

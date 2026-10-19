@@ -109,7 +109,7 @@ describe('Union Bot Phase P2 Gate R04: Idempotency & Schema Vectors (G04, G05, G
     );
 
     // Verify row counts in database: exactly 1 envelope, 1 event, 1 outbox, 1 idempotency key
-    client.close();
+    await client.closeAsync();
 
     const rawDb = new DatabaseSync(dbPath);
     const envCount = (rawDb.prepare('SELECT COUNT(*) as c FROM envelopes WHERE id = ?').get('same-123') as any).c;

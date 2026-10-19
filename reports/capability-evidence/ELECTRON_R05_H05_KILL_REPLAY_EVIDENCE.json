@@ -1,0 +1,19 @@
+{
+  "suite": "UNION_BOT_ELECTRON_R05_H05_EVIDENCE",
+  "timestamp": "2026-10-19T06:34:22.084Z",
+  "userDataDir": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\ub-test-r05-h05-1792391659456",
+  "historyCountBefore": 1,
+  "replayResult": {
+    "success": true,
+    "envelopeId": "env_h05_kill_001",
+    "roomId": "orchestration",
+    "deduplicated": true
+  },
+  "tamperedResult": {
+    "success": false,
+    "error": "ERR_PAYLOAD_MISMATCH: Idempotency key 'env_h05_kill_001' reused with mismatched payload. Replay with different content is forbidden."
+  },
+  "historyCountAfter": 1,
+  "tokenStatus": "CONSUMED",
+  "result": "PASS"
+}

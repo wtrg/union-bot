@@ -12,7 +12,7 @@
 const crypto = require('node:crypto');
 const { z } = require('zod');
 const { CostGuard } = require('./cost-guard.cjs');
-const { computeCanonicalDigest, computeEnvelopeDigest } = require('./canonical-json.cjs');
+const { computeCanonicalDigest, computeEnvelopeDigest, extractActionSemanticInput } = require('./canonical-json.cjs');
 
 const SCHEMA_VERSION = '1.0.0';
 
@@ -136,6 +136,9 @@ const ActionMessagePartSchema = z.object({
   input: z.unknown().optional(),
   output: z.unknown().optional(),
   error: z.string().optional(),
+  isUntrustedRendererInput: z.boolean().optional(),
+  approvalTokenId: z.string().optional(),
+  payloadDigest: z.string().optional(),
 });
 
 const StatusMessagePartSchema = z.object({
@@ -191,6 +194,8 @@ const EnvelopeSchema = z.object({
   sender: SenderSchema,
   recipient: RecipientSchema,
   roomId: z.string().min(1),
+  workspaceId: z.string().optional(),
+  policyVersion: z.string().optional(),
   parts: z.array(MessagePartSchema).min(1),
   fidelity: FidelityLevelSchema,
   status: EnvelopeStatusSchema.default('pending'),
@@ -494,9 +499,59 @@ class Orchestrator {
       }
     }
 
-    // 3. Idempotency deduplication check in non-storage mode (P2-005, C01, C05, UB-P2-R03-03)
-    if (!this.storage && this.seenEnvelopeIds.has(envelope.id)) {
-      const incomingDigest = computeEnvelopeDigest(envelope);
+    // 3. Durable Idempotency Check BEFORE Approval Token consumption (UB-P2-R04-03, R05-H05, R05-H06)
+    const incomingDigest = computeEnvelopeDigest(envelope);
+
+    if (this.storage && typeof this.storage.getIdempotencyRecord === 'function') {
+      try {
+        const existingRecord = await this.storage.getIdempotencyRecord(envelope.id);
+        if (existingRecord) {
+          if (existingRecord.payloadDigest && existingRecord.payloadDigest !== incomingDigest) {
+            return {
+              success: false,
+              envelopeId: envelope.id,
+              roomId: envelope.roomId,
+              error: `ERR_PAYLOAD_MISMATCH: Idempotency key '${envelope.id}' reused with mismatched payload. Replay with different content is forbidden.`,
+            };
+          }
+          if (existingRecord.status === 'COMPLETED') {
+            return {
+              success: true,
+              envelopeId: envelope.id,
+              roomId: envelope.roomId,
+              deduplicated: true,
+            };
+          }
+          if (existingRecord.status === 'UNKNOWN_NEEDS_RECONCILIATION') {
+            return {
+              success: false,
+              envelopeId: envelope.id,
+              roomId: envelope.roomId,
+              error: `ERR_RECONCILIATION_REQUIRED: Key ${envelope.id} requires external reconciliation`,
+            };
+          }
+          if (existingRecord.status === 'PENDING') {
+            return {
+              success: false,
+              envelopeId: envelope.id,
+              roomId: envelope.roomId,
+              error: `ERR_IDEMPOTENCY_CONFLICT: Key ${envelope.id} is already PENDING`,
+            };
+          }
+        }
+      } catch (idempErr) {
+        if (idempErr.message && idempErr.message.includes('ERR_PAYLOAD_MISMATCH')) {
+          return {
+            success: false,
+            envelopeId: envelope.id,
+            roomId: envelope.roomId,
+            error: idempErr.message,
+          };
+        }
+      }
+    }
+
+    if (this.seenEnvelopeIds.has(envelope.id)) {
       const storedDigest = this.inMemoryDigests.get(envelope.id);
       if (storedDigest && storedDigest !== incomingDigest) {
         return {
@@ -514,7 +569,9 @@ class Orchestrator {
       };
     }
 
-    // 4. Action parts evaluation & approval token gate (UB-P2-R03-01, R04-G12, C02, P2-006)
+    // 4. Action parts evaluation & CostGuard admission policy (UB-P2-R03-01, R04-G12, C02, P2-006)
+    let approvalRequirement = null;
+
     for (const part of envelope.parts) {
       if (part.kind === 'action') {
         const declaredCost = (part.input && typeof part.input.estimatedCost === 'number')
@@ -554,7 +611,7 @@ class Orchestrator {
           };
         }
 
-        // 4c. Validate and consume approval token ONLY after admission policy passes (R04-G12)
+        // 4c. Prepare canonical semantic digest (R04-C02, R05-H07)
         if (context && context.fromRenderer) {
           if (part.input === null || part.input === undefined || part.input === '') {
             return {
@@ -565,30 +622,23 @@ class Orchestrator {
             };
           }
 
-          const payloadDigest = computeCanonicalDigest(part.input, 1);
+          const semanticInput = extractActionSemanticInput(part.input);
+          const payloadDigest = computeCanonicalDigest(semanticInput, 1);
 
-          if (this.storage && typeof this.storage.validateAndConsumeApproval === 'function') {
-            try {
-              await this.storage.validateAndConsumeApproval(
-                approvalTokenId,
-                part.tool,
-                payloadDigest,
-                {
-                  workspaceId: envelope.workspaceId,
-                  roomId: envelope.roomId,
-                  actorId: envelope.sender.id,
-                  recipient: envelope.recipient.id,
-                }
-              );
-            } catch (authErr) {
-              return {
-                success: false,
-                envelopeId: envelope.id,
-                roomId: envelope.roomId,
-                error: `Security violation: ${authErr.message}`,
-              };
-            }
-          } else {
+          approvalRequirement = {
+            tokenId: approvalTokenId,
+            actionType: part.tool,
+            payloadDigest,
+            scope: {
+              workspaceId: envelope.workspaceId,
+              roomId: envelope.roomId,
+              actorId: envelope.sender.id,
+              recipient: envelope.recipient ? envelope.recipient.id : undefined,
+            },
+          };
+
+          // If no persistent storage, fallback to in-memory tokens
+          if (!this.storage) {
             const token = this.approvalTokens.get(approvalTokenId);
             if (!token || token.status !== 'APPROVED') {
               return {
@@ -612,10 +662,10 @@ class Orchestrator {
       }
     }
 
-    // 5. Store in persistent storage if provided (UB-P2-R01-003, UB-P2-R02-004, P2-T04)
+    // 5. Atomic Storage Commit: Approval Token CAS + Envelope + Event + Outbox (UB-P2-R04-02)
     if (this.storage) {
       try {
-        const storeResult = await this.storage.insertEnvelope(envelope);
+        const storeResult = await this.storage.insertEnvelope(envelope, { approval: approvalRequirement });
         if (storeResult && storeResult.deduplicated) {
           return {
             success: true,

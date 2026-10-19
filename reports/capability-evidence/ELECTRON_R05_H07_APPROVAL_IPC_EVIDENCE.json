@@ -1,0 +1,14 @@
+{
+  "suite": "UNION_BOT_ELECTRON_R05_H07_EVIDENCE",
+  "timestamp": "2026-10-19T06:34:23.477Z",
+  "previewDigest": "22168ed1a6ecb0db1d9bd4e61acbe5092cbb2423100da48006667cfa31f22ccc",
+  "approvedDigest": "22168ed1a6ecb0db1d9bd4e61acbe5092cbb2423100da48006667cfa31f22ccc",
+  "consumedDigest": "22168ed1a6ecb0db1d9bd4e61acbe5092cbb2423100da48006667cfa31f22ccc",
+  "recordedDigest": "22168ed1a6ecb0db1d9bd4e61acbe5092cbb2423100da48006667cfa31f22ccc",
+  "digestsMatch": true,
+  "tokenStatus": "CONSUMED",
+  "recordedCount": 1,
+  "tamper1Denied": true,
+  "tamper2Denied": true,
+  "result": "PASS"
+}

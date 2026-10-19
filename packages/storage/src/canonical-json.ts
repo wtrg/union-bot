@@ -146,13 +146,14 @@ export function computeCanonicalDigest(payload: unknown, version = CANONICALIZAT
 }
 
 /**
- * Computes deterministic canonical digest for an Envelope.
+ * Computes deterministic canonical digest for an Envelope (UB-P2-R03-03, R05-H06).
  */
 export function computeEnvelopeDigest(envelope: any): string {
   const normalized = {
     id: envelope.id,
     roomId: envelope.roomId,
     workspaceId: envelope.workspaceId || null,
+    policyVersion: envelope.policyVersion || null,
     sender: {
       kind: envelope.sender.kind,
       id: envelope.sender.id,
@@ -166,3 +167,20 @@ export function computeEnvelopeDigest(envelope: any): string {
   };
   return computeCanonicalDigest(normalized, CANONICALIZATION_VERSION);
 }
+
+/**
+ * Extracts semantic action input stripped of transport-only metadata like approvalTokenId (R04-C02, R05-H07).
+ */
+export function extractActionSemanticInput(input: any): any {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    return input;
+  }
+  const filtered: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(input)) {
+    if (k !== 'approvalTokenId' && k !== 'approval_token_id') {
+      filtered[k] = v;
+    }
+  }
+  return filtered;
+}
+

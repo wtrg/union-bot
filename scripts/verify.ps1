@@ -4,7 +4,7 @@
 $ErrorActionPreference = "Stop"
 
 Write-Host "`n========================================================" -ForegroundColor Cyan
-Write-Host "UNION BOT COMPREHENSIVE VERIFICATION SUITE (P2 ROUND 4)" -ForegroundColor Cyan
+Write-Host "UNION BOT COMPREHENSIVE VERIFICATION SUITE (P2 ROUND 5)" -ForegroundColor Cyan
 Write-Host "========================================================`n" -ForegroundColor Cyan
 
 # 1. Strict TypeScript Typecheck across Monorepo
@@ -23,8 +23,8 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 
-# 3. Run TypeScript & Node Unit/Integration Tests (123 tests)
-Write-Host "`n--- 3. Running TypeScript & Node Unit/Integration Tests (123 tests including P2, R03, and R04 G01..G06, G09, G10, G12 vectors) ---" -ForegroundColor Yellow
+# 3. Run TypeScript & Node Unit/Integration Tests (132 tests)
+Write-Host "`n--- 3. Running TypeScript & Node Unit/Integration Tests (132 tests including P2, R03, R04, and R05 H01..H04, H06) ---" -ForegroundColor Yellow
 pnpm test:ts
 if ($LASTEXITCODE -ne 0) {
     Write-Host "`n[FATAL] TypeScript unit tests failed!" -ForegroundColor Red
@@ -39,8 +39,8 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 
-# 5. Run Real Windows Electron E2E Tests (R04-G07, G08, G11)
-Write-Host "`n--- 5. Running Real Windows Electron E2E Tests (R04-G07, G08, G11) ---" -ForegroundColor Yellow
+# 5. Run Real Windows Electron E2E Tests (R04-G07, G08, G11 & R05-H05, H07, H08)
+Write-Host "`n--- 5. Running Real Windows Electron E2E Tests (R04-G07, G08, G11 & R05-H05, H07, H08) ---" -ForegroundColor Yellow
 pnpm test:e2e
 if ($LASTEXITCODE -ne 0) {
     Write-Host "`n[FATAL] Real Windows Electron E2E tests failed!" -ForegroundColor Red

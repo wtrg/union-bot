@@ -19,6 +19,7 @@ const { CostGuard, installElectronCostGuardInterceptor } = require('./cost-guard
 const { Orchestrator } = require('./orchestrator.cjs');
 const { StorageServiceClient } = require('./storage-service.cjs');
 const { isAuthorizedSenderFrame } = require('./auth-check.cjs');
+const { extractActionSemanticInput, computeCanonicalDigest } = require('./canonical-json.cjs');
 
 // Custom test userData override for isolated multi-process E2E testing
 const customUserDataArg = process.argv.find((a) => a.startsWith('--test-user-data=') || a.startsWith('--user-data-dir='));
@@ -42,11 +43,21 @@ const uiDistPath = path.resolve(__dirname, '../../workspace-ui/dist/index.html')
 const allowedUiFileUrl = pathToFileURL(uiDistPath).href;
 const costGuard = new CostGuard();
 
-// Connect durable SQLite storage under userData (UB-P2-R01-003, P2-T04)
 const userDataPath = app.getPath('userData');
 const dbFilePath = path.join(userDataPath, 'union_bot.db');
 const storage = new StorageServiceClient(dbFilePath);
 const orchestrator = new Orchestrator({ costGuard, storage });
+
+// Listen for worker runtime unexpected termination (R04-C03, R05-H08 Case 4)
+storage.on('worker-exit', ({ code, signal }) => {
+  console.error(`[UnionBot] Storage worker unexpectedly exited during runtime with code ${code} / signal ${signal} (R04-C03)`);
+  appStatus = 'STORAGE_ERROR_BLOCKED';
+  storageInitError = `Storage worker terminated at runtime with exit code ${code}`;
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('union-bot:app-status-changed', { status: appStatus, error: storageInitError });
+  }
+});
+
 
 function createWindow() {
   const isSmoke = process.argv.includes('--smoke');
@@ -428,6 +439,455 @@ function createWindow() {
     return;
   }
 
+  // 7e. R05-H05: Hard Kill & Replay Stage 1
+  if (process.argv.includes('--r05-e2e-h05-stage=1')) {
+    mainWindow.webContents.once('did-finish-load', async () => {
+      try {
+        const res = await mainWindow.webContents.executeJavaScript(`
+          (async () => {
+            const actionInput = { tool: 'write_file', estimatedCost: 0, path: 'src/main.rs', content: 'fn main() {}' };
+            const { digest } = await window.unionBotAPI.computeActionDigest(actionInput);
+            const tokenCreate = await window.unionBotAPI.createApprovalToken({
+              tokenId: 'tok_h05_kill',
+              actionType: 'write_file',
+              payloadDigest: digest,
+              origin: 'desktop_ui',
+              roomId: 'orchestration',
+              workspaceId: 'ws_h05',
+              recipient: 'agent_coder',
+            });
+            const approveRes = await window.unionBotAPI.approveToken('tok_h05_kill');
+            const envelope = {
+              id: 'env_h05_kill_001',
+              traceId: 'trc_h05_001',
+              roomId: 'orchestration',
+              workspaceId: 'ws_h05',
+              timestamp: Date.now(),
+              sender: { kind: 'user', id: 'usr_h05', name: 'H05 User', role: 'USER' },
+              recipient: { kind: 'agent', id: 'agent_coder' },
+              fidelity: 'L0_RAW_TEXT',
+              parts: [{
+                kind: 'action',
+                tool: 'write_file',
+                callId: 'call_h05_001',
+                status: 'requested',
+                input: actionInput,
+                approvalTokenId: 'tok_h05_kill',
+              }],
+            };
+            const dispatchRes = await window.unionBotAPI.dispatchEnvelope(envelope);
+            return { tokenCreate, approveRes, dispatchRes };
+          })()
+        `);
+
+        if (!res.dispatchRes || !res.dispatchRes.success || res.dispatchRes.envelopeId !== 'env_h05_kill_001') {
+          console.error('[R05-H05] Stage 1 failed:', res);
+          app.quit();
+          process.exit(1);
+        }
+
+        const ackMarker = path.join(userDataDir, 'e2e_h05_stage1.json');
+        fs.writeFileSync(ackMarker, JSON.stringify(res, null, 2), 'utf-8');
+        console.log('[R05-H05] STAGE1_COMMITTED');
+      } catch (err) {
+        console.error('[R05-H05] Stage 1 exception:', err);
+        app.quit();
+        process.exit(1);
+      }
+    });
+    return;
+  }
+
+  // 7f. R05-H05: Hard Kill & Replay Stage 2
+  if (process.argv.includes('--r05-e2e-h05-stage=2')) {
+    mainWindow.webContents.once('did-finish-load', async () => {
+      try {
+        const stage2Result = await mainWindow.webContents.executeJavaScript(`
+          (async () => {
+            const historyBefore = await window.unionBotAPI.getRoomHistory('orchestration');
+            const tokenBefore = await window.unionBotAPI.getApprovalToken('tok_h05_kill');
+            const actionInput = { tool: 'write_file', estimatedCost: 0, path: 'src/main.rs', content: 'fn main() {}' };
+            const identicalEnvelope = {
+              id: 'env_h05_kill_001',
+              traceId: 'trc_h05_001',
+              roomId: 'orchestration',
+              workspaceId: 'ws_h05',
+              timestamp: Date.now(),
+              sender: { kind: 'user', id: 'usr_h05', name: 'H05 User', role: 'USER' },
+              recipient: { kind: 'agent', id: 'agent_coder' },
+              fidelity: 'L0_RAW_TEXT',
+              parts: [{
+                kind: 'action',
+                tool: 'write_file',
+                callId: 'call_h05_001',
+                status: 'requested',
+                input: actionInput,
+                approvalTokenId: 'tok_h05_kill',
+              }],
+            };
+            // 1. Replay identical action
+            const replayRes = await window.unionBotAPI.dispatchEnvelope(identicalEnvelope);
+
+            // 2. Modified payload replay attempt
+            const tamperedEnvelope = {
+              ...identicalEnvelope,
+              parts: [{
+                ...identicalEnvelope.parts[0],
+                input: { ...actionInput, content: 'TAMPERED_MALICIOUS_CONTENT' },
+              }],
+            };
+            const tamperedRes = await window.unionBotAPI.dispatchEnvelope(tamperedEnvelope);
+
+            const historyAfter = await window.unionBotAPI.getRoomHistory('orchestration');
+            const tokenAfter = await window.unionBotAPI.getApprovalToken('tok_h05_kill');
+
+            return { historyBefore, tokenBefore, replayRes, tamperedRes, historyAfter, tokenAfter };
+          })()
+        `);
+
+        const historyCountBeforeOk = stage2Result.historyBefore && stage2Result.historyBefore.length === 1;
+        const tokenConsumedBeforeOk = stage2Result.tokenBefore && stage2Result.tokenBefore.status === 'CONSUMED';
+        const replayDedupOk = Boolean(stage2Result.replayRes && stage2Result.replayRes.success === true && stage2Result.replayRes.deduplicated === true);
+        const tamperedDeniedOk = Boolean(stage2Result.tamperedRes && !stage2Result.tamperedRes.success && String(stage2Result.tamperedRes.error).includes('ERR_PAYLOAD_MISMATCH'));
+        const historyCountAfterOk = stage2Result.historyAfter && stage2Result.historyAfter.length === 1;
+        const tokenConsumedAfterOk = stage2Result.tokenAfter && stage2Result.tokenAfter.status === 'CONSUMED';
+
+        console.log('[R05-H05] History count preserved (1):', historyCountBeforeOk && historyCountAfterOk);
+        console.log('[R05-H05] Token remains CONSUMED:', tokenConsumedBeforeOk && tokenConsumedAfterOk);
+        console.log('[R05-H05] Replay returns cached ACK (deduplicated=true):', replayDedupOk);
+        console.log('[R05-H05] Tampered replay rejected with ERR_PAYLOAD_MISMATCH:', tamperedDeniedOk);
+
+        const allPassed = historyCountBeforeOk && tokenConsumedBeforeOk && replayDedupOk && tamperedDeniedOk && historyCountAfterOk && tokenConsumedAfterOk;
+
+        const report = {
+          suite: 'UNION_BOT_ELECTRON_R05_H05_EVIDENCE',
+          timestamp: new Date().toISOString(),
+          userDataDir,
+          historyCountBefore: stage2Result.historyBefore?.length,
+          replayResult: stage2Result.replayRes,
+          tamperedResult: stage2Result.tamperedRes,
+          historyCountAfter: stage2Result.historyAfter?.length,
+          tokenStatus: stage2Result.tokenAfter?.status,
+          result: allPassed ? 'PASS' : 'FAIL',
+        };
+
+        const reportDir = path.resolve(__dirname, '../../../reports/capability-evidence');
+        if (!fs.existsSync(reportDir)) fs.mkdirSync(reportDir, { recursive: true });
+        fs.writeFileSync(
+          path.join(reportDir, 'ELECTRON_R05_H05_KILL_REPLAY_EVIDENCE.json'),
+          JSON.stringify(report, null, 2),
+          'utf-8'
+        );
+
+        if (!allPassed) {
+          app.quit();
+          process.exit(1);
+        }
+
+        console.log('[R05-H05] STAGE2_VERIFICATION_PASSED');
+        app.quit();
+        process.exit(0);
+      } catch (err) {
+        console.error('[R05-H05] Stage 2 exception:', err);
+        app.quit();
+        process.exit(1);
+      }
+    });
+    return;
+  }
+
+  // 7g. R05-H07: Full Production IPC Approval Flow
+  if (process.argv.includes('--r05-e2e-h07')) {
+    mainWindow.webContents.once('did-finish-load', async () => {
+      try {
+        console.log('[R05-H07] Running Production IPC Approval Flow Verification...');
+        const h07Result = await mainWindow.webContents.executeJavaScript(`
+          (async () => {
+            // 1. ActionIntent A with nested args and recipient
+            const actionInputA = {
+              tool: 'fake_local_file_writer',
+              estimatedCost: 0,
+              args: {
+                path: 'output/report.json',
+                options: { overwrite: true, format: 'json' },
+                content: { summary: 'Phase P2 Complete', timestamp: 1729300000000 }
+              }
+            };
+            const recipientA = { kind: 'agent', id: 'agent_writer' };
+
+            // 2. Compute canonical digest of ActionIntent A
+            const { digest: previewDigest } = await window.unionBotAPI.computeActionDigest(actionInputA);
+
+            // 3. Create approval token with previewDigest
+            const tokenIdA = 'tok_h07_prod_001';
+            await window.unionBotAPI.createApprovalToken({
+              tokenId: tokenIdA,
+              actionType: 'fake_local_file_writer',
+              payloadDigest: previewDigest,
+              origin: 'desktop_ui',
+              roomId: 'orchestration',
+              workspaceId: 'ws_h07',
+              recipient: recipientA.id,
+            });
+
+            // 4. Main process validates approver and issues approval decision
+            await window.unionBotAPI.approveToken(tokenIdA);
+            const tokenApproved = await window.unionBotAPI.getApprovalToken(tokenIdA);
+
+            // 5. Renderer sends envelope containing Action A
+            const envelopeA = {
+              id: 'env_h07_prod_001',
+              traceId: 'trc_h07_001',
+              roomId: 'orchestration',
+              workspaceId: 'ws_h07',
+              timestamp: Date.now(),
+              sender: { kind: 'user', id: 'usr_operator', name: 'Operator', role: 'USER' },
+              recipient: recipientA,
+              fidelity: 'L0_RAW_TEXT',
+              parts: [{
+                kind: 'action',
+                tool: 'fake_local_file_writer',
+                callId: 'call_h07_001',
+                status: 'requested',
+                input: { ...actionInputA, approvalTokenId: tokenIdA },
+              }],
+            };
+
+            const dispatchRes = await window.unionBotAPI.dispatchEnvelope(envelopeA);
+            const tokenConsumed = await window.unionBotAPI.getApprovalToken(tokenIdA);
+            const history = await window.unionBotAPI.getRoomHistory('orchestration');
+
+            // 6. Tamper test: reuse tokenIdA with modified args
+            const tamperedActionInput = {
+              ...actionInputA,
+              args: { ...actionInputA.args, path: 'output/MALICIOUS_OVERWRITE.json' },
+              approvalTokenId: tokenIdA,
+            };
+            const tamperedEnvelope = {
+              id: 'env_h07_tamper_001',
+              traceId: 'trc_h07_tamper',
+              roomId: 'orchestration',
+              workspaceId: 'ws_h07',
+              timestamp: Date.now(),
+              sender: { kind: 'user', id: 'usr_operator', name: 'Operator', role: 'USER' },
+              recipient: recipientA,
+              fidelity: 'L0_RAW_TEXT',
+              parts: [{
+                kind: 'action',
+                tool: 'fake_local_file_writer',
+                callId: 'call_h07_tamper',
+                status: 'requested',
+                input: tamperedActionInput,
+              }],
+            };
+            const tamperRes1 = await window.unionBotAPI.dispatchEnvelope(tamperedEnvelope);
+
+            // 7. Tamper test: new token B approved, but recipient modified before dispatch
+            const actionInputB = { tool: 'fake_local_file_writer', estimatedCost: 0, args: { path: 'valid.txt' } };
+            const { digest: digestB } = await window.unionBotAPI.computeActionDigest(actionInputB);
+            const tokenIdB = 'tok_h07_prod_002';
+            await window.unionBotAPI.createApprovalToken({
+              tokenId: tokenIdB,
+              actionType: 'fake_local_file_writer',
+              payloadDigest: digestB,
+              origin: 'desktop_ui',
+              roomId: 'orchestration',
+              workspaceId: 'ws_h07',
+              recipient: 'agent_writer',
+            });
+            await window.unionBotAPI.approveToken(tokenIdB);
+
+            // Dispatch with modified recipient (rogue agent)
+            const modifiedRecipientEnvelope = {
+              id: 'env_h07_tamper_002',
+              traceId: 'trc_h07_tamper2',
+              roomId: 'orchestration',
+              workspaceId: 'ws_h07',
+              timestamp: Date.now(),
+              sender: { kind: 'user', id: 'usr_operator', name: 'Operator', role: 'USER' },
+              recipient: { kind: 'agent', id: 'agent_rogue_intruder' },
+              fidelity: 'L0_RAW_TEXT',
+              parts: [{
+                kind: 'action',
+                tool: 'fake_local_file_writer',
+                callId: 'call_h07_tamper2',
+                status: 'requested',
+                input: { ...actionInputB, approvalTokenId: tokenIdB },
+              }],
+            };
+            const tamperRes2 = await window.unionBotAPI.dispatchEnvelope(modifiedRecipientEnvelope);
+
+            return {
+              previewDigest,
+              tokenApproved,
+              dispatchRes,
+              tokenConsumed,
+              history,
+              tamperRes1,
+              tamperRes2,
+            };
+          })()
+        `);
+
+        const previewDigest = h07Result.previewDigest;
+        const approvedDigest = h07Result.tokenApproved?.payload_digest || h07Result.tokenApproved?.payloadDigest;
+        const consumedDigest = h07Result.tokenConsumed?.payload_digest || h07Result.tokenConsumed?.payloadDigest;
+
+        // Recorded digest from history
+        const recordedEnv = h07Result.history?.find((e) => e.id === 'env_h07_prod_001');
+        const recordedSemantic = recordedEnv ? extractActionSemanticInput(recordedEnv.parts[0].input) : null;
+        const recordedDigest = recordedSemantic ? computeCanonicalDigest(recordedSemantic, 1) : null;
+
+        const digestMatch = previewDigest === approvedDigest && approvedDigest === consumedDigest && consumedDigest === recordedDigest;
+        const tokenConsumedOk = h07Result.tokenConsumed?.status === 'CONSUMED';
+        const recordedOnce = h07Result.history?.filter((e) => e.id === 'env_h07_prod_001').length === 1;
+        const tamper1Denied = Boolean(h07Result.tamperRes1 && !h07Result.tamperRes1.success);
+        const tamper2Denied = Boolean(h07Result.tamperRes2 && !h07Result.tamperRes2.success);
+
+        console.log('[R05-H07] Preview digest:', previewDigest);
+        console.log('[R05-H07] Digests match (preview===approved===consumed===recorded):', digestMatch);
+        console.log('[R05-H07] Token status CONSUMED:', tokenConsumedOk);
+        console.log('[R05-H07] Recorded exactly once:', recordedOnce);
+        console.log('[R05-H07] Modified args after preview denied:', tamper1Denied);
+        console.log('[R05-H07] Modified recipient after approval denied:', tamper2Denied);
+
+        const allPassed = digestMatch && tokenConsumedOk && recordedOnce && tamper1Denied && tamper2Denied;
+
+        const report = {
+          suite: 'UNION_BOT_ELECTRON_R05_H07_EVIDENCE',
+          timestamp: new Date().toISOString(),
+          previewDigest,
+          approvedDigest,
+          consumedDigest,
+          recordedDigest,
+          digestsMatch: digestMatch,
+          tokenStatus: h07Result.tokenConsumed?.status,
+          recordedCount: h07Result.history?.filter((e) => e.id === 'env_h07_prod_001').length,
+          tamper1Denied,
+          tamper2Denied,
+          result: allPassed ? 'PASS' : 'FAIL',
+        };
+
+        const reportDir = path.resolve(__dirname, '../../../reports/capability-evidence');
+        if (!fs.existsSync(reportDir)) fs.mkdirSync(reportDir, { recursive: true });
+        fs.writeFileSync(
+          path.join(reportDir, 'ELECTRON_R05_H07_APPROVAL_IPC_EVIDENCE.json'),
+          JSON.stringify(report, null, 2),
+          'utf-8'
+        );
+
+        if (!allPassed) {
+          app.quit();
+          process.exit(1);
+        }
+
+        console.log('[R05-H07] PRODUCTION_IPC_APPROVAL_PASSED');
+        app.quit();
+        process.exit(0);
+      } catch (err) {
+        console.error('[R05-H07] Exception:', err);
+        app.quit();
+        process.exit(1);
+      }
+    });
+    return;
+  }
+
+  // 7h. R05-H08: Crash / Recovery Verification (Worker Death & Mutation Block)
+  if (process.argv.includes('--r05-e2e-h08')) {
+    mainWindow.webContents.once('did-finish-load', async () => {
+      try {
+        console.log('[R05-H08] Running Crash / Recovery Scenarios in Real Electron...');
+
+        const case4Result = await mainWindow.webContents.executeJavaScript(`
+          (async () => {
+            const initialStatus = await window.unionBotAPI.getAppStatus();
+
+            // Listen for status change event
+            const statusPromise = new Promise((resolve) => {
+              const unsubscribe = window.unionBotAPI.onAppStatusChanged((newStatus) => {
+                unsubscribe();
+                resolve(newStatus);
+              });
+            });
+
+            // Trigger worker kill
+            await window.unionBotAPI.testKillWorker();
+
+            const transitionedStatus = await statusPromise;
+
+            // Attempt mutations while in STORAGE_ERROR_BLOCKED
+            const dispatchBlocked = await window.unionBotAPI.dispatchEnvelope({
+              id: 'env_h08_blocked',
+              traceId: 'trc_blocked',
+              roomId: 'orchestration',
+              timestamp: Date.now(),
+              sender: { kind: 'user', id: 'usr_h08', name: 'H08 User', role: 'USER' },
+              recipient: { kind: 'room', id: 'orchestration' },
+              fidelity: 'L0_RAW_TEXT',
+              parts: [{ kind: 'text', text: 'Should be denied' }]
+            });
+
+            const approveBlocked = await window.unionBotAPI.approveToken('tok_blocked');
+
+            return {
+              initialStatus,
+              transitionedStatus,
+              dispatchBlocked,
+              approveBlocked,
+            };
+          })()
+        `);
+
+        const initialReady = case4Result.initialStatus?.status === 'READY';
+        const transitionedBlocked = case4Result.transitionedStatus?.status === 'STORAGE_ERROR_BLOCKED';
+        const dispatchDenied = case4Result.dispatchBlocked?.success === false && String(case4Result.dispatchBlocked?.error).includes('ERR_STORAGE_UNAVAILABLE');
+        const approveDenied = case4Result.approveBlocked?.success === false && String(case4Result.approveBlocked?.error).includes('ERR_STORAGE_UNAVAILABLE');
+
+        console.log('[R05-H08] Case 4: Initial status READY:', initialReady);
+        console.log('[R05-H08] Case 4: Transitioned to STORAGE_ERROR_BLOCKED:', transitionedBlocked);
+        console.log('[R05-H08] Case 4: Dispatch denied fail-closed:', dispatchDenied);
+        console.log('[R05-H08] Case 4: Approve denied fail-closed:', approveDenied);
+
+        const allPassed = initialReady && transitionedBlocked && dispatchDenied && approveDenied;
+
+        const report = {
+          suite: 'UNION_BOT_ELECTRON_R05_H08_EVIDENCE',
+          timestamp: new Date().toISOString(),
+          case4: {
+            initialReady,
+            transitionedBlocked,
+            dispatchDenied,
+            approveDenied,
+          },
+          result: allPassed ? 'PASS' : 'FAIL',
+        };
+
+        const reportDir = path.resolve(__dirname, '../../../reports/capability-evidence');
+        if (!fs.existsSync(reportDir)) fs.mkdirSync(reportDir, { recursive: true });
+        fs.writeFileSync(
+          path.join(reportDir, 'ELECTRON_R05_H08_WORKER_KILL_EVIDENCE.json'),
+          JSON.stringify(report, null, 2),
+          'utf-8'
+        );
+
+        if (!allPassed) {
+          app.quit();
+          process.exit(1);
+        }
+
+        console.log('[R05-H08] CRASH_RECOVERY_VERIFICATION_PASSED');
+        app.quit();
+        process.exit(0);
+      } catch (err) {
+        console.error('[R05-H08] Exception:', err);
+        app.quit();
+        process.exit(1);
+      }
+    });
+    return;
+  }
+
   // 7. Handle Standard GUI Smoke Test Mode
   if (isSmoke) {
     console.log('[SmokeTest] Running Union Bot Automated GUI Smoke Test...');
@@ -461,11 +921,12 @@ function createWindow() {
         console.log('[SmokeTest] Orchestrator zero-cost admission passed:', admissionCheck.allowed);
 
         // 5. Verify Real GUI -> IPC envelope dispatch through window.unionBotAPI
+        const smokeEnvId = `smoke_gui_env_${Date.now()}`;
         const ipcSendResult = await mainWindow.webContents.executeJavaScript(`
           (async () => {
             if (!window.unionBotAPI) return { error: 'window.unionBotAPI not found' };
             return await window.unionBotAPI.dispatchEnvelope({
-              id: 'smoke_gui_env_001',
+              id: '${smokeEnvId}',
               traceId: 'smoke_trc_001',
               timestamp: Date.now(),
               sender: { kind: 'user', id: 'smoke_user', name: 'Smoke Tester', role: 'USER' },
@@ -476,7 +937,7 @@ function createWindow() {
             });
           })()
         `);
-        const ipcSendSuccess = Boolean(ipcSendResult && ipcSendResult.success === true && ipcSendResult.envelopeId === 'smoke_gui_env_001');
+        const ipcSendSuccess = Boolean(ipcSendResult && ipcSendResult.success === true && ipcSendResult.envelopeId === smokeEnvId);
         console.log('[SmokeTest] ipcSendResult raw:', JSON.stringify(ipcSendResult));
         console.log('[SmokeTest] Real GUI IPC send message verified:', ipcSendSuccess);
 
@@ -487,7 +948,7 @@ function createWindow() {
             return await window.unionBotAPI.getRoomHistory('orchestration');
           })()
         `);
-        const historyVerified = Array.isArray(historyResult) && historyResult.some((e) => e.id === 'smoke_gui_env_001');
+        const historyVerified = Array.isArray(historyResult) && historyResult.some((e) => e.id === smokeEnvId);
         console.log('[SmokeTest] Real GUI IPC get room history verified:', historyVerified);
 
         // 7. Verify Renderer Anti-Spoofing enforcement via real IPC call
@@ -607,6 +1068,37 @@ ipcMain.handle('union-bot:get-room-history', async (event, roomId) => {
   return await orchestrator.getRoomHistoryAsync(roomId);
 });
 
+ipcMain.handle('union-bot:create-approval-token', async (event, tokenData) => {
+  if (appStatus !== 'READY') {
+    return { success: false, error: `ERR_STORAGE_UNAVAILABLE: Desktop storage is not ready (${appStatus}) (UB-P2-R03-05)` };
+  }
+  if (!checkSenderAuthorized(event)) {
+    return { success: false, error: 'Security violation: Unauthorized IPC sender origin or missing frame (UB-P2-R01-008)' };
+  }
+  if (!tokenData || typeof tokenData !== 'object') {
+    return { success: false, error: 'ERR_INVALID_TOKEN_DATA: tokenData is required' };
+  }
+  try {
+    const token = await storage.createApprovalToken(tokenData);
+    return { success: true, token };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('union-bot:compute-action-digest', async (event, input) => {
+  if (!checkSenderAuthorized(event)) {
+    return { success: false, error: 'Security violation: Unauthorized IPC sender origin or missing frame (UB-P2-R01-008)' };
+  }
+  try {
+    const semanticInput = extractActionSemanticInput(input);
+    const digest = computeCanonicalDigest(semanticInput, 1);
+    return { success: true, digest, semanticInput };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
 ipcMain.handle('union-bot:approve-token', async (event, { tokenId, decisionContext } = {}) => {
   if (appStatus !== 'READY') {
     return { success: false, error: `ERR_STORAGE_UNAVAILABLE: Desktop storage is not ready (${appStatus}) (UB-P2-R03-05)` };
@@ -644,6 +1136,22 @@ ipcMain.handle('union-bot:get-approval-token', async (event, tokenId) => {
     return null;
   }
 });
+
+ipcMain.handle('union-bot:test-kill-worker', async (event) => {
+  if (!checkSenderAuthorized(event)) {
+    return { success: false, error: 'Unauthorized IPC sender origin (UB-P2-R01-008)' };
+  }
+  if (storage && storage.worker) {
+    try {
+      storage.worker.kill();
+      return { success: true };
+    } catch (e) {
+      return { success: false, error: e.message };
+    }
+  }
+  return { success: false, error: 'No active storage worker' };
+});
+
 
 // App Lifecycle
 app.whenReady().then(async () => {
