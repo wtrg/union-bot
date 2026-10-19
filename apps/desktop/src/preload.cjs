@@ -135,6 +135,45 @@ const api = {
     };
   },
 
+  // Phase P4: Embedded Chromium Browser API
+  browserGetState: async () => {
+    return ipcRenderer.invoke('union-bot:browser-get-state');
+  },
+  browserCreateTab: async (payload) => {
+    return ipcRenderer.invoke('union-bot:browser-create-tab', payload);
+  },
+  browserCloseTab: async (tabId) => {
+    return ipcRenderer.invoke('union-bot:browser-close-tab', tabId);
+  },
+  browserSelectTab: async (tabId) => {
+    return ipcRenderer.invoke('union-bot:browser-select-tab', tabId);
+  },
+  browserNavigate: async (payload) => {
+    return ipcRenderer.invoke('union-bot:browser-navigate', payload);
+  },
+  browserPerformAction: async (payload) => {
+    return ipcRenderer.invoke('union-bot:browser-action', payload);
+  },
+  browserSetBounds: async (bounds) => {
+    return ipcRenderer.invoke('union-bot:browser-set-bounds', bounds);
+  },
+  browserSetVisibility: async (visible) => {
+    return ipcRenderer.invoke('union-bot:browser-set-visibility', visible);
+  },
+  browserSetModalActive: async (active) => {
+    return ipcRenderer.invoke('union-bot:browser-set-modal-active', active);
+  },
+  browserShareSelection: async (payload) => {
+    return ipcRenderer.invoke('union-bot:browser-share-selection', payload);
+  },
+  onBrowserStateUpdated: (callback) => {
+    if (typeof callback !== 'function') return () => {};
+    const subscription = (_event, state) => callback(state);
+    ipcRenderer.on('union-bot:browser-state-updated', subscription);
+    return () => {
+      ipcRenderer.removeListener('union-bot:browser-state-updated', subscription);
+    };
+  },
 };
 
 // UB-P2-R06-003 / R07-A03: Strictly isolate test mutation channels.
@@ -155,6 +194,15 @@ if (process.env.UNION_BOT_E2E_HARNESS === '1' && process.env.NODE_ENV === 'test'
   };
   api.testGetExportFiles = async () => {
     return ipcRenderer.invoke('union-bot:test-get-export-files');
+  };
+  api.testSetBrowserCookie = async (payload) => {
+    return ipcRenderer.invoke('union-bot:test-set-browser-cookie', payload);
+  };
+  api.testGetBrowserCookies = async (partition) => {
+    return ipcRenderer.invoke('union-bot:test-get-browser-cookies', partition);
+  };
+  api.testTriggerTabCrash = async (tabId) => {
+    return ipcRenderer.invoke('union-bot:test-trigger-tab-crash', tabId);
   };
 }
 

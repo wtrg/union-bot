@@ -7,6 +7,7 @@ import { TasksInbox } from './components/TasksInbox.tsx';
 import { PreferencesModal } from './components/PreferencesModal.tsx';
 import { CreateRoomModal } from './components/CreateRoomModal.tsx';
 import { CreateProjectModal } from './components/CreateProjectModal.tsx';
+import { BrowserPanel } from './components/BrowserPanel.tsx';
 import { AgentInfo, RoomInfo, EnvelopeView, AttachmentInfo, MessagePart, ProjectInfo } from './types.ts';
 
 const INITIAL_PROJECTS: ProjectInfo[] = [
@@ -73,9 +74,31 @@ export const App: React.FC = () => {
   const [isCreateProjectOpen, setIsCreateProjectOpen] = useState<boolean>(false);
   const [editingProject, setEditingProject] = useState<ProjectInfo | null>(null);
   const [isPreferencesOpen, setIsPreferencesOpen] = useState<boolean>(false);
+  const [isBrowserOpen, setIsBrowserOpen] = useState<boolean>(false);
   const [storageStatus, setStorageStatus] = useState<string>('READY');
   const [storageError, setStorageError] = useState<string | null>(null);
   const [theme, setTheme] = useState<'dark' | 'light' | 'high-contrast'>('dark');
+
+  // Coordinate modal open state with Electron WebContentsView (P4-008: Modals never covered by web layer)
+  const isAnyModalActive = isCreateRoomOpen || isCreateProjectOpen || isPreferencesOpen;
+  useEffect(() => {
+    if (window.unionBotAPI && typeof window.unionBotAPI.browserSetModalActive === 'function') {
+      window.unionBotAPI.browserSetModalActive(isAnyModalActive);
+    }
+  }, [isAnyModalActive]);
+
+  // Support programmatic browser toggling for tests and UI shortcuts
+  useEffect(() => {
+    const handleToggleBrowserEvent = (e: any) => {
+      if (e && typeof e.detail === 'boolean') {
+        setIsBrowserOpen(e.detail);
+      } else {
+        setIsBrowserOpen((prev) => !prev);
+      }
+    };
+    window.addEventListener('union-bot:toggle-browser', handleToggleBrowserEvent);
+    return () => window.removeEventListener('union-bot:toggle-browser', handleToggleBrowserEvent);
+  }, []);
 
   // Apply theme class to document body (UB-P3-R01-007)
   useEffect(() => {
@@ -409,23 +432,36 @@ export const App: React.FC = () => {
         onToggleTheme={toggleTheme}
       />
 
-      <main className="main-content">
-        <Header room={activeRoom} isDemoMode={isDemoMode} />
-
-        {activeView === 'chat' && (
-          <ChatRoom
-            roomName={activeRoom?.name}
-            envelopes={currentEnvelopes}
-            onSendMessage={handleSendMessage}
+      <div className="workspace-main-area" style={{ display: 'flex', flex: 1, overflow: 'hidden', minWidth: 0, height: '100%' }}>
+        <main className="main-content" style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+          <Header
+            room={activeRoom}
+            isDemoMode={isDemoMode}
+            isBrowserOpen={isBrowserOpen}
+            onToggleBrowser={() => setIsBrowserOpen((prev) => !prev)}
           />
-        )}
 
-        {activeView === 'approvals' && (
-          <ApprovalInbox onTokenStatusChanged={refreshApprovalsCount} />
-        )}
+          {activeView === 'chat' && (
+            <ChatRoom
+              roomName={activeRoom?.name}
+              envelopes={currentEnvelopes}
+              onSendMessage={handleSendMessage}
+            />
+          )}
 
-        {activeView === 'tasks' && <TasksInbox />}
-      </main>
+          {activeView === 'approvals' && (
+            <ApprovalInbox onTokenStatusChanged={refreshApprovalsCount} />
+          )}
+
+          {activeView === 'tasks' && <TasksInbox />}
+        </main>
+
+        <BrowserPanel
+          isOpen={isBrowserOpen}
+          onClose={() => setIsBrowserOpen(false)}
+          activeRoomId={activeRoomId}
+        />
+      </div>
 
       <CreateRoomModal
         isOpen={isCreateRoomOpen}

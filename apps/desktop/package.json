@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@union-bot/artifact-store": "workspace:*",
+    "@union-bot/browser-manager": "workspace:*",
     "@union-bot/cost-guard": "workspace:*",
     "@union-bot/orchestrator": "workspace:*",
     "@union-bot/protocol": "workspace:*",

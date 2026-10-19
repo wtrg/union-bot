@@ -123,6 +123,22 @@ BENIGN_FIXTURE_ALLOWLIST = [
             "e1585a8b92753b31cad9eb5bc523b69475a5a5413e3b67ab39fe647471bb9381"
         ],
         "reason": "Leader audit fix plan documentation quoting legacy authStatus enum"
+    },
+    {
+        "path_suffix": "packages/browser-manager/src/types.ts",
+        "rule_id": "SEC-001",
+        "expected_match_sha256": [
+            "7b15b57dc77e666d18dc97ee7a52750c0b42764232c6f74925fd3bef97a4b8d7"
+        ],
+        "reason": "Phase P4 browser manager AuthStatus type definition"
+    },
+    {
+        "path_suffix": "apps/workspace-ui/src/types.ts",
+        "rule_id": "SEC-001",
+        "expected_match_sha256": [
+            "7b15b57dc77e666d18dc97ee7a52750c0b42764232c6f74925fd3bef97a4b8d7"
+        ],
+        "reason": "Phase P4 workspace UI AuthStatus type definition"
     }
 ]
 

@@ -1,0 +1,31 @@
+{
+  "name": "@union-bot/browser-manager",
+  "version": "1.0.0",
+  "description": "Embedded Chromium session isolation, WebContentsView management, and safe provider browsing for Union Bot",
+  "type": "module",
+  "main": "src/browser-manager.cjs",
+  "types": "src/index.ts",
+  "exports": {
+    ".": {
+      "import": "./src/index.ts",
+      "require": "./src/browser-manager.cjs"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "node --experimental-strip-types --test tests/url-policy.test.ts tests/partitions.test.ts tests/view-manager.test.ts"
+  },
+  "dependencies": {
+    "@union-bot/cost-guard": "workspace:*",
+    "@union-bot/protocol": "workspace:*"
+  },
+  "keywords": [
+    "union-bot",
+    "browser-manager",
+    "embedded-chromium",
+    "isolation",
+    "zero-cost"
+  ],
+  "author": "Union Bot Team",
+  "license": "MIT"
+}

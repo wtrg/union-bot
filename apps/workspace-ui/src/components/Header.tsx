@@ -4,9 +4,11 @@ import { RoomInfo } from '../types.ts';
 interface HeaderProps {
   room?: RoomInfo;
   isDemoMode: boolean;
+  onToggleBrowser?: () => void;
+  isBrowserOpen?: boolean;
 }
 
-export const Header: React.FC<HeaderProps> = ({ room, isDemoMode }) => {
+export const Header: React.FC<HeaderProps> = ({ room, isDemoMode, onToggleBrowser, isBrowserOpen }) => {
   return (
     <header className="room-header">
       <div className="room-title-group">
@@ -26,6 +28,30 @@ export const Header: React.FC<HeaderProps> = ({ room, isDemoMode }) => {
       </div>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        {onToggleBrowser && (
+          <button
+            className={`btn-toggle-browser ${isBrowserOpen ? 'active' : ''}`}
+            data-testid="toggle-browser-btn"
+            onClick={onToggleBrowser}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              background: isBrowserOpen ? 'var(--accent-blue, #2563eb)' : 'var(--bg-surface-elevated, #1e293b)',
+              color: isBrowserOpen ? '#ffffff' : 'var(--text-primary)',
+              border: '1px solid var(--border-color)',
+              borderRadius: 4,
+              padding: '4px 10px',
+              fontSize: 12,
+              fontWeight: 500,
+              cursor: 'pointer',
+            }}
+            title={isBrowserOpen ? 'Collapse Browser Dock' : 'Open Embedded AI Browser (ChatGPT / Gemini / Claude / DeepSeek)'}
+          >
+            <span>🌐 Browser Dock</span>
+            <span style={{ fontSize: 10, opacity: 0.8 }}>{isBrowserOpen ? '◀' : '▶'}</span>
+          </button>
+        )}
         <span
           style={{
             fontSize: 11,

@@ -138,11 +138,51 @@ export interface UnionBotAPI {
   getAppStatus: () => Promise<{ status: string; error: string | null }>;
   onEnvelopeReceived: (callback: (envelope: EnvelopeView) => void) => () => void;
   onAppStatusChanged: (callback: (status: { status: string; error: string | null }) => void) => () => void;
+
+  // Phase P4: Embedded Chromium Browser API
+  browserGetState?: () => Promise<BrowserManagerState>;
+  browserCreateTab?: (payload: { providerId: string; url?: string; title?: string }) => Promise<{ success: boolean; tab?: BrowserTabInfo; error?: string }>;
+  browserCloseTab?: (tabId: string) => Promise<{ success: boolean; nextActiveTabId?: string | null; error?: string }>;
+  browserSelectTab?: (tabId: string) => Promise<{ success: boolean }>;
+  browserNavigate?: (payload: { tabId?: string; url: string }) => Promise<{ success: boolean; sanitizedUrl?: string; error?: string }>;
+  browserPerformAction?: (payload: { tabId?: string; action: string }) => Promise<{ success: boolean; zoomFactor?: number; error?: string }>;
+  browserSetBounds?: (bounds: { x: number; y: number; width: number; height: number }) => Promise<{ success: boolean }>;
+  browserSetVisibility?: (visible: boolean) => Promise<{ success: boolean; isEffectiveVisible?: boolean }>;
+  browserSetModalActive?: (active: boolean) => Promise<{ success: boolean; isEffectiveVisible?: boolean }>;
+  browserShareSelection?: (payload: { tabId?: string; selectedText?: string; roomId?: string }) => Promise<{ success: boolean; envelope?: any; error?: string }>;
+  onBrowserStateUpdated?: (callback: (state: BrowserManagerState) => void) => () => void;
+
   testKillWorker?: () => Promise<any>;
   testSetConfirmationMode?: (mode: string) => Promise<any>;
   testTamperApprovalPayload?: (payload: any) => Promise<any>;
   testQueueAttachmentPath?: (filePath: string) => Promise<any>;
   testGetExportFiles?: () => Promise<any>;
+  testSetBrowserCookie?: (payload: any) => Promise<any>;
+  testGetBrowserCookies?: (partition: string) => Promise<any>;
+  testTriggerTabCrash?: (tabId?: string) => Promise<any>;
+}
+
+export interface BrowserTabInfo {
+  id: string;
+  providerId: 'chatgpt' | 'gemini' | 'claude' | 'deepseek' | 'search' | 'custom';
+  title: string;
+  url: string;
+  partition: string;
+  isLoading: boolean;
+  canGoBack: boolean;
+  canGoForward: boolean;
+  authStatus: 'READY_OR_LANDING' | 'LOGIN_REQUIRED' | 'AUTH_ERROR' | 'UNKNOWN';
+  crashed: boolean;
+  lastError: string | null;
+  zoomFactor: number;
+}
+
+export interface BrowserManagerState {
+  tabs: BrowserTabInfo[];
+  activeTabId: string | null;
+  bounds: { x: number; y: number; width: number; height: number };
+  isVisible: boolean;
+  isModalActive: boolean;
 }
 
 declare global {
