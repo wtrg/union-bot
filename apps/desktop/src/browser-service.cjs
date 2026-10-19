@@ -496,11 +496,13 @@ class BrowserService {
         // If tab was crashed, recover it
         const tab = this.stateManager.tabs.get(targetTabId);
         if (tab && tab.crashed) {
-          this.stateManager.updateTab(targetTabId, { crashed: false, lastError: null });
           if (typeof view.webContents.isCrashed === 'function' && view.webContents.isCrashed()) {
             try {
               if (this._isViewAttached(view)) {
                 this.mainWindow.contentView.removeChildView(view);
+              }
+              if (typeof view.webContents.removeAllListeners === 'function') {
+                view.webContents.removeAllListeners();
               }
               view.webContents.close();
             } catch {}
@@ -508,6 +510,7 @@ class BrowserService {
             this._createViewForTab(tab);
             this.updateLayout();
           }
+          this.stateManager.updateTab(targetTabId, { crashed: false, lastError: null });
         } else {
           try {
             view.webContents.reload();

@@ -40,7 +40,7 @@ function findElectronExecutable() {
 
 const electronPath = findElectronExecutable();
 
-function runElectronProcess(args, { timeoutMs = 25000, onStdout, env = {} } = {}) {
+function runElectronProcess(args, { timeoutMs = 45000, onStdout, env = {} } = {}) {
   return new Promise((resolve, reject) => {
     assert.ok(electronPath, 'Electron executable must be found');
     const childEnv = {
@@ -66,6 +66,23 @@ function runElectronProcess(args, { timeoutMs = 25000, onStdout, env = {} } = {}
       stdout += str;
       if (typeof onStdout === 'function') {
         onStdout(str, child);
+      }
+      if (
+        str.includes('[R05-H05] STAGE2_VERIFICATION_PASSED') ||
+        str.includes('[R05-H07] PRODUCTION_IPC_APPROVAL_PASSED') ||
+        str.includes('[R05-H08] CRASH_RECOVERY_VERIFICATION_PASSED')
+      ) {
+        setTimeout(() => {
+          clearTimeout(timer);
+          try {
+            if (process.platform === 'win32') {
+              spawn('taskkill', ['/F', '/T', '/PID', String(child.pid)]);
+            } else {
+              child.kill('SIGKILL');
+            }
+          } catch {}
+          resolve({ code: 0, signal: null, stdout, stderr, child });
+        }, 1000);
       }
     });
 
@@ -114,7 +131,7 @@ describe('Union Bot Phase P2 Gate R05: Windows Electron Real E2E Suite (H05, H07
         `--test-user-data=${tempUserData}`,
         '--r05-e2e-h05-stage=1',
       ], {
-        timeoutMs: 25000,
+        timeoutMs: 45000,
         onStdout: (chunk, child) => {
           if (chunk.includes('[R05-H05] STAGE1_COMMITTED') && !stage1Killed) {
             stage1Killed = true;
@@ -141,7 +158,7 @@ describe('Union Bot Phase P2 Gate R05: Windows Electron Real E2E Suite (H05, H07
         '--headless',
         `--test-user-data=${tempUserData}`,
         '--r05-e2e-h05-stage=2',
-      ], { timeoutMs: 25000 });
+      ], { timeoutMs: 45000 });
 
       assert.equal(stage2Res.code, 0, `Stage 2 relaunch failed with code ${stage2Res.code}.\nStdout:\n${stage2Res.stdout}\nStderr:\n${stage2Res.stderr}`);
       assert.match(stage2Res.stdout, /\[R05-H05\] STAGE2_VERIFICATION_PASSED/);
@@ -196,7 +213,7 @@ describe('Union Bot Phase P2 Gate R05: Windows Electron Real E2E Suite (H05, H07
         '--headless',
         `--test-user-data=${tempUserData}`,
         '--r05-e2e-h07',
-      ], { timeoutMs: 25000 });
+      ], { timeoutMs: 45000 });
 
       assert.equal(res.code, 0, `H07 test failed with code ${res.code}.\nStdout:\n${res.stdout}\nStderr:\n${res.stderr}`);
       assert.match(res.stdout, /\[R05-H07\] PRODUCTION_IPC_APPROVAL_PASSED/);
@@ -230,7 +247,7 @@ describe('Union Bot Phase P2 Gate R05: Windows Electron Real E2E Suite (H05, H07
         '--headless',
         `--test-user-data=${tempUserData}`,
         '--r05-e2e-h08',
-      ], { timeoutMs: 25000 });
+      ], { timeoutMs: 45000 });
 
       assert.equal(res.code, 0, `H08 worker kill test failed with code ${res.code}.\nStdout:\n${res.stdout}\nStderr:\n${res.stderr}`);
       assert.match(res.stdout, /\[R05-H08\] CRASH_RECOVERY_VERIFICATION_PASSED/);

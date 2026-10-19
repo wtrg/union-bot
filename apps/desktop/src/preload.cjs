@@ -200,6 +200,36 @@ const api = {
   exportTranscriptBundle: async (options) => {
     return ipcRenderer.invoke('union-bot:export-transcript-bundle', options);
   },
+
+  // Phase P6: Native Codex Agent API
+  codexDiscover: async () => {
+    return ipcRenderer.invoke('union-bot:codex-discover');
+  },
+  codexExecute: async (payload) => {
+    return ipcRenderer.invoke('union-bot:codex-execute', payload);
+  },
+  codexCancel: async () => {
+    return ipcRenderer.invoke('union-bot:codex-cancel');
+  },
+  codexVerifyBoundary: async (targetPath) => {
+    return ipcRenderer.invoke('union-bot:codex-verify-boundary', targetPath);
+  },
+  onCodexDelta: (callback) => {
+    if (typeof callback !== 'function') return () => {};
+    const subscription = (_event, data) => callback(data);
+    ipcRenderer.on('union-bot:codex-delta', subscription);
+    return () => {
+      ipcRenderer.removeListener('union-bot:codex-delta', subscription);
+    };
+  },
+  onCodexTurnCompleted: (callback) => {
+    if (typeof callback !== 'function') return () => {};
+    const subscription = (_event, data) => callback(data);
+    ipcRenderer.on('union-bot:codex-turn-completed', subscription);
+    return () => {
+      ipcRenderer.removeListener('union-bot:codex-turn-completed', subscription);
+    };
+  },
 };
 
 // UB-P2-R06-003 / R07-A03: Strictly isolate test mutation channels.
@@ -238,6 +268,9 @@ if (process.env.UNION_BOT_E2E_HARNESS === '1' && process.env.NODE_ENV === 'test'
   };
   api.testQueueSavePath = async (filePath) => {
     return ipcRenderer.invoke('union-bot:test-queue-save-path', filePath);
+  };
+  api.testSetCodexMock = async (options) => {
+    return ipcRenderer.invoke('union-bot:test-set-codex-mock', options);
   };
 }
 

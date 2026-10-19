@@ -25,6 +25,7 @@ const { isCostGuardBlockedUrl, PROVIDER_REGISTRY } = require('../../../packages/
 const { ArtifactStore, detectMimeType, sanitizeSvg } = require('../../../packages/artifact-store/src/artifact-store.cjs');
 const { ToolHost } = require('./tool-host.cjs');
 const { MCPService } = require('./mcp-service.cjs');
+const { CodexService } = require('./codex-service.cjs');
 
 // Custom test userData override for isolated multi-process E2E testing
 const customUserDataArg = process.argv.find((a) => a.startsWith('--test-user-data=') || a.startsWith('--user-data-dir='));
@@ -67,6 +68,19 @@ const toolHost = new ToolHost(path.resolve(__dirname, '../../..'));
 const mcpService = new MCPService(localCasDir, path.resolve(__dirname, '../../..'));
 const storage = new StorageServiceClient(dbFilePath);
 const orchestrator = new Orchestrator({ costGuard, storage });
+const codexService = new CodexService(path.resolve(__dirname, '../../..'), artifactStore, toolHost);
+
+codexService.on('delta', (delta, params) => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('union-bot:codex-delta', { delta, params });
+  }
+});
+
+codexService.on('turnCompleted', (turn, params) => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('union-bot:codex-turn-completed', { turn, params });
+  }
+});
 
 // Listen for worker runtime unexpected termination (R04-C03, R05-H08 Case 4)
 storage.on('worker-exit', ({ code, signal }) => {
@@ -145,6 +159,9 @@ function createWindow() {
     if (browserService) {
       browserService.destroy();
       browserService = null;
+    }
+    if (codexService) {
+      codexService.close();
     }
     mainWindow = null;
   });
@@ -2228,9 +2245,16 @@ function createWindow() {
             const reloadRes = await window.unionBotAPI.browserPerformAction({ tabId: deepseekTab?.id, action: 'reload' });
             results.reloadActionDispatched = Boolean(reloadRes && reloadRes.success === true);
 
-            await new Promise(r => setTimeout(r, 300));
-            const stateAfterReload = await window.unionBotAPI.browserGetState();
-            const recoveredTab = stateAfterReload.tabs.find(t => t.id === deepseekTab?.id);
+            // Wait for reload & poll recovery state
+            let recoveredTab = null;
+            for (let attempt = 0; attempt < 10; attempt++) {
+              await new Promise(r => setTimeout(r, 200));
+              const stateAfterReload = await window.unionBotAPI.browserGetState();
+              recoveredTab = stateAfterReload.tabs.find(t => t.id === deepseekTab?.id);
+              if (recoveredTab && recoveredTab.crashed === false) {
+                break;
+              }
+            }
             results.deepseekTabRecovered = Boolean(recoveredTab && recoveredTab.crashed === false);
 
             // 7. Manual Share to Room History (P4-010)
@@ -2732,6 +2756,134 @@ function createWindow() {
         process.exit(0);
       } catch (err) {
         console.error('[P5-E2E] Exception:', err);
+        app.quit();
+        process.exit(1);
+      }
+    });
+    return;
+  }
+
+  // 7o. P6-E2E: Full Windows Electron Verification for Phase P6 Native Codex Agent
+  if (process.argv.includes('--p6-e2e')) {
+    mainWindow.webContents.once('did-finish-load', async () => {
+      try {
+        console.log('[P6-E2E] Running Real Windows Electron P6 Verification (Native Codex Agent Integration)...');
+
+        const p6Result = await mainWindow.webContents.executeJavaScript(`
+          (async () => {
+            const results = {};
+
+            // 1. P6-001: Discover local Codex CLI binary and version
+            const discRes = await window.unionBotAPI.codexDiscover();
+            results.codexDiscoverSuccess = Boolean(discRes?.success);
+            results.codexAvailable = Boolean(discRes?.discovery?.available);
+            results.codexVersion = discRes?.discovery?.version;
+            results.codexExecutablePath = discRes?.discovery?.executablePath;
+            results.codexVersionMatches = (discRes?.discovery?.version === '0.162.1');
+
+            // 2. P6-007: Canonical workspace boundary enforcement
+            const validBoundary = await window.unionBotAPI.codexVerifyBoundary('package.json');
+            results.validBoundaryAllowed = Boolean(validBoundary?.success && validBoundary?.resolved);
+
+            const invalidBoundary = await window.unionBotAPI.codexVerifyBoundary('../../Windows/System32/cmd.exe');
+            results.invalidBoundaryDenied = Boolean(
+              invalidBoundary?.success === false &&
+              invalidBoundary?.error?.includes('ERR_PATH_TRAVERSAL')
+            );
+
+            // 3. P6-002, P6-003, P6-004: Execution & Real-Time Event Streaming via Mock Transport
+            await window.unionBotAPI.testSetCodexMock({
+              threadId: 'test-thread-p6-e2e',
+              deltaChunks: ['Hello from ', 'native Codex agent ', 'in Windows Electron!'],
+              finalText: 'Hello from native Codex agent in Windows Electron!'
+            });
+
+            const deltas = [];
+            let turnCompletedPayload = null;
+
+            const unsubDelta = window.unionBotAPI.onCodexDelta((d) => {
+              if (d && d.delta) deltas.push(d.delta);
+            });
+            const unsubTurn = window.unionBotAPI.onCodexTurnCompleted((t) => {
+              turnCompletedPayload = t;
+            });
+
+            const execRes = await window.unionBotAPI.codexExecute({
+              prompt: 'Generate system overview for Union Bot P6 verification'
+            });
+
+            // Cleanup listeners
+            unsubDelta();
+            unsubTurn();
+
+            results.executeSuccess = Boolean(execRes?.success);
+            results.providerIsCodex = (execRes?.result?.provider === 'codex');
+            results.turnCompleted = (execRes?.result?.status === 'completed');
+            results.deltasReceived = Boolean(deltas.length >= 3);
+            results.fullTextMatch = (execRes?.result?.text === 'Hello from native Codex agent in Windows Electron!');
+            results.provenanceVerified = (execRes?.result?.provenance?.originator === 'codex');
+
+            // 4. P6-009: Strict Zero-Cost Enforcement ($0.00 / 0đ)
+            results.costIsZero = (execRes?.result?.costEstimate === 0);
+
+            // 5. P6-006: Cancellation check
+            const cancelRes = await window.unionBotAPI.codexCancel();
+            results.cancelSucceeded = Boolean(cancelRes?.success);
+
+            // Restore transport
+            await window.unionBotAPI.testSetCodexMock(false);
+
+            return results;
+          })()
+        `);
+
+        console.log('[P6-E2E] Results:', JSON.stringify(p6Result, null, 2));
+
+        const requiredChecks = [
+          'codexDiscoverSuccess',
+          'codexAvailable',
+          'codexVersionMatches',
+          'validBoundaryAllowed',
+          'invalidBoundaryDenied',
+          'executeSuccess',
+          'providerIsCodex',
+          'turnCompleted',
+          'deltasReceived',
+          'fullTextMatch',
+          'provenanceVerified',
+          'costIsZero',
+          'cancelSucceeded',
+        ];
+
+        let allPassed = true;
+        for (const check of requiredChecks) {
+          const pass = Boolean(p6Result[check]);
+          console.log(`[P6-E2E] Check ${check}: ${pass}`);
+          if (!pass) allPassed = false;
+        }
+
+        const reportDir = path.resolve(__dirname, '../../../reports/capability-evidence');
+        if (!fs.existsSync(reportDir)) fs.mkdirSync(reportDir, { recursive: true });
+        const evidencePath = path.resolve(reportDir, 'ELECTRON_P6_E2E_EVIDENCE.json');
+        fs.writeFileSync(evidencePath, JSON.stringify({
+          timestamp: new Date().toISOString(),
+          environment: 'Real Windows Electron (Phase P6 Native Codex Agent Integration)',
+          nodeEnv: process.env.NODE_ENV,
+          results: p6Result,
+          allPassed,
+        }, null, 2));
+
+        if (!allPassed) {
+          console.error('[P6-E2E] One or more P6 checks failed.');
+          app.quit();
+          process.exit(1);
+        }
+
+        console.log('[P6-E2E] ALL_P6_E2E_CHECKS_PASSED');
+        app.quit();
+        process.exit(0);
+      } catch (err) {
+        console.error('[P6-E2E] Exception:', err);
         app.quit();
         process.exit(1);
       }
@@ -3986,7 +4138,73 @@ ipcMain.handle('union-bot:export-transcript-bundle', async (event, options = {})
   }
 });
 
+// Phase P6: Native Codex Agent IPC Handlers
+ipcMain.handle('union-bot:codex-discover', async (event) => {
+  if (!checkSenderAuthorized(event)) {
+    return { success: false, error: 'Unauthorized IPC sender origin' };
+  }
+  try {
+    const discovery = await codexService.discover();
+    return { success: true, discovery };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('union-bot:codex-execute', async (event, payload) => {
+  if (!checkSenderAuthorized(event)) {
+    return { success: false, error: 'Unauthorized IPC sender origin' };
+  }
+  try {
+    const { prompt, options } = payload || {};
+    const result = await codexService.executeTurn(prompt, options);
+    return { success: true, result };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('union-bot:codex-cancel', async (event) => {
+  if (!checkSenderAuthorized(event)) {
+    return { success: false, error: 'Unauthorized IPC sender origin' };
+  }
+  try {
+    await codexService.cancelTurn();
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('union-bot:codex-verify-boundary', async (event, targetPath) => {
+  if (!checkSenderAuthorized(event)) {
+    return { success: false, error: 'Unauthorized IPC sender origin' };
+  }
+  try {
+    const resolved = await codexService.verifyWorkspaceBoundary(targetPath);
+    return { success: true, resolved };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
 if (isDedicatedTestHarness) {
+  ipcMain.handle('union-bot:test-set-codex-mock', async (event, options) => {
+    if (!checkSenderAuthorized(event)) {
+      return { success: false, error: 'Unauthorized IPC sender origin' };
+    }
+    try {
+      if (options === false || (options && options.enabled === false)) {
+        codexService.disableMockTransport();
+      } else {
+        await codexService.enableMockTransport(typeof options === 'object' ? options : {});
+      }
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
   ipcMain.handle('union-bot:test-kill-worker', async (event) => {
     if (!checkSenderAuthorized(event)) {
       return { success: false, error: 'Unauthorized IPC sender origin (UB-P2-R01-008)' };
@@ -4319,6 +4537,13 @@ if (isDedicatedTestHarness) {
   });
 
   ipcMain.handle('union-bot:test-trigger-tab-crash', async () => {
+    return {
+      success: false,
+      error: 'ERR_TEST_IPC_DISABLED: Test IPC channels are strictly disabled in production mode (UB-P2-R06-003)',
+    };
+  });
+
+  ipcMain.handle('union-bot:test-set-codex-mock', async () => {
     return {
       success: false,
       error: 'ERR_TEST_IPC_DISABLED: Test IPC channels are strictly disabled in production mode (UB-P2-R06-003)',

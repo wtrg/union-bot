@@ -17,9 +17,15 @@ importers:
 
   apps/desktop:
     dependencies:
+      '@union-bot/agent-codex':
+        specifier: workspace:*
+        version: link:../../packages/agent-codex
       '@union-bot/artifact-store':
         specifier: workspace:*
         version: link:../../packages/artifact-store
+      '@union-bot/browser-manager':
+        specifier: workspace:*
+        version: link:../../packages/browser-manager
       '@union-bot/cost-guard':
         specifier: workspace:*
         version: link:../../packages/cost-guard
@@ -34,8 +40,8 @@ importers:
         version: 3.25.76
     devDependencies:
       electron:
-        specifier: ^34.5.8
-        version: 34.5.8
+        specifier: ^33.4.11
+        version: 33.4.11
 
   apps/workspace-ui:
     dependencies:
@@ -62,7 +68,35 @@ importers:
         specifier: ^5.4.11
         version: 5.4.21(@types/node@26.6.5)
 
+  packages/agent-codex:
+    dependencies:
+      '@union-bot/artifact-store':
+        specifier: workspace:*
+        version: link:../artifact-store
+      '@union-bot/cost-guard':
+        specifier: workspace:*
+        version: link:../cost-guard
+      '@union-bot/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+    devDependencies:
+      '@types/node':
+        specifier: ^26.6.5
+        version: 26.6.5
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+
   packages/artifact-store: {}
+
+  packages/browser-manager:
+    dependencies:
+      '@union-bot/cost-guard':
+        specifier: workspace:*
+        version: link:../cost-guard
+      '@union-bot/protocol':
+        specifier: workspace:*
+        version: link:../protocol
 
   packages/cost-guard: {}
 
@@ -607,11 +641,6 @@ packages:
 
   electron@33.4.11:
     resolution: {integrity: sha512-xmdAs5QWRkInC7TpXGNvzo/7exojubk+72jn1oJL7keNeIlw7xNglf8TGtJtkR4rWC5FJq0oXiIXPS9BcK2Irg==}
-    engines: {node: '>= 12.20.55'}
-    hasBin: true
-
-  electron@34.5.8:
-    resolution: {integrity: sha512-vxLD65mabTzYmEVa9KceMHM0+zO+vqgrhcyNVlmTd0IGV5J7XZ8v/qElm0o4YQ4wPeq7olZkUjZkBQQEdr23/g==}
     engines: {node: '>= 12.20.55'}
     hasBin: true
 
@@ -1249,7 +1278,7 @@ snapshots:
     dependencies:
       '@types/http-cache-semantics': 4.2.0
       '@types/keyv': 3.1.4
-      '@types/node': 20.19.43
+      '@types/node': 26.6.5
       '@types/responselike': 1.0.3
 
   '@types/estree@1.0.9': {}
@@ -1258,7 +1287,7 @@ snapshots:
 
   '@types/keyv@3.1.4':
     dependencies:
-      '@types/node': 20.19.43
+      '@types/node': 26.6.5
 
   '@types/node@20.19.43':
     dependencies:
@@ -1281,11 +1310,11 @@ snapshots:
 
   '@types/responselike@1.0.3':
     dependencies:
-      '@types/node': 20.19.43
+      '@types/node': 26.6.5
 
   '@types/yauzl@2.10.3':
     dependencies:
-      '@types/node': 20.19.43
+      '@types/node': 26.6.5
     optional: true
 
   '@vitejs/plugin-react@4.7.0(vite@5.4.21(@types/node@26.6.5))':
@@ -1367,14 +1396,6 @@ snapshots:
   electron-to-chromium@1.5.459: {}
 
   electron@33.4.11:
-    dependencies:
-      '@electron/get': 2.0.3
-      '@types/node': 20.19.43
-      extract-zip: 2.0.1
-    transitivePeerDependencies:
-      - supports-color
-
-  electron@34.5.8:
     dependencies:
       '@electron/get': 2.0.3
       '@types/node': 20.19.43

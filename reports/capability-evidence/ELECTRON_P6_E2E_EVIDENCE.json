@@ -1,0 +1,23 @@
+{
+  "timestamp": "2026-10-19T18:05:13.489Z",
+  "environment": "Real Windows Electron (Phase P6 Native Codex Agent Integration)",
+  "nodeEnv": "test",
+  "results": {
+    "codexDiscoverSuccess": true,
+    "codexAvailable": true,
+    "codexVersion": "0.162.1",
+    "codexExecutablePath": "C:\\Users\\Lenovo\\AppData\\Roaming\\npm\\codex.cmd",
+    "codexVersionMatches": true,
+    "validBoundaryAllowed": true,
+    "invalidBoundaryDenied": true,
+    "executeSuccess": true,
+    "providerIsCodex": true,
+    "turnCompleted": true,
+    "deltasReceived": true,
+    "fullTextMatch": true,
+    "provenanceVerified": true,
+    "costIsZero": true,
+    "cancelSucceeded": true
+  },
+  "allPassed": true
+}

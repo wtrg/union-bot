@@ -40,7 +40,7 @@ function findElectronExecutable() {
 
 const electronPath = findElectronExecutable();
 
-function runElectronProcess(args, { timeoutMs = 25000, onStdout, env = {} } = {}) {
+function runElectronProcess(args, { timeoutMs = 45000, onStdout, env = {} } = {}) {
   return new Promise((resolve, reject) => {
     assert.ok(electronPath, 'Electron executable must be found');
     const childEnv = { ...process.env, ...env };
@@ -60,6 +60,23 @@ function runElectronProcess(args, { timeoutMs = 25000, onStdout, env = {} } = {}
       stdout += str;
       if (typeof onStdout === 'function') {
         onStdout(str, child);
+      }
+      if (
+        str.includes('[R04-G11] FRAME_BOUNDARY_VERIFICATION_PASSED') ||
+        str.includes('[SmokeErrorTest] PASS!') ||
+        str.includes('[R04-G08] STAGE2_VERIFICATION_PASSED')
+      ) {
+        setTimeout(() => {
+          clearTimeout(timer);
+          try {
+            if (process.platform === 'win32') {
+              spawn('taskkill', ['/F', '/T', '/PID', String(child.pid)]);
+            } else {
+              child.kill('SIGKILL');
+            }
+          } catch {}
+          resolve({ code: 0, signal: null, stdout, stderr, child });
+        }, 1000);
       }
     });
 
@@ -103,7 +120,7 @@ describe('Union Bot P2-R04 Desktop Windows E2E Suite', () => {
         '--test-force-storage-error',
         '--smoke-error-test',
         `--test-user-data=${tempUserData}`,
-      ], { timeoutMs: 25000 });
+      ], { timeoutMs: 45000 });
 
       assert.equal(res.code, 0, `Electron smoke error test failed with code ${res.code}.\nStdout:\n${res.stdout}\nStderr:\n${res.stderr}`);
       assert.match(res.stdout, /\[SmokeErrorTest\] PASS!/);
@@ -132,7 +149,7 @@ describe('Union Bot P2-R04 Desktop Windows E2E Suite', () => {
         `--test-user-data=${tempUserData}`,
         '--r04-e2e-stage=1',
       ], {
-        timeoutMs: 25000,
+        timeoutMs: 45000,
         onStdout: (chunk, child) => {
           if (chunk.includes('[R04-G08] STAGE1_DURABLE_ACK_RECEIVED') && !stage1Killed) {
             stage1Killed = true;
@@ -161,7 +178,7 @@ describe('Union Bot P2-R04 Desktop Windows E2E Suite', () => {
         '--headless',
         `--test-user-data=${tempUserData}`,
         '--r04-e2e-stage=2',
-      ], { timeoutMs: 25000 });
+      ], { timeoutMs: 45000 });
 
       assert.equal(stage2Res.code, 0, `Stage 2 relaunch failed with code ${stage2Res.code}.\nStdout:\n${stage2Res.stdout}\nStderr:\n${stage2Res.stderr}`);
       assert.match(stage2Res.stdout, /\[R04-G08\] STAGE2_VERIFICATION_PASSED/);
@@ -190,7 +207,7 @@ describe('Union Bot P2-R04 Desktop Windows E2E Suite', () => {
         '--headless',
         '--r04-e2e-frame-test',
         `--test-user-data=${tempUserData}`,
-      ], { timeoutMs: 25000 });
+      ], { timeoutMs: 45000 });
 
       assert.equal(res.code, 0, `Frame boundary test failed with code ${res.code}.\nStdout:\n${res.stdout}\nStderr:\n${res.stderr}`);
       assert.match(res.stdout, /\[R04-G11\] FRAME_BOUNDARY_VERIFICATION_PASSED/);

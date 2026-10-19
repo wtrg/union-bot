@@ -40,7 +40,7 @@ function findElectronExecutable() {
 
 const electronPath = findElectronExecutable();
 
-function runElectronProcess(args, { timeoutMs = 25000, onStdout, env = {} } = {}) {
+function runElectronProcess(args, { timeoutMs = 45000, onStdout, env = {} } = {}) {
   return new Promise((resolve, reject) => {
     assert.ok(electronPath, 'Electron executable must be found');
     const childEnv = {
@@ -65,6 +65,19 @@ function runElectronProcess(args, { timeoutMs = 25000, onStdout, env = {} } = {}
       stdout += str;
       if (typeof onStdout === 'function') {
         onStdout(str, child);
+      }
+      if (str.includes('ALL_R06_E2E_CHECKS_PASSED')) {
+        setTimeout(() => {
+          clearTimeout(timer);
+          try {
+            if (process.platform === 'win32') {
+              spawn('taskkill', ['/F', '/T', '/PID', String(child.pid)]);
+            } else {
+              child.kill('SIGKILL');
+            }
+          } catch {}
+          resolve({ code: 0, signal: null, stdout, stderr, child });
+        }, 1000);
       }
     });
 

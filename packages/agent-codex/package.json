@@ -1,0 +1,29 @@
+{
+  "name": "@union-bot/agent-codex",
+  "version": "1.0.0",
+  "description": "Native Codex Agent Adapter for Union Bot (Phase P6)",
+  "type": "module",
+  "main": "./src/agent-codex.cjs",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./src/index.ts",
+      "require": "./src/agent-codex.cjs",
+      "default": "./src/agent-codex.cjs"
+    }
+  },
+  "scripts": {
+    "test": "node --experimental-strip-types --test tests/codex-agent.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@union-bot/protocol": "workspace:*",
+    "@union-bot/cost-guard": "workspace:*",
+    "@union-bot/artifact-store": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "typescript": "^5.6.3"
+  }
+}

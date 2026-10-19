@@ -9,6 +9,7 @@
     "test": "node --test tests/desktop.test.js"
   },
   "dependencies": {
+    "@union-bot/agent-codex": "workspace:*",
     "@union-bot/artifact-store": "workspace:*",
     "@union-bot/browser-manager": "workspace:*",
     "@union-bot/cost-guard": "workspace:*",
