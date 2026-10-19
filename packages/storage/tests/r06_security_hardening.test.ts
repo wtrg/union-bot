@@ -64,9 +64,11 @@ describe('Union Bot Phase P2 Gate R06: Mandatory Hardening Vectors (R06-B01 .. R
       const digest2 = computeCanonicalDigest(extractActionSemanticInput(actionInput2), 1);
       const validTokenId = 'tok_r06_b01_valid';
 
+      const semanticInput2 = extractActionSemanticInput(actionInput2);
       await storageClient.createApprovalToken({
         tokenId: validTokenId,
         actionType: 'write_file',
+        payload: semanticInput2,
         payloadDigest: digest2,
         origin: 'desktop_ui',
         roomId: 'orchestration',

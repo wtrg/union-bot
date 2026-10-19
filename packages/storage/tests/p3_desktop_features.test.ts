@@ -153,10 +153,13 @@ describe('Union Bot Phase P3: Desktop Workspace UI & Storage Features', () => {
     assert.equal(updatedToken.rejection_reason, 'Unsafe path requested');
 
     // 5. Test another token: Approval path
+    const approveActionObj = { action: 'export_data', target: 'workspace' };
+    const approveActionDigest = computeCanonicalDigest(approveActionObj);
     const approveTokenData = {
       tokenId: `tok_p3_app_${Date.now()}`,
       actionType: 'export_data',
-      payloadDigest,
+      payload: approveActionObj,
+      payloadDigest: approveActionDigest,
       origin: 'Renderer UI',
       workspaceId: 'ws-p3',
       roomId: 'p3-testing',
@@ -462,5 +465,69 @@ describe('Union Bot Phase P3: Desktop Workspace UI & Storage Features', () => {
       migDb.close();
     }
   });
+
+  test('UB-P3-R04-G01: ActionIntent payload is strictly required for token creation and approval (fail-closed)', async () => {
+    // 1. StorageServiceClient: Creation without payload is rejected
+    await assert.rejects(
+      async () => {
+        await storage.createApprovalToken({
+          tokenId: `tok_missing_payload_${Date.now()}`,
+          actionType: 'delete_system_file',
+          payloadDigest: computeCanonicalDigest({ target: 'file' }),
+          origin: 'Test Runner',
+        });
+      },
+      (err: any) => {
+        assert.ok(err.message.includes('ERR_PAYLOAD_MISMATCH'), `Expected ERR_PAYLOAD_MISMATCH on creation, got: ${err.message}`);
+        return true;
+      }
+    );
+
+    // 2. StorageServiceClient: Creation with null payload is rejected
+    await assert.rejects(
+      async () => {
+        await storage.createApprovalToken({
+          tokenId: `tok_null_payload_${Date.now()}`,
+          actionType: 'delete_system_file',
+          payload: null,
+          payloadDigest: computeCanonicalDigest({ target: 'file' }),
+          origin: 'Test Runner',
+        });
+      },
+      (err: any) => {
+        assert.ok(err.message.includes('ERR_PAYLOAD_MISMATCH'), `Expected ERR_PAYLOAD_MISMATCH on null payload, got: ${err.message}`);
+        return true;
+      }
+    );
+
+    // 3. Approval rejection if stored payload_json is missing/null in DB
+    const missingPayloadTokenId = `tok_missing_in_db_${Date.now()}`;
+    const directDb = new DatabaseSync(dbPath);
+    try {
+      const dummyDigest = computeCanonicalDigest({ target: 'unreadable' });
+      directDb.prepare(`
+        INSERT INTO approvals (token_id, action_type, payload_digest, origin, workspace_id, room_id, status, payload_json, created_at, expires_at)
+        VALUES (?, 'format_disk', ?, 'DirectSql', 'ws-test', 'room-test', 'PENDING', NULL, ?, ?)
+      `).run(missingPayloadTokenId, dummyDigest, new Date().toISOString(), new Date(Date.now() + 60000).toISOString());
+    } finally {
+      directDb.close();
+    }
+
+    // Attempting to approve must fail-closed with ERR_PAYLOAD_MISMATCH
+    await assert.rejects(
+      async () => {
+        await storage.approveToken(missingPayloadTokenId, {
+          id: 'operator-1',
+          role: 'OPERATOR',
+          isTrustedContext: true,
+        });
+      },
+      (err: any) => {
+        assert.ok(err.message.includes('ERR_PAYLOAD_MISMATCH'), `Expected ERR_PAYLOAD_MISMATCH on approve, got: ${err.message}`);
+        return true;
+      }
+    );
+  });
 });
+
 

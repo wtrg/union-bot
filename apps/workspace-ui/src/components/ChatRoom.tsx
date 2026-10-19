@@ -37,6 +37,7 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ roomName, envelopes, onSendM
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [pendingAttachments, setPendingAttachments] = useState<AttachmentInfo[]>([]);
+  const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -52,6 +53,7 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ roomName, envelopes, onSendM
       if (result !== false) {
         setInputText('');
         setPendingAttachments([]);
+        setAttachmentError(null);
       }
     } catch (err) {
       console.error('[ChatRoom] Failed to send message:', err);
@@ -68,11 +70,17 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ roomName, envelopes, onSendM
   };
 
   const handleAttachClick = async () => {
+    setAttachmentError(null);
     if (window.unionBotAPI && typeof window.unionBotAPI.openFileDialog === 'function') {
       try {
         const res = await window.unionBotAPI.openFileDialog();
         if (res && res.success && res.attachment) {
           setPendingAttachments((prev) => [...prev, res.attachment!]);
+          return;
+        } else if (res && !res.success && !res.canceled) {
+          setAttachmentError(`Failed to attach file: ${res.error || 'Unknown error'}. Draft preserved.`);
+          return;
+        } else if (res && res.canceled) {
           return;
         }
       } catch (err) {
@@ -88,6 +96,7 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ roomName, envelopes, onSendM
   const handleFileInputChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
+    setAttachmentError(null);
 
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
@@ -103,23 +112,19 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ roomName, envelopes, onSendM
             });
             if (saveRes && saveRes.success && saveRes.attachment) {
               setPendingAttachments((prev) => [...prev, saveRes.attachment!]);
+              setAttachmentError(null);
               return;
             }
-          } catch (err) {
+            // UB-P3-R04-G02: Never create fake SHA (local_...) when CAS save fails. Keep draft and report error.
+            setAttachmentError(`Failed to save attachment '${file.name}' to CAS store: ${saveRes?.error || 'Save failed'}. Draft preserved.`);
+            return;
+          } catch (err: any) {
             console.error('[ChatRoom] saveAttachment error:', err);
+            setAttachmentError(`Failed to save attachment '${file.name}' to CAS store: ${err?.message || err}. Draft preserved.`);
+            return;
           }
         }
-        // Fallback local memory representation
-        setPendingAttachments((prev) => [
-          ...prev,
-          {
-            filename: file.name,
-            mimeType: file.type || 'application/octet-stream',
-            sizeBytes: file.size,
-            sha256: `local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-            dataUrl: file.type.startsWith('image/') ? base64Data : undefined,
-          },
-        ]);
+        setAttachmentError(`CAS storage API is unavailable. Cannot attach '${file.name}'. Draft preserved.`);
       };
       reader.readAsDataURL(file);
     }
@@ -141,6 +146,7 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ roomName, envelopes, onSendM
     setIsDragging(false);
     const files = e.dataTransfer.files;
     if (!files || files.length === 0) return;
+    setAttachmentError(null);
 
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
@@ -156,22 +162,19 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ roomName, envelopes, onSendM
             });
             if (saveRes && saveRes.success && saveRes.attachment) {
               setPendingAttachments((prev) => [...prev, saveRes.attachment!]);
+              setAttachmentError(null);
               return;
             }
-          } catch (err) {
+            // UB-P3-R04-G02: Never create fake SHA (local_...) when CAS save fails. Keep draft and report error.
+            setAttachmentError(`Failed to save dropped attachment '${file.name}' to CAS store: ${saveRes?.error || 'Save failed'}. Draft preserved.`);
+            return;
+          } catch (err: any) {
             console.error('[ChatRoom] Drop saveAttachment error:', err);
+            setAttachmentError(`Failed to save dropped attachment '${file.name}' to CAS store: ${err?.message || err}. Draft preserved.`);
+            return;
           }
         }
-        setPendingAttachments((prev) => [
-          ...prev,
-          {
-            filename: file.name,
-            mimeType: file.type || 'application/octet-stream',
-            sizeBytes: file.size,
-            sha256: `local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-            dataUrl: file.type.startsWith('image/') ? base64Data : undefined,
-          },
-        ]);
+        setAttachmentError(`CAS storage API is unavailable. Cannot attach '${file.name}'. Draft preserved.`);
       };
       reader.readAsDataURL(file);
     }
@@ -444,6 +447,7 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ roomName, envelopes, onSendM
           {pendingAttachments.map((att, i) => (
             <div
               key={i}
+              data-testid="pending-attachment-chip"
               style={{
                 display: 'flex',
                 alignItems: 'center',
@@ -479,6 +483,38 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ roomName, envelopes, onSendM
         </div>
       )}
 
+      {/* Attachment Error Banner (UB-P3-R04-G02) */}
+      {attachmentError && (
+        <div
+          data-testid="chat-attachment-error"
+          style={{
+            padding: '8px 14px',
+            background: 'rgba(239, 68, 68, 0.1)',
+            borderTop: '1px solid var(--accent-red)',
+            color: 'var(--accent-red)',
+            fontSize: 12,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+          }}
+        >
+          <span>⚠️ {attachmentError}</span>
+          <button
+            type="button"
+            onClick={() => setAttachmentError(null)}
+            style={{
+              background: 'transparent',
+              border: 'none',
+              color: 'var(--accent-red)',
+              cursor: 'pointer',
+              fontWeight: 700,
+            }}
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
       {/* Multi-line Composer with Attachment Button (P3-004) */}
       <form
         className="chat-input-bar"
@@ -495,6 +531,7 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ roomName, envelopes, onSendM
         <input
           type="file"
           ref={fileInputRef}
+          data-testid="chat-file-input"
           onChange={handleFileInputChange}
           multiple
           accept=".png,.jpg,.jpeg,.gif,.webp,.pdf,.txt,.json,.md"

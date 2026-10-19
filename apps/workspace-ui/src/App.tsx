@@ -184,6 +184,26 @@ export const App: React.FC = () => {
     }
   }, [selectedProjectId]);
 
+  // Support programmatic room selection / refresh for UI and test harness
+  useEffect(() => {
+    const handleSelectRoomEvent = (e: any) => {
+      const targetRoomId = e?.detail?.roomId || e?.detail;
+      if (typeof targetRoomId === 'string' && targetRoomId) {
+        if (window.unionBotAPI) {
+          loadRoomsForProject(selectedProjectId).then(() => {
+            setActiveRoomId(targetRoomId);
+            setActiveView('chat');
+          });
+        } else {
+          setActiveRoomId(targetRoomId);
+          setActiveView('chat');
+        }
+      }
+    };
+    window.addEventListener('union-bot:select-room', handleSelectRoomEvent);
+    return () => window.removeEventListener('union-bot:select-room', handleSelectRoomEvent);
+  }, [selectedProjectId]);
+
   // 2. Load Room History when active room changes
   useEffect(() => {
     if (window.unionBotAPI && activeRoomId) {

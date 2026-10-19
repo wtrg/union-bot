@@ -823,6 +823,11 @@ class StorageServiceClient extends EventEmitter {
             let payloadObj = token.payload;
             let payloadJson = token.payloadJson || token.payload_json || null;
 
+            // UB-P3-R04-G01: Missing or unreadable ActionIntent payload is strictly rejected
+            if ((payloadObj === undefined || payloadObj === null) && (!payloadJson || typeof payloadJson !== 'string' || payloadJson.trim() === '')) {
+              return Promise.reject(new Error('ERR_PAYLOAD_MISMATCH: ActionIntent payload or payload_json is required to create an approval token (UB-P3-R04-G01)'));
+            }
+
             // P3-R04-F01: Backend rejects token creation when payload does not match supplied digest
             if (payloadObj !== undefined && payloadObj !== null) {
               const computedDigest = computeCanonicalDigest(payloadObj, token.canonicalizationVersion || 1);
@@ -844,6 +849,7 @@ class StorageServiceClient extends EventEmitter {
                 payloadObj = parsed;
               } catch (err) {
                 if (err.message && err.message.includes('ERR_PAYLOAD_MISMATCH')) return Promise.reject(err);
+                return Promise.reject(new Error(`ERR_PAYLOAD_MISMATCH: Failed to parse provided payload_json: ${err.message} (UB-P3-R04-G01)`));
               }
             }
 
@@ -900,18 +906,20 @@ class StorageServiceClient extends EventEmitter {
             if (!row) {
               return Promise.reject(new Error(`ERR_UNTRUSTED_ACTION: Approval token not found: ${tokenId}`));
             }
-            // P3-R04-F02: Recompute canonical digest from stored payload_json and reject if mismatched
-            if (row.payload_json) {
-              try {
-                const parsed = JSON.parse(row.payload_json);
-                const computed = computeCanonicalDigest(parsed, row.canonicalization_version || 1);
-                if (row.payload_digest && computed !== row.payload_digest) {
-                  return Promise.reject(new Error(`ERR_PAYLOAD_MISMATCH: Stored payload_json does not match stored payload_digest for token ${tokenId} (P3-R04-F02)`));
-                }
-              } catch (parseErr) {
-                if (parseErr.message && parseErr.message.includes('ERR_PAYLOAD_MISMATCH')) return Promise.reject(parseErr);
-                return Promise.reject(new Error(`ERR_PAYLOAD_MISMATCH: Failed to parse stored payload_json: ${parseErr.message}`));
+            // UB-P3-R04-G01: ActionIntent payload is strictly required for approval. Missing or unreadable payload is rejected fail-closed.
+            if (!row.payload_json || typeof row.payload_json !== 'string' || row.payload_json.trim() === '') {
+              return Promise.reject(new Error(`ERR_PAYLOAD_MISMATCH: Stored approval token ${tokenId} lacks payload_json. ActionIntent payload is strictly required for approval (UB-P3-R04-G01)`));
+            }
+
+            try {
+              const parsed = JSON.parse(row.payload_json);
+              const computed = computeCanonicalDigest(parsed, row.canonicalization_version || 1);
+              if (!row.payload_digest || computed !== row.payload_digest) {
+                return Promise.reject(new Error(`ERR_PAYLOAD_MISMATCH: Stored payload_json does not match stored payload_digest for token ${tokenId} (P3-R04-F02)`));
               }
+            } catch (parseErr) {
+              if (parseErr.message && parseErr.message.includes('ERR_PAYLOAD_MISMATCH')) return Promise.reject(parseErr);
+              return Promise.reject(new Error(`ERR_PAYLOAD_MISMATCH: Failed to parse stored payload_json: ${parseErr.message} (UB-P3-R04-G01)`));
             }
             if (new Date(row.expires_at).getTime() < Date.now()) {
               this.nativeDb.prepare("UPDATE approvals SET status = 'EXPIRED' WHERE token_id = ?").run(tokenId);

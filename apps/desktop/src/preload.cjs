@@ -150,6 +150,12 @@ if (process.env.UNION_BOT_E2E_HARNESS === '1' && process.env.NODE_ENV === 'test'
   api.testTamperApprovalPayload = async (payload) => {
     return ipcRenderer.invoke('union-bot:test-tamper-approval-payload', payload);
   };
+  api.testQueueAttachmentPath = async (filePath) => {
+    return ipcRenderer.invoke('union-bot:test-queue-attachment-path', filePath);
+  };
+  api.testGetExportFiles = async () => {
+    return ipcRenderer.invoke('union-bot:test-get-export-files');
+  };
 }
 
 contextBridge.exposeInMainWorld('unionBotAPI', api);

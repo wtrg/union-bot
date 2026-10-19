@@ -1,8 +1,18 @@
 {
-  "timestamp": "2026-10-19T11:19:32.013Z",
+  "timestamp": "2026-10-19T12:00:13.761Z",
   "environment": "Real Windows Electron Chromium E2E (Phase P3 Gate R04)",
   "nodeEnv": "test",
   "regressionVectors": {
+    "UB-P3-R04-G01": {
+      "creationMissingPayloadBlocked": true
+    },
+    "UB-P3-R04-G02": {
+      "attachmentErrorBannerShown": true,
+      "draftPreservedOnError": true,
+      "bothChipsRendered": true,
+      "casFilesWritten": true,
+      "exportFilesOnDiskValid": true
+    },
     "P3-R04-F01": {
       "creationMismatchBlocked": true
     },
@@ -21,10 +31,17 @@
   "results": {
     "roomCreated": true,
     "roomInList": true,
+    "g02DraftPreservedOnError": true,
+    "g02AttachmentErrorBannerShown": true,
+    "g02PngAttachedViaButton": true,
+    "g02PdfAttachedViaButton": true,
+    "g02BothChipsRendered": true,
     "pngSaved": true,
     "pdfSaved": true,
     "envelopeDispatched": true,
     "historyFound": true,
+    "casFilesWritten": true,
+    "g01CreationMissingPayloadBlocked": true,
     "f01CreationMismatchBlocked": true,
     "tokenCreated": true,
     "tokenInList": true,
@@ -48,6 +65,7 @@
     "hasTasksRendered": true,
     "f05ExportTriggeredViaDom": true,
     "exportSucceeded": true,
+    "exportFilesOnDiskValid": true,
     "pngSha256": "6b7fa434f92a8b80aab02d9bf1a12e49ffcae424e4013a1c4f68b67e3d2bbcd0",
     "pdfSha256": "9ce0d7fd8b15d3de88f1acfb49e0b61540a6be10a62f519c243d9cd4fd9db4e1"
   },

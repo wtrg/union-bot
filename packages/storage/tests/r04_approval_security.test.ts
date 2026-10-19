@@ -150,6 +150,7 @@ describe('Union Bot Phase P2 Gate R04: Approval Security Vectors (G01, G02, G03,
       const token = await client.createApprovalToken({
         tokenId: 'tok_worker_g01',
         actionType: 'write_file',
+        payload: actionA,
         payloadDigest: digestA,
         origin: 'ui:admin',
         workspaceId: 'ws_prod',
@@ -245,6 +246,7 @@ describe('Union Bot Phase P2 Gate R04: Approval Security Vectors (G01, G02, G03,
     const tokWorker = await client.createApprovalToken({
       tokenId: 'tok_g02',
       actionType: 'deploy',
+      payload: actionA,
       payloadDigest: computeCanonicalDigest(actionA, 1),
       origin: 'ui',
     });
@@ -314,6 +316,7 @@ describe('Union Bot Phase P2 Gate R04: Approval Security Vectors (G01, G02, G03,
     const tokWorker = await client.createApprovalToken({
       tokenId: 'tok_g03_w',
       actionType: 'exec',
+      payload: { cmd: 'ls' },
       payloadDigest: computeCanonicalDigest({ cmd: 'ls' }, 1),
       origin: 'ui',
     });
@@ -412,6 +415,7 @@ describe('Union Bot Phase P2 Gate R04: Approval Security Vectors (G01, G02, G03,
       const token = await storageClient.createApprovalToken({
         tokenId: 'tok_desktop_g12',
         actionType: 'exec_payment',
+        payload: actionPayload,
         payloadDigest: actionDigest,
         origin: 'renderer',
       });

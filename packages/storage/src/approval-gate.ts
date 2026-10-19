@@ -66,6 +66,12 @@ export class ApprovalGateManager {
    * Generates a new Approval Token bound to canonical payload digest in status PENDING.
    */
   public createToken(params: CreateTokenParams): ApprovalToken {
+    if (params.payload === undefined || params.payload === null) {
+      throw new UnionBotError({
+        code: 'ERR_PAYLOAD_MISMATCH',
+        message: 'ActionIntent payload is required to create an approval token. Missing or null payload is rejected (UB-P3-R04-G01).',
+      });
+    }
     const tokenId = params.tokenId || `appr_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
     const payloadDigest = ApprovalGateManager.computePayloadDigest(params.payload);
     if (params.payloadDigest && params.payloadDigest !== payloadDigest) {
@@ -180,26 +186,32 @@ export class ApprovalGateManager {
       });
     }
 
-    // P3-R04-F02: Re-compute computeCanonicalDigest(payload) from stored payload_json during approveToken
-    if (row.payload_json) {
-      try {
-        const parsed = JSON.parse(row.payload_json);
-        const canonVersion = row.canonicalization_version || CANONICALIZATION_VERSION;
-        const recomputedDigest = ApprovalGateManager.computePayloadDigest(parsed, canonVersion);
-        if (row.payload_digest && recomputedDigest !== row.payload_digest) {
-          throw new UnionBotError({
-            code: 'ERR_PAYLOAD_MISMATCH',
-            message: `Stored payload_json does not match stored payload_digest for token ${tokenId}. Tampered database record detected (P3-R04-F02).`,
-            details: { tokenId, storedDigest: row.payload_digest, recomputedDigest },
-          });
-        }
-      } catch (err: any) {
-        if (err instanceof UnionBotError) throw err;
+    // UB-P3-R04-G01: ActionIntent payload is strictly required for approval. Missing or unreadable payload is rejected fail-closed.
+    if (!row.payload_json || typeof row.payload_json !== 'string' || row.payload_json.trim() === '') {
+      throw new UnionBotError({
+        code: 'ERR_PAYLOAD_MISMATCH',
+        message: `Approval token ${tokenId} has missing or empty payload_json. ActionIntent payload is strictly required for approval (UB-P3-R04-G01).`,
+        details: { tokenId },
+      });
+    }
+
+    try {
+      const parsed = JSON.parse(row.payload_json);
+      const canonVersion = row.canonicalization_version || CANONICALIZATION_VERSION;
+      const recomputedDigest = ApprovalGateManager.computePayloadDigest(parsed, canonVersion);
+      if (!row.payload_digest || recomputedDigest !== row.payload_digest) {
         throw new UnionBotError({
           code: 'ERR_PAYLOAD_MISMATCH',
-          message: `Failed to verify stored payload_json for token ${tokenId}: ${err.message}`,
+          message: `Stored payload_json does not match stored payload_digest for token ${tokenId}. Tampered database record detected (P3-R04-F02).`,
+          details: { tokenId, storedDigest: row.payload_digest, recomputedDigest },
         });
       }
+    } catch (err: any) {
+      if (err instanceof UnionBotError) throw err;
+      throw new UnionBotError({
+        code: 'ERR_PAYLOAD_MISMATCH',
+        message: `Failed to verify stored payload_json for token ${tokenId}: ${err.message}`,
+      });
     }
 
     const expectedDigest = decisionContext?.expectedDigest as string | undefined;

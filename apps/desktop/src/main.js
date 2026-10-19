@@ -43,6 +43,15 @@ const uiDistPath = path.resolve(__dirname, '../../workspace-ui/dist/index.html')
 const allowedUiFileUrl = pathToFileURL(uiDistPath).href;
 const costGuard = new CostGuard();
 
+// UB-P2-R06-003 / R07-A03: Test mutation channels strictly isolated.
+const isPackagedApp = app.isPackaged || process.env.NODE_ENV === 'production';
+const isDedicatedTestHarness =
+  !isPackagedApp &&
+  process.env.NODE_ENV === 'test' &&
+  process.env.UNION_BOT_E2E_HARNESS === '1';
+
+const testQueuedFileDialogPaths = [];
+
 const userDataPath = app.getPath('userData');
 const dbFilePath = path.join(userDataPath, 'union_bot.db');
 const storage = new StorageServiceClient(dbFilePath);
@@ -69,9 +78,23 @@ function createWindow() {
   if (!fs.existsSync(localCasDir)) {
     fs.mkdirSync(localCasDir, { recursive: true });
   }
+  const localExportsDir = path.join(userDataDir, 'exports');
+  if (!fs.existsSync(localExportsDir)) {
+    fs.mkdirSync(localExportsDir, { recursive: true });
+  }
 
   // 2. Install CostGuard on defaultSession
   installElectronCostGuardInterceptor(session.defaultSession, costGuard);
+
+  // UB-P3-R04-G02: Capture browser downloads from PreferencesModal and save directly to exports folder
+  session.defaultSession.on('will-download', (event, item, webContents) => {
+    const exportsDir = path.resolve(app.getPath('userData'), 'exports');
+    if (!fs.existsSync(exportsDir)) {
+      fs.mkdirSync(exportsDir, { recursive: true });
+    }
+    const savePath = path.resolve(exportsDir, item.getFilename());
+    item.setSavePath(savePath);
+  });
 
   // 3. Create Browser Window
   mainWindow = new BrowserWindow({
@@ -450,6 +473,7 @@ function createWindow() {
             const tokenCreate = await window.unionBotAPI.createApprovalToken({
               tokenId: 'tok_h05_kill',
               actionType: 'write_file',
+              payload: actionInput,
               payloadDigest: digest,
               origin: 'desktop_ui',
               roomId: 'orchestration',
@@ -623,6 +647,7 @@ function createWindow() {
             await window.unionBotAPI.createApprovalToken({
               tokenId: tokenIdA,
               actionType: 'fake_local_file_writer',
+              payload: actionInputA,
               payloadDigest: previewDigest,
               origin: 'desktop_ui',
               roomId: 'orchestration',
@@ -688,6 +713,7 @@ function createWindow() {
             await window.unionBotAPI.createApprovalToken({
               tokenId: tokenIdB,
               actionType: 'fake_local_file_writer',
+              payload: actionInputB,
               payloadDigest: digestB,
               origin: 'desktop_ui',
               roomId: 'orchestration',
@@ -896,11 +922,14 @@ function createWindow() {
         const r06Result = await mainWindow.webContents.executeJavaScript(`
           (async () => {
             // 1. Vector R06-B03: approveToken requires confirmedByUser: true
+            const payloadB03 = { tool: 'write_file', estimatedCost: 0, path: 'b03.txt', content: 'b03' };
+            const { digest: digestB03 } = await window.unionBotAPI.computeActionDigest(payloadB03);
             const tokenB03 = 'tok_r06_b03';
             await window.unionBotAPI.createApprovalToken({
               tokenId: tokenB03,
               actionType: 'write_file',
-              payloadDigest: 'dummy_digest_b03',
+              payload: payloadB03,
+              payloadDigest: digestB03,
               origin: 'desktop_ui',
               roomId: 'orchestration',
               workspaceId: 'ws_r06',
@@ -929,6 +958,7 @@ function createWindow() {
             await window.unionBotAPI.createApprovalToken({
               tokenId: validTokenId,
               actionType: 'write_file',
+              payload: actionInput2,
               payloadDigest: digest2,
               origin: 'desktop_ui',
               roomId: 'orchestration',
@@ -1067,6 +1097,7 @@ function createWindow() {
             await window.unionBotAPI.createApprovalToken({
               tokenId: tokenA01,
               actionType: 'write_file',
+              payload: actionInput,
               payloadDigest: actionDigest,
               origin: 'desktop_ui',
               roomId: 'orchestration',
@@ -1313,9 +1344,20 @@ function createWindow() {
       try {
         console.log('[P3-E2E] Running Real Windows Electron P3 Verification (R04 Form Interaction & Security Vectors)...');
 
+        const userDataDir = app.getPath('userData');
+        const fixturesDir = path.resolve(userDataDir, 'test-fixtures');
+        if (!fs.existsSync(fixturesDir)) {
+          fs.mkdirSync(fixturesDir, { recursive: true });
+        }
+        const pngFixturePath = path.resolve(fixturesDir, 'architecture_diagram.png');
+        const pdfFixturePath = path.resolve(fixturesDir, 'specifications_doc.pdf');
+        const fixturePngBytes = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64');
+        const fixturePdfText = '%PDF-1.4\n1 0 obj\n<< /Title (P3 Specifications) >>\nendobj\ntrailer\n<< /Root 1 0 R >>\n%%EOF';
+        fs.writeFileSync(pngFixturePath, fixturePngBytes);
+        fs.writeFileSync(pdfFixturePath, fixturePdfText, 'utf8');
+
         const p3Result = await mainWindow.webContents.executeJavaScript(`
           (async () => {
-            // Helper functions to dispatch React input and textarea events
             const setNativeInputValue = (el, val) => {
               const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
               setter.call(el, val);
@@ -1340,47 +1382,109 @@ function createWindow() {
             const rooms = await window.unionBotAPI.getRooms();
             const roomInList = Array.isArray(rooms) && rooms.some(r => r.id === 'gate-p3-room');
 
-            // 3. Save PNG and PDF attachments into local CAS store (P3-004, P3-005, P3-C03)
-            const fakePngData = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
-            const savePng = await window.unionBotAPI.saveAttachment({
-              filename: 'architecture_diagram.png',
-              mimeType: 'image/png',
-              dataBase64: fakePngData,
-            });
-            const pngSaved = savePng && savePng.success && Boolean(savePng.attachment && savePng.attachment.sha256);
+            // 3. Switch active room in UI to gate-p3-room and navigate to Chat Room view
+            window.dispatchEvent(new CustomEvent('union-bot:select-room', { detail: 'gate-p3-room' }));
+            await new Promise(r => setTimeout(r, 400));
 
-            const fakePdfText = '%PDF-1.4\\n1 0 obj\\n<< /Title (P3 Specifications) >>\\nendobj\\ntrailer\\n<< /Root 1 0 R >>\\n%%EOF';
-            const savePdf = await window.unionBotAPI.saveAttachment({
-              filename: 'specifications_doc.pdf',
-              mimeType: 'application/pdf',
-              textContent: fakePdfText,
-            });
-            const pdfSaved = savePdf && savePdf.success && Boolean(savePdf.attachment && savePdf.attachment.sha256);
+            const chatNavBtn = document.querySelector('[data-testid="nav-chat-btn"]') ||
+              Array.from(document.querySelectorAll('button')).find(b => b.innerText.includes('Collaboration Rooms'));
+            if (chatNavBtn) chatNavBtn.click();
+            await new Promise(r => setTimeout(r, 400));
 
-            // 4. Send multi-line message with attached files to the newly created room (P3-004)
-            const envelopeId = 'env_p3_e2e_' + Date.now();
-            const envelope = {
-              id: envelopeId,
-              traceId: 'trc_p3_e2e_' + Date.now(),
-              roomId: 'gate-p3-room',
-              sender: { kind: 'user', id: 'usr_local', name: 'Gate Evaluator', role: 'USER' },
-              recipient: { kind: 'room', id: 'gate-p3-room' },
-              parts: [
-                { kind: 'text', text: 'Multi-line message:\\nLine 1: Architecture review\\nLine 2: Specifications attached' },
-                { kind: 'artifact', filename: savePng.attachment.filename, sha256: savePng.attachment.sha256, mimeType: 'image/png', sizeBytes: savePng.attachment.sizeBytes },
-                { kind: 'artifact', filename: savePdf.attachment.filename, sha256: savePdf.attachment.sha256, mimeType: 'application/pdf', sizeBytes: savePdf.attachment.sizeBytes },
-              ],
-              fidelity: 'L2_STANDALONE_ARTIFACT',
-              timestamp: Date.now(),
-            };
-            const dispatchRes = await window.unionBotAPI.dispatchEnvelope(envelope);
-            const envelopeDispatched = dispatchRes && dispatchRes.success === true;
+            const attachBtn = document.querySelector('[data-testid="chat-composer-attach-btn"]');
+            const composerTextarea = document.querySelector('[data-testid="chat-composer-textarea"]');
+            const composerSendBtn = document.querySelector('[data-testid="chat-composer-send-btn"]');
 
-            // 5. Query room history from SQLite WAL (P3-C03)
+            // 3a. UB-P3-R04-G02: Test Attachment Error Handling and Draft Preservation
+            let g02DraftPreservedOnError = false;
+            let g02AttachmentErrorBannerShown = false;
+            if (attachBtn && composerTextarea) {
+              setNativeTextareaValue(composerTextarea, 'Draft message before failed attachment attempt');
+              await new Promise(r => setTimeout(r, 50));
+              if (window.unionBotAPI.testQueueAttachmentPath) {
+                await window.unionBotAPI.testQueueAttachmentPath('C:/non_existent_file_path_for_test.png');
+              }
+              attachBtn.click();
+              await new Promise(r => setTimeout(r, 300));
+              const errBanner = document.querySelector('[data-testid="chat-attachment-error"]');
+              g02AttachmentErrorBannerShown = Boolean(errBanner && errBanner.innerText.includes('Failed to attach'));
+              g02DraftPreservedOnError = composerTextarea.value === 'Draft message before failed attachment attempt';
+            }
+
+            // 3b. UB-P3-R04-G02: Drive REAL PNG & PDF Attachments via Composer Attach Button into CAS
+            let g02PngAttachedViaButton = false;
+            let g02PdfAttachedViaButton = false;
+            let g02BothChipsRendered = false;
+
+            if (attachBtn && window.unionBotAPI.testQueueAttachmentPath) {
+              await window.unionBotAPI.testQueueAttachmentPath(${JSON.stringify(pngFixturePath)});
+              attachBtn.click();
+              await new Promise(r => setTimeout(r, 400));
+
+              await window.unionBotAPI.testQueueAttachmentPath(${JSON.stringify(pdfFixturePath)});
+              attachBtn.click();
+              await new Promise(r => setTimeout(r, 400));
+
+              const chips = Array.from(document.querySelectorAll('[data-testid="pending-attachment-chip"]'));
+              g02PngAttachedViaButton = chips.some(c => c.innerText.includes('architecture_diagram.png'));
+              g02PdfAttachedViaButton = chips.some(c => c.innerText.includes('specifications_doc.pdf'));
+              g02BothChipsRendered = chips.length >= 2 && g02PngAttachedViaButton && g02PdfAttachedViaButton;
+            }
+
+            // 4. Send Multi-line Message with Attachments via Composer Send Button (P3-004, P3-R04-F05)
+            let f05ChatMessageSentViaDom = false;
+            const uniqueComposerMsg = 'Multi-line message:\\nLine 1: Architecture review\\nLine 2: Specifications attached\\n' + Date.now();
+            if (composerTextarea && composerSendBtn) {
+              setNativeTextareaValue(composerTextarea, uniqueComposerMsg);
+              await new Promise(r => setTimeout(r, 100));
+              composerSendBtn.click();
+              await new Promise(r => setTimeout(r, 800));
+
+              const messages = Array.from(document.querySelectorAll('[data-testid="message-text"]'));
+              f05ChatMessageSentViaDom = messages.some(m => m.innerText.includes('Architecture review'));
+            }
+
+            // 5. Query room history from SQLite WAL (P3-C03) & Verify CAS store
             const history = await window.unionBotAPI.getRoomHistory('gate-p3-room');
-            const historyFound = Array.isArray(history) && history.some(e => e.id === envelopeId && e.parts && e.parts.length === 3);
+            const historyFound = Array.isArray(history) && history.length > 0;
+            const sentEnv = history.find(e => e.parts && e.parts.some(p => p.kind === 'artifact' || p.kind === 'attachment'));
+            const pngPart = sentEnv ? sentEnv.parts.find(p => p.filename === 'architecture_diagram.png') : null;
+            const pdfPart = sentEnv ? sentEnv.parts.find(p => p.filename === 'specifications_doc.pdf') : null;
+            const pngSaved = Boolean(pngPart && pngPart.sha256);
+            const pdfSaved = Boolean(pdfPart && pdfPart.sha256);
+            const envelopeDispatched = Boolean(sentEnv);
 
-            // 6. Vector P3-R04-F01: Token creation rejects mismatched digest fail-closed
+            let casPngVerified = false;
+            let casPdfVerified = false;
+            if (pngPart && pngPart.sha256) {
+              const readPng = await window.unionBotAPI.readAttachment(pngPart.sha256);
+              casPngVerified = readPng && readPng.success === true && readPng.sizeBytes === ${fixturePngBytes.length};
+            }
+            if (pdfPart && pdfPart.sha256) {
+              const readPdf = await window.unionBotAPI.readAttachment(pdfPart.sha256);
+              casPdfVerified = readPdf && readPdf.success === true && readPdf.sizeBytes === ${fixturePdfText.length};
+            }
+            const casFilesWritten = casPngVerified && casPdfVerified;
+
+            // 6. UB-P3-R04-G01: Missing ActionIntent payload is strictly rejected fail-closed over IPC
+            let g01CreationMissingPayloadBlocked = false;
+            try {
+              const badCreateRes = await window.unionBotAPI.createApprovalToken({
+                tokenId: 'tok_g01_missing_payload_' + Date.now(),
+                actionType: 'format_disk_simulated',
+                payloadDigest: 'bad_digest_g01_'.padEnd(64, '0'),
+                origin: 'G01 Test Runner',
+                roomId: 'gate-p3-room',
+                workspaceId: 'gate-p3-ws',
+              });
+              if (!badCreateRes || !badCreateRes.success) {
+                g01CreationMissingPayloadBlocked = String(badCreateRes?.error).includes('ERR_PAYLOAD_MISMATCH');
+              }
+            } catch (g01CreateErr) {
+              g01CreationMissingPayloadBlocked = String(g01CreateErr.message).includes('ERR_PAYLOAD_MISMATCH');
+            }
+
+            // 6a2. Vector P3-R04-F01: Token creation rejects mismatched digest fail-closed
             let f01CreationMismatchBlocked = false;
             try {
               const f01Res = await window.unionBotAPI.createApprovalToken({
@@ -1456,7 +1560,6 @@ function createWindow() {
             }
 
             // 6d. Create a TAMPERED Approval Token for UI verification (UB-P3-R02-001, UB-P3-R02-004)
-            // Here we supply mismatched raw payload vs digest in DB or payload
             const tamperedTokenId = 'tok_tampered_' + Date.now();
             await window.unionBotAPI.createApprovalToken({
               tokenId: tamperedTokenId,
@@ -1471,7 +1574,6 @@ function createWindow() {
               status: 'PENDING',
               expiresInMs: 60000,
             });
-            // Now tamper its stored payload
             if (window.unionBotAPI.testTamperApprovalPayload) {
               await window.unionBotAPI.testTamperApprovalPayload({
                 tokenId: tamperedTokenId,
@@ -1534,32 +1636,10 @@ function createWindow() {
               f05ProjectFormCreatedInDom = Boolean(projTrigger && projTrigger.innerText.includes('Gate P3 GUI Form Project'));
             }
 
-            // Verify project exists in API as well
             const projs = await window.unionBotAPI.getProjects();
             const projectInList = Array.isArray(projs) && projs.some(p => p.name === 'Gate P3 GUI Form Project');
 
-            // 10. Vector P3-R04-F05 (Form 2): Chat Composer via Real DOM Textarea and Send Button
-            const chatNavBtn = document.querySelector('[data-testid="nav-chat-btn"]') ||
-              Array.from(document.querySelectorAll('button')).find(b => b.innerText.includes('Collaboration Rooms'));
-            if (chatNavBtn) chatNavBtn.click();
-            await new Promise(r => setTimeout(r, 400));
-
-            const composerTextarea = document.querySelector('[data-testid="chat-composer-textarea"]');
-            const composerSendBtn = document.querySelector('[data-testid="chat-composer-send-btn"]');
-            let f05ChatMessageSentViaDom = false;
-            const uniqueDomMsg = 'GUI DOM Composer Message ' + Date.now();
-
-            if (composerTextarea && composerSendBtn) {
-              setNativeTextareaValue(composerTextarea, uniqueDomMsg);
-              await new Promise(r => setTimeout(r, 100));
-              composerSendBtn.click();
-              await new Promise(r => setTimeout(r, 800));
-
-              const messages = Array.from(document.querySelectorAll('[data-testid="message-text"]'));
-              f05ChatMessageSentViaDom = messages.some(m => m.innerText.includes(uniqueDomMsg));
-            }
-
-            // 10b. UB-P3-R01-003: Durable Tasks in SQLite WAL & UI DOM Verification
+            // 10. UB-P3-R01-003: Durable Tasks in SQLite WAL & UI DOM Verification
             const taskRes = await window.unionBotAPI.createTask({
               title: 'CAS Byte Fidelity Verification Task',
               status: 'pending',
@@ -1577,7 +1657,7 @@ function createWindow() {
             await new Promise(r => setTimeout(r, 500));
             const hasTasksRendered = Boolean(document.querySelector('.inbox-container') || document.querySelector('.task-item'));
 
-            // 11. Vector P3-R04-F05 (Form 3): Workspace Export via Real DOM Preferences Modal
+            // 11. Vector P3-R04-F05 & UB-P3-R04-G02: Workspace Export via Preferences Modal DOM & Disk Files
             const prefBtn = document.querySelector('[data-testid="open-preferences-btn"]');
             if (prefBtn) prefBtn.click();
             await new Promise(r => setTimeout(r, 500));
@@ -1598,7 +1678,6 @@ function createWindow() {
             if (closePrefBtn) closePrefBtn.click();
             await new Promise(r => setTimeout(r, 300));
 
-            // Verify exportWorkspace API directly as well
             const exportRes = await window.unionBotAPI.exportWorkspace();
             const exportSucceeded = exportRes && exportRes.success === true &&
               typeof exportRes.exportMarkdown === 'string' &&
@@ -1607,13 +1686,32 @@ function createWindow() {
               typeof exportRes.projectCount === 'number' &&
               typeof exportRes.taskCount === 'number';
 
+            let exportFilesOnDiskValid = false;
+            let exportFilesCheck = null;
+            if (window.unionBotAPI.testGetExportFiles) {
+              exportFilesCheck = await window.unionBotAPI.testGetExportFiles();
+              exportFilesOnDiskValid = Boolean(
+                exportFilesCheck && exportFilesCheck.success &&
+                exportFilesCheck.jsonExists && exportFilesCheck.mdExists &&
+                exportFilesCheck.jsonValid && exportFilesCheck.mdHasContent &&
+                exportFilesCheck.jsonSizeBytes > 50 && exportFilesCheck.mdSizeBytes > 50
+              );
+            }
+
             return {
               roomCreated,
               roomInList,
+              g02DraftPreservedOnError,
+              g02AttachmentErrorBannerShown,
+              g02PngAttachedViaButton,
+              g02PdfAttachedViaButton,
+              g02BothChipsRendered,
               pngSaved,
               pdfSaved,
               envelopeDispatched,
               historyFound,
+              casFilesWritten,
+              g01CreationMissingPayloadBlocked,
               f01CreationMismatchBlocked,
               tokenCreated,
               tokenInList,
@@ -1637,18 +1735,24 @@ function createWindow() {
               hasTasksRendered,
               f05ExportTriggeredViaDom,
               exportSucceeded,
-              pngSha256: savePng.attachment.sha256,
-              pdfSha256: savePdf.attachment.sha256,
+              exportFilesOnDiskValid,
+              pngSha256: pngPart ? pngPart.sha256 : null,
+              pdfSha256: pdfPart ? pdfPart.sha256 : null,
             };
           })()
         `);
 
         console.log('[P3-E2E] P3-003 Dynamic room created in SQLite:', p3Result.roomCreated);
         console.log('[P3-E2E] P3-003 Dynamic room in rooms list:', p3Result.roomInList);
+        console.log('[P3-E2E] UB-P3-R04-G02 Attachment error banner shown on failure:', p3Result.g02AttachmentErrorBannerShown);
+        console.log('[P3-E2E] UB-P3-R04-G02 Draft message preserved in textarea on failure:', p3Result.g02DraftPreservedOnError);
+        console.log('[P3-E2E] UB-P3-R04-G02 PNG & PDF driven via composer attach button:', p3Result.g02BothChipsRendered);
         console.log('[P3-E2E] P3-004 PNG attachment saved in CAS store:', p3Result.pngSaved);
         console.log('[P3-E2E] P3-004 PDF attachment saved in CAS store:', p3Result.pdfSaved);
+        console.log('[P3-E2E] UB-P3-R04-G02 Authentic CAS files written to disk:', p3Result.casFilesWritten);
         console.log('[P3-E2E] P3-004 Multi-line envelope dispatched:', p3Result.envelopeDispatched);
         console.log('[P3-E2E] P3-005 Room history with attachments retrieved from SQLite:', p3Result.historyFound);
+        console.log('[P3-E2E] UB-P3-R04-G01 Token creation missing payload rejected fail-closed:', p3Result.g01CreationMissingPayloadBlocked);
         console.log('[P3-E2E] P3-R04-F01 Token creation mismatched digest rejected fail-closed:', p3Result.f01CreationMismatchBlocked);
         console.log('[P3-E2E] P3-007 Approval token created:', p3Result.tokenCreated);
         console.log('[P3-E2E] P3-C01 Approval inbox displays full parameters & digest:', p3Result.tokenInList);
@@ -1671,14 +1775,20 @@ function createWindow() {
         console.log('[P3-E2E] UB-P3-R02-004 Real UI DOM Tasks View rendered:', p3Result.hasTasksRendered);
         console.log('[P3-E2E] P3-R04-F05 Form 3: Workspace export triggered via Preferences modal DOM:', p3Result.f05ExportTriggeredViaDom);
         console.log('[P3-E2E] Gate P3 Workspace exported to Markdown & JSON:', p3Result.exportSucceeded);
+        console.log('[P3-E2E] UB-P3-R04-G02 Real export files on disk valid and non-empty:', p3Result.exportFilesOnDiskValid);
 
         const allPassed =
           p3Result.roomCreated &&
           p3Result.roomInList &&
+          p3Result.g02AttachmentErrorBannerShown &&
+          p3Result.g02DraftPreservedOnError &&
+          p3Result.g02BothChipsRendered &&
           p3Result.pngSaved &&
           p3Result.pdfSaved &&
           p3Result.envelopeDispatched &&
           p3Result.historyFound &&
+          p3Result.casFilesWritten &&
+          p3Result.g01CreationMissingPayloadBlocked &&
           p3Result.f01CreationMismatchBlocked &&
           p3Result.tokenCreated &&
           p3Result.tokenInList &&
@@ -1698,7 +1808,8 @@ function createWindow() {
           p3Result.taskInList &&
           p3Result.hasTasksRendered &&
           p3Result.f05ExportTriggeredViaDom &&
-          p3Result.exportSucceeded;
+          p3Result.exportSucceeded &&
+          p3Result.exportFilesOnDiskValid;
 
         if (!allPassed) {
           console.error('[P3-E2E] FAILED: One or more P3 R04 checks did not pass');
@@ -1713,6 +1824,14 @@ function createWindow() {
           environment: 'Real Windows Electron Chromium E2E (Phase P3 Gate R04)',
           nodeEnv: process.env.NODE_ENV,
           regressionVectors: {
+            'UB-P3-R04-G01': { creationMissingPayloadBlocked: p3Result.g01CreationMissingPayloadBlocked },
+            'UB-P3-R04-G02': {
+              attachmentErrorBannerShown: p3Result.g02AttachmentErrorBannerShown,
+              draftPreservedOnError: p3Result.g02DraftPreservedOnError,
+              bothChipsRendered: p3Result.g02BothChipsRendered,
+              casFilesWritten: p3Result.casFilesWritten,
+              exportFilesOnDiskValid: p3Result.exportFilesOnDiskValid,
+            },
             'P3-R04-F01': { creationMismatchBlocked: p3Result.f01CreationMismatchBlocked },
             'P3-R04-F02': { approveTamperBlocked: p3Result.f02ApproveTamperBlocked },
             'P3-R04-F03': { approveBtnDisabledOnMismatch: p3Result.f03ApproveBtnDisabledOnMismatch },
@@ -1735,6 +1854,7 @@ function createWindow() {
         process.exit(1);
       }
     });
+    return;
   }
 
   // 7l. P3-REOPEN-E2E: Reopen App and verify SQLite & CAS Durability (P3-C03, UB-P3-R01-005)
@@ -1796,6 +1916,17 @@ function createWindow() {
 
             const uiOperational = rootRendered && sidebarRendered && chatRendered && reopenApprovalCards && reopenVerifiedBadge;
 
+            // UB-P3-R04-G02: Verify real JSON & Markdown export files survived restart on disk
+            let exportFilesSurvived = false;
+            if (window.unionBotAPI.testGetExportFiles) {
+              const exportCheck = await window.unionBotAPI.testGetExportFiles();
+              exportFilesSurvived = Boolean(
+                exportCheck && exportCheck.success &&
+                exportCheck.jsonExists && exportCheck.mdExists &&
+                exportCheck.jsonValid && exportCheck.mdHasContent
+              );
+            }
+
             return {
               roomFound,
               projectFound,
@@ -1807,6 +1938,7 @@ function createWindow() {
               bothAttachmentsFidelityVerified,
               tokenSurvived,
               actionIntentSurvived,
+              exportFilesSurvived,
               uiOperational,
               historyLength: history ? history.length : 0,
             };
@@ -1820,6 +1952,7 @@ function createWindow() {
         console.log('[P3-REOPEN-E2E] P3-C03 Attachments (PNG & PDF) survived app restart:', reopenResult.hasAttachments);
         console.log('[P3-REOPEN-E2E] UB-P3-R01-005 & UB-P3-R02-004 Byte-for-byte CAS fidelity verified (both PNG & PDF):', reopenResult.bothAttachmentsFidelityVerified);
         console.log('[P3-REOPEN-E2E] UB-P3-R02-001 ActionIntent payload preserved across restart:', reopenResult.actionIntentSurvived);
+        console.log('[P3-REOPEN-E2E] UB-P3-R04-G02 Real export files survived app restart:', reopenResult.exportFilesSurvived);
         console.log('[P3-REOPEN-E2E] UB-P3-R02-004 Real UI DOM rendered:', reopenResult.uiOperational);
 
         const allPassed =
@@ -1830,6 +1963,7 @@ function createWindow() {
           reopenResult.hasAttachments &&
           reopenResult.bothAttachmentsFidelityVerified &&
           reopenResult.actionIntentSurvived &&
+          reopenResult.exportFilesSurvived &&
           reopenResult.uiOperational;
 
         if (!allPassed) {
@@ -2364,20 +2498,28 @@ ipcMain.handle('union-bot:open-file-dialog', async (event) => {
     return { success: false, error: 'Unauthorized IPC sender origin' };
   }
   try {
-    const result = await dialog.showOpenDialog(mainWindow, {
-      title: 'Select File to Attach',
-      properties: ['openFile'],
-      filters: [
-        { name: 'Images & Documents', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'pdf', 'txt', 'json', 'md'] },
-        { name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp'] },
-        { name: 'PDF Documents', extensions: ['pdf'] },
-        { name: 'All Files', extensions: ['*'] },
-      ],
-    });
-    if (result.canceled || !result.filePaths || result.filePaths.length === 0) {
-      return { success: false, canceled: true };
+    let selectedPath;
+    if (isDedicatedTestHarness && testQueuedFileDialogPaths.length > 0) {
+      selectedPath = testQueuedFileDialogPaths.shift();
+    } else {
+      const result = await dialog.showOpenDialog(mainWindow, {
+        title: 'Select File to Attach',
+        properties: ['openFile'],
+        filters: [
+          { name: 'Images & Documents', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'pdf', 'txt', 'json', 'md'] },
+          { name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp'] },
+          { name: 'PDF Documents', extensions: ['pdf'] },
+          { name: 'All Files', extensions: ['*'] },
+        ],
+      });
+      if (result.canceled || !result.filePaths || result.filePaths.length === 0) {
+        return { success: false, canceled: true };
+      }
+      selectedPath = result.filePaths[0];
     }
-    const selectedPath = result.filePaths[0];
+    if (!fs.existsSync(selectedPath)) {
+      return { success: false, error: `File not found on filesystem: ${selectedPath}` };
+    }
     const filename = path.basename(selectedPath);
     const buffer = fs.readFileSync(selectedPath);
     const crypto = require('crypto');
@@ -2479,10 +2621,22 @@ ipcMain.handle('union-bot:export-workspace', async (event, options = {}) => {
       }
     }
 
+    const userDataDir = app.getPath('userData');
+    const exportsDir = path.resolve(userDataDir, 'exports');
+    if (!fs.existsSync(exportsDir)) {
+      fs.mkdirSync(exportsDir, { recursive: true });
+    }
+    const exportJsonPath = path.resolve(exportsDir, 'workspace_export.json');
+    const exportMdPath = path.resolve(exportsDir, 'workspace_export.md');
+    fs.writeFileSync(exportJsonPath, jsonString, 'utf8');
+    fs.writeFileSync(exportMdPath, mdContent, 'utf8');
+
     return {
       success: true,
       exportJson: jsonString,
       exportMarkdown: mdContent,
+      exportJsonPath,
+      exportMdPath,
       projectCount: exportData.projects.length,
       roomCount: exportData.rooms.length,
       taskCount: exportData.tasks.length,
@@ -2502,6 +2656,12 @@ ipcMain.handle('union-bot:create-approval-token', async (event, tokenData) => {
   }
   if (!tokenData || typeof tokenData !== 'object') {
     return { success: false, error: 'ERR_INVALID_TOKEN_DATA: tokenData is required' };
+  }
+  const hasPayload = (tokenData.payload !== undefined && tokenData.payload !== null) ||
+                     (typeof tokenData.payload_json === 'string' && tokenData.payload_json.trim() !== '') ||
+                     (typeof tokenData.payloadJson === 'string' && tokenData.payloadJson.trim() !== '');
+  if (!hasPayload) {
+    return { success: false, error: 'ERR_PAYLOAD_MISMATCH: ActionIntent payload or payload_json is required to create an approval token (UB-P3-R04-G01)' };
   }
   try {
     const token = await storage.createApprovalToken(tokenData);
@@ -2523,15 +2683,6 @@ ipcMain.handle('union-bot:compute-action-digest', async (event, input) => {
     return { success: false, error: err.message };
   }
 });
-
-// UB-P2-R06-003 / R07-A03: Test mutation channels strictly isolated.
-// Packaged apps and normal launches NEVER expose test mutation channels.
-// Launcher flags like --headless or --test alone CANNOT enable test mutation API.
-const isPackagedApp = app.isPackaged || process.env.NODE_ENV === 'production';
-const isDedicatedTestHarness =
-  !isPackagedApp &&
-  process.env.NODE_ENV === 'test' &&
-  process.env.UNION_BOT_E2E_HARNESS === '1';
 
 // Native Human Confirmation Controller (Main-Process Owned - UB-P2-R06-001, R07-A01)
 // Never accepts untrusted renderer boolean. Requires authentic OS-bound native prompt or verified test confirmation delegate.
@@ -2631,7 +2782,7 @@ ipcMain.handle('union-bot:approve-token', async (event, payload) => {
     };
   }
 
-  // P3-R04-F02: Re-compute computeCanonicalDigest(payload) from stored payload_json during approveToken
+  // UB-P3-R04-G01: ActionIntent payload is strictly required for approval. Missing or unreadable payload is rejected BEFORE human confirmation!
   let rawPayload = tokenRecord.payload !== undefined && tokenRecord.payload !== null
     ? tokenRecord.payload
     : null;
@@ -2641,27 +2792,32 @@ ipcMain.handle('union-bot:approve-token', async (event, payload) => {
     } catch (parseErr) {
       return {
         success: false,
-        error: `ERR_PAYLOAD_MISMATCH: Malformed stored payload_json: ${parseErr.message} (P3-R04-F02)`,
+        error: `ERR_PAYLOAD_MISMATCH: Malformed stored payload_json: ${parseErr.message} (UB-P3-R04-G01)`,
       };
     }
   }
 
-  if (rawPayload !== null && rawPayload !== undefined) {
-    try {
-      const version = tokenRecord.canonicalization_version || tokenRecord.canonicalizationVersion || 1;
-      const recomputedDigest = computeCanonicalDigest(rawPayload, version);
-      if (storedDigest && recomputedDigest !== storedDigest) {
-        return {
-          success: false,
-          error: `ERR_PAYLOAD_MISMATCH: Stored payload_json does not match stored payload_digest: computed ${recomputedDigest} vs stored ${storedDigest} (P3-R04-F02)`,
-        };
-      }
-    } catch (digestErr) {
+  if (rawPayload === null || rawPayload === undefined) {
+    return {
+      success: false,
+      error: `ERR_PAYLOAD_MISMATCH: ActionIntent payload is missing or unreadable on token ${tokenId}. Approval strictly requires verified ActionIntent (UB-P3-R04-G01)`,
+    };
+  }
+
+  try {
+    const version = tokenRecord.canonicalization_version || tokenRecord.canonicalizationVersion || 1;
+    const recomputedDigest = computeCanonicalDigest(rawPayload, version);
+    if (!storedDigest || recomputedDigest !== storedDigest) {
       return {
         success: false,
-        error: `ERR_PAYLOAD_MISMATCH: Failed to recompute canonical digest from stored payload_json: ${digestErr.message} (P3-R04-F02)`,
+        error: `ERR_PAYLOAD_MISMATCH: Stored payload_json does not match stored payload_digest: computed ${recomputedDigest} vs stored ${storedDigest} (P3-R04-F02)`,
       };
     }
+  } catch (digestErr) {
+    return {
+      success: false,
+      error: `ERR_PAYLOAD_MISMATCH: Failed to recompute canonical digest from stored payload_json: ${digestErr.message} (UB-P3-R04-G01)`,
+    };
   }
 
   // 4. Authentic Native Human Confirmation (UB-P2-R06-001, R07-A01)
@@ -2754,6 +2910,43 @@ if (isDedicatedTestHarness) {
       return { success: false, error: e.message };
     }
   });
+
+  ipcMain.handle('union-bot:test-queue-attachment-path', async (event, filePath) => {
+    if (!checkSenderAuthorized(event)) {
+      return { success: false, error: 'Unauthorized IPC sender origin (UB-P2-R01-008)' };
+    }
+    if (typeof filePath !== 'string' || !filePath) {
+      return { success: false, error: 'Valid filePath string required' };
+    }
+    testQueuedFileDialogPaths.push(filePath);
+    return { success: true, queuedCount: testQueuedFileDialogPaths.length };
+  });
+
+  ipcMain.handle('union-bot:test-get-export-files', async (event) => {
+    if (!checkSenderAuthorized(event)) {
+      return { success: false, error: 'Unauthorized IPC sender origin (UB-P2-R01-008)' };
+    }
+    const userDataDir = app.getPath('userData');
+    const exportsDir = path.resolve(userDataDir, 'exports');
+    const jsonPath = path.resolve(exportsDir, 'workspace_export.json');
+    const mdPath = path.resolve(exportsDir, 'workspace_export.md');
+    const jsonExists = fs.existsSync(jsonPath);
+    const mdExists = fs.existsSync(mdPath);
+    const jsonContent = jsonExists ? fs.readFileSync(jsonPath, 'utf8') : null;
+    const mdContent = mdExists ? fs.readFileSync(mdPath, 'utf8') : null;
+    return {
+      success: true,
+      exportsDir,
+      jsonPath,
+      mdPath,
+      jsonExists,
+      mdExists,
+      jsonSizeBytes: jsonContent ? Buffer.byteLength(jsonContent) : 0,
+      mdSizeBytes: mdContent ? Buffer.byteLength(mdContent) : 0,
+      jsonValid: jsonContent ? Boolean(JSON.parse(jsonContent)) : false,
+      mdHasContent: mdContent ? mdContent.length > 50 : false,
+    };
+  });
 } else {
   // Production / non-harness mode: fail-closed rejection
   ipcMain.handle('union-bot:test-kill-worker', async () => {
@@ -2764,6 +2957,20 @@ if (isDedicatedTestHarness) {
   });
 
   ipcMain.handle('union-bot:test-tamper-approval-payload', async () => {
+    return {
+      success: false,
+      error: 'ERR_TEST_IPC_DISABLED: Test IPC channels are strictly disabled in production mode (UB-P2-R06-003)',
+    };
+  });
+
+  ipcMain.handle('union-bot:test-queue-attachment-path', async () => {
+    return {
+      success: false,
+      error: 'ERR_TEST_IPC_DISABLED: Test IPC channels are strictly disabled in production mode (UB-P2-R06-003)',
+    };
+  });
+
+  ipcMain.handle('union-bot:test-get-export-files', async () => {
     return {
       success: false,
       error: 'ERR_TEST_IPC_DISABLED: Test IPC channels are strictly disabled in production mode (UB-P2-R06-003)',

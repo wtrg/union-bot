@@ -307,6 +307,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         {rooms.map((room) => (
           <div
             key={room.id}
+            data-testid={`room-item-${room.id}`}
             className={`room-item ${activeView === 'chat' && room.id === activeRoomId ? 'active' : ''}`}
             onClick={() => {
               onSelectRoom(room.id);

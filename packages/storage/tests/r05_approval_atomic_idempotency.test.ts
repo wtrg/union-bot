@@ -64,6 +64,7 @@ describe('Union Bot Phase P2 Gate R05: Atomic Approval & Idempotency Vectors (H0
         await client.createApprovalToken({
           tokenId,
           actionType: 'write_file',
+          payload: semanticInput,
           payloadDigest,
           origin: 'desktop_ui',
           roomId: 'orchestration',
@@ -171,6 +172,7 @@ describe('Union Bot Phase P2 Gate R05: Atomic Approval & Idempotency Vectors (H0
       await client.createApprovalToken({
         tokenId,
         actionType: 'write_file',
+        payload: semanticInput,
         payloadDigest,
         origin: 'desktop_ui',
         roomId: 'orchestration',

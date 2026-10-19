@@ -70,10 +70,12 @@ describe('Union Bot Phase P2 Gate R07: Security Hardening & Regression Suite (R0
 
       try {
         const tokenId = 'tok_r07_a01_unconfirmed';
-        const dummyDigest = 'a'.repeat(64);
+        const dummyPayload = { tool: 'write_file', path: 'test.txt' };
+        const dummyDigest = computeCanonicalDigest(dummyPayload, 1);
         await storageClient.createApprovalToken({
           tokenId,
           actionType: 'write_file',
+          payload: dummyPayload,
           payloadDigest: dummyDigest,
           origin: 'desktop_ui',
           roomId: 'orchestration',

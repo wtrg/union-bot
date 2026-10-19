@@ -140,6 +140,9 @@ export interface UnionBotAPI {
   onAppStatusChanged: (callback: (status: { status: string; error: string | null }) => void) => () => void;
   testKillWorker?: () => Promise<any>;
   testSetConfirmationMode?: (mode: string) => Promise<any>;
+  testTamperApprovalPayload?: (payload: any) => Promise<any>;
+  testQueueAttachmentPath?: (filePath: string) => Promise<any>;
+  testGetExportFiles?: () => Promise<any>;
 }
 
 declare global {
