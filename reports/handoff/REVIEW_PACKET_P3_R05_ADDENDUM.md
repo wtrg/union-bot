@@ -252,7 +252,7 @@ Total findings: 11
 PASS: Secret scan completed safely without plaintext exposure.
 
 ========================================================
-ALL VERIFICATION CHECKS PASSED (Typecheck + Build + 180 Tests [153 TS + 16 Py + 11 Real Electron E2E] + GUI Smoke + Strict Secret Scan)
+ALL VERIFICATION CHECKS PASSED (Typecheck + Build + 184 Tests [157 TS + 16 Py + 11 Real Electron E2E] + GUI Smoke + Strict Secret Scan)
 ========================================================
 ```
 
