@@ -3,6 +3,7 @@
 **Date:** 2026-10-19  
 **Gate:** Phase P4 Gate (Embedded Chromium, Browser Isolation & Native AI Provider Surfaces) — Round R02  
 **Roles:** Implementation Lead (Antigravity), Verification Lead (Codex), Technical Leader (ChatGPT Web)  
+**Commit cơ sở đánh giá:** [`c069cd47fe34c9ec9bc0dff5fa23276856ee2593`](https://github.com/wtrg/union-bot/commit/c069cd47fe34c9ec9bc0dff5fa23276856ee2593) (HEAD của `main`)  
 **Status:** **SUBMITTED FOR FORMAL GATE REVIEW APPROVAL — TARGET: `APPROVED — GO_P5 — P4_ACCEPTED`**
 
 ---
