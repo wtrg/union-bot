@@ -279,4 +279,117 @@ describe('Union Bot Desktop Security & Shell Verification', () => {
 
     try { fs.rmSync(tempCasDir, { recursive: true, force: true }); } catch {}
   });
+
+  it('P5-R02-T01: ArtifactStore enforces 50MB size limit fail-closed and bucketed CAS layout', () => {
+    const { ArtifactStore, detectMimeType } = require('../../../packages/artifact-store/src/artifact-store.cjs');
+    const tempCasDir = path.resolve(__dirname, '../.tmp-test-cas-r02');
+    if (!fs.existsSync(tempCasDir)) fs.mkdirSync(tempCasDir, { recursive: true });
+
+    const store = new ArtifactStore(tempCasDir);
+
+    // MIME sniffing check
+    const pngHeader = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00]);
+    assert.equal(detectMimeType(pngHeader), 'image/png');
+
+    const pdfHeader = Buffer.from('%PDF-1.7 sample document');
+    assert.equal(detectMimeType(pdfHeader), 'application/pdf');
+
+    // Bucketed storage write
+    const meta = store.storeBytes(Buffer.from('hello world bucketed cas'), 'sample.txt', { mimeType: 'text/plain' });
+    assert.ok(meta.sha256);
+    assert.ok(meta.storedPath.includes(meta.sha256.slice(0, 2)));
+    assert.equal(fs.existsSync(meta.storedPath), true);
+
+    // Read back bytes
+    const readBytes = store.readBytes(meta.sha256);
+    assert.equal(readBytes.toString('utf8'), 'hello world bucketed cas');
+
+    // 50MB fail-closed limit check
+    const oversizeBuffer = Buffer.alloc(ArtifactStore.DEFAULT_MAX_ARTIFACT_SIZE_BYTES + 10);
+    assert.throws(
+      () => store.storeBytes(oversizeBuffer, 'oversize.bin'),
+      /ERR_FILE_TOO_LARGE/
+    );
+
+    try { fs.rmSync(tempCasDir, { recursive: true, force: true }); } catch {}
+  });
+
+  it('P5-R02-T02: ToolHost canonical realpath check, 5MB limit, and unapproved script denial', async () => {
+    const { ToolHost } = require('../src/tool-host.cjs');
+    const toolHost = new ToolHost(path.resolve(__dirname, '../../..'));
+
+    // Unapproved script execution must be rejected with ERR_APPROVAL_REQUIRED
+    const runRes = await toolHost.runSafeTest('malicious_script.bat');
+    assert.equal(runRes.success, false);
+    assert.equal(runRes.code, 'ERR_APPROVAL_REQUIRED');
+
+    // Canonical realpath traversal denial
+    const escapeRes = await toolHost.readFile('../../../Windows/win.ini');
+    assert.equal(escapeRes.success, false);
+    assert.match(escapeRes.error, /ERR_PATH_TRAVERSAL/);
+
+    // Verify max file read limit is enforced
+    assert.equal(ToolHost.ABSOLUTE_MAX_READ_BYTES, 5 * 1024 * 1024);
+  });
+
+  it('P5-R02-T03: Export bundle roomId format validation blocks directory traversal', () => {
+    const ROOM_ID_REGEX = /^[a-zA-Z0-9_-]+$/;
+    assert.equal(ROOM_ID_REGEX.test('orchestration'), true);
+    assert.equal(ROOM_ID_REGEX.test('qa-audit'), true);
+    assert.equal(ROOM_ID_REGEX.test('room_123'), true);
+
+    // Traversal payloads rejected
+    assert.equal(ROOM_ID_REGEX.test('../../Windows'), false);
+    assert.equal(ROOM_ID_REGEX.test('..\\..\\secret'), false);
+    assert.equal(ROOM_ID_REGEX.test('room/sub'), false);
+    assert.equal(ROOM_ID_REGEX.test('room\\sub'), false);
+  });
+
+  it('P5-R02-T04: sanitizeSvg strictly eliminates scripts and inline handlers', () => {
+    const { sanitizeSvg } = require('../../../packages/artifact-store/src/artifact-store.cjs');
+
+    const malicious = '<svg><script>alert("pwn")</script><circle cx="10" cy="10" r="5" onload="evil()" onclick="bad()"/><a href="javascript:alert(1)">link</a></svg>';
+    const sanitized = sanitizeSvg(malicious);
+
+    assert.equal(sanitized.includes('<script>'), false);
+    assert.equal(sanitized.includes('alert("pwn")'), false);
+    assert.equal(sanitized.includes('onload='), false);
+    assert.equal(sanitized.includes('onclick='), false);
+    assert.equal(sanitized.includes('javascript:'), false);
+    assert.match(sanitized, /<circle cx="10" cy="10" r="5"\s*\/>/);
+  });
+
+  it('P5-R02-T05: MCPService inspects both bucketed and flat CAS layouts with path safety', async () => {
+    const { MCPService } = require('../src/mcp-service.cjs');
+    const { ArtifactStore } = require('../../../packages/artifact-store/src/artifact-store.cjs');
+    const tempCasDir = path.resolve(__dirname, '../.tmp-test-cas-mcp');
+    if (!fs.existsSync(tempCasDir)) fs.mkdirSync(tempCasDir, { recursive: true });
+
+    const store = new ArtifactStore(tempCasDir);
+    const mcp = new MCPService(tempCasDir, path.resolve(__dirname, '../../..'));
+
+    // Store in bucketed format
+    const meta = store.storeBytes(Buffer.from('mcp test bucketed payload'), 'test.txt', { mimeType: 'text/plain' });
+
+    // Inspect via MCP
+    const inspectBucketed = await mcp.callTool('artifact_inspect', { sha256: meta.sha256 });
+    assert.equal(inspectBucketed.isError, false);
+    assert.equal(inspectBucketed.data.exists, true);
+    assert.equal(inspectBucketed.data.byteSize, Buffer.from('mcp test bucketed payload').length);
+
+    // Create legacy flat format file
+    const flatSha = '11223344556677889900aabbccddeeff11223344556677889900aabbccddeeff';
+    fs.writeFileSync(path.join(tempCasDir, flatSha), 'flat payload content');
+
+    const inspectFlat = await mcp.callTool('artifact_inspect', { sha256: flatSha });
+    assert.equal(inspectFlat.isError, false);
+    assert.equal(inspectFlat.data.exists, true);
+    assert.equal(inspectFlat.data.byteSize, 'flat payload content'.length);
+
+    // Path traversal attempt in MCP inspect
+    const badSha = await mcp.callTool('artifact_inspect', { sha256: '../../../../Windows/win.ini' });
+    assert.equal(badSha.isError, true);
+
+    try { fs.rmSync(tempCasDir, { recursive: true, force: true }); } catch {}
+  });
 });

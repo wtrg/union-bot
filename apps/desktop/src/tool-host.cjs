@@ -1,16 +1,19 @@
 /**
  * @file tool-host.cjs
- * @description Safe Read-Only Tool Host & Workspace Command Execution for Union Bot Phase P5 (P5-007).
+ * @description Safe Read-Only Tool Host & Workspace Boundary Enforcement for Union Bot (UB-P5-R01-002, P5-R02-T02).
  *
  * Enforces:
- * - Read-only workspace boundary enforcement (no file writes or path traversal outside workspace).
+ * - Read-only workspace boundary enforcement with realpath/symlink breakout defense.
  * - Safe git status and file search.
+ * - Zero unapproved native script execution (fail-closed with ERR_APPROVAL_REQUIRED).
  * - Zero-cost execution with local timeout and resource bounds.
  */
 
 const fs = require('node:fs');
 const path = require('node:path');
 const { execFile } = require('node:child_process');
+
+const ABSOLUTE_MAX_READ_BYTES = 5 * 1024 * 1024; // 5 MB hard cap (P5-R02-T02)
 
 class ToolHost {
   constructor(workspaceRoot) {
@@ -28,7 +31,7 @@ class ToolHost {
 
   /**
    * Resolves and verifies that a relative path stays strictly within the workspace root.
-   * Throws ERR_PATH_TRAVERSAL if an escape attempt is detected (P5-005, P5-010).
+   * Defends against both string traversal (../..) and symlink/junction breakouts (P5-R02-T02).
    */
   resolveSafePath(targetPath) {
     if (typeof targetPath !== 'string' || !targetPath.trim()) {
@@ -38,11 +41,29 @@ class ToolHost {
     if (resolved !== this.workspaceRoot && !resolved.startsWith(this.workspaceRoot + path.sep)) {
       throw new Error(`ERR_PATH_TRAVERSAL: Access denied outside workspace boundary (${targetPath})`);
     }
+
+    // Defense-in-depth: Verify realpath against symlinks / Windows junctions pointing outside workspace
+    if (fs.existsSync(resolved)) {
+      try {
+        const realResolved = fs.realpathSync(resolved);
+        const realWorkspace = fs.realpathSync(this.workspaceRoot);
+        if (realResolved !== realWorkspace && !realResolved.startsWith(realWorkspace + path.sep)) {
+          throw new Error(`ERR_PATH_TRAVERSAL: Symlink target outside workspace boundary (${targetPath})`);
+        }
+        return realResolved;
+      } catch (err) {
+        if (err.message && err.message.startsWith('ERR_PATH_TRAVERSAL')) {
+          throw err;
+        }
+        throw new Error(`ERR_PATH_TRAVERSAL: Failed to verify canonical realpath for ${targetPath}: ${err.message}`);
+      }
+    }
+
     return resolved;
   }
 
   /**
-   * Read-only file reader with workspace boundary enforcement (P5-007).
+   * Read-only file reader with workspace boundary enforcement and hard size cap (P5-007, P5-R02-T02).
    */
   async readFile(targetPath, maxBytes = 2 * 1024 * 1024) {
     try {
@@ -54,8 +75,11 @@ class ToolHost {
       if (!stat.isFile()) {
         return { success: false, error: `Target is not a file: ${targetPath}` };
       }
-      if (stat.size > maxBytes) {
-        return { success: false, error: `File size (${stat.size} bytes) exceeds limit of ${maxBytes} bytes` };
+
+      // Hard limit defense: caller cannot arbitrarily elevate beyond ABSOLUTE_MAX_READ_BYTES
+      const effectiveMax = Math.min(Math.max(1, maxBytes), ABSOLUTE_MAX_READ_BYTES);
+      if (stat.size > effectiveMax) {
+        return { success: false, error: `File size (${stat.size} bytes) exceeds limit of ${effectiveMax} bytes` };
       }
 
       const content = fs.readFileSync(safePath, 'utf8');
@@ -80,6 +104,7 @@ class ToolHost {
       }
       const q = query.toLowerCase();
       const results = [];
+      const realWorkspace = fs.realpathSync(this.workspaceRoot);
 
       const walk = (dir) => {
         if (results.length >= maxResults) return;
@@ -89,6 +114,17 @@ class ToolHost {
             continue;
           }
           const fullPath = path.join(dir, entry.name);
+
+          // Verify symlink target does not escape workspace
+          try {
+            const realEntry = fs.realpathSync(fullPath);
+            if (realEntry !== realWorkspace && !realEntry.startsWith(realWorkspace + path.sep)) {
+              continue;
+            }
+          } catch {
+            continue;
+          }
+
           const relPath = path.relative(this.workspaceRoot, fullPath);
 
           if (entry.name.toLowerCase().includes(q)) {
@@ -138,9 +174,19 @@ class ToolHost {
   }
 
   /**
-   * Runs safe test command within workspace with strict resource timeout (P5-007).
+   * Native script execution control (UB-P5-R01-002 / P5-R02-T02).
+   * ToolHost is strictly read-only. Executing native test scripts requires an explicit approval token.
    */
-  async runSafeTest(command = 'test', timeoutMs = 15000) {
+  async runSafeTest(command = 'test', options = {}) {
+    const { approvalToken } = options || {};
+    if (!approvalToken || approvalToken.status !== 'APPROVED') {
+      return {
+        success: false,
+        code: 'ERR_APPROVAL_REQUIRED',
+        error: 'ERR_APPROVAL_REQUIRED: Native script execution in ToolHost requires explicit human approval token (P5-R02-T02)',
+      };
+    }
+
     return new Promise((resolve) => {
       const allowedCommands = ['test', 'lint', 'typecheck', 'status'];
       if (!allowedCommands.includes(command)) {
@@ -155,7 +201,7 @@ class ToolHost {
 
       execFile(bin, args, {
         cwd: this.workspaceRoot,
-        timeout: timeoutMs,
+        timeout: options.timeoutMs || 15000,
       }, (err, stdout, stderr) => {
         resolve({
           success: !err,
@@ -169,4 +215,6 @@ class ToolHost {
   }
 }
 
-module.exports = { ToolHost };
+ToolHost.ABSOLUTE_MAX_READ_BYTES = ABSOLUTE_MAX_READ_BYTES;
+
+module.exports = { ToolHost, ABSOLUTE_MAX_READ_BYTES };

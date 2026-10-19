@@ -148,6 +148,13 @@ describe('Union Bot Phase P5 Gate: Windows Real Electron E2E Suite', () => {
     assert.equal(evidence.results.exportBundleSucceeded, true);
     assert.equal(evidence.results.domExportBundleBtnRendered, true);
 
+    // P5-R02-T01 through T05 regression assertions
+    assert.equal(evidence.results.r02_largeFileRejected, true, 'P5-R02-T01: Files >50MB must be rejected fail-closed');
+    assert.equal(evidence.results.r02_unapprovedScriptBlocked, true, 'P5-R02-T02: Unapproved scripts must require approval token');
+    assert.equal(evidence.results.r02_maliciousRoomExportBlocked, true, 'P5-R02-T03: Malicious roomId traversal in export must be blocked');
+    assert.equal(evidence.results.r02_svgSanitized, true, 'P5-R02-T04: SVG scripts and handlers must be sanitized before storing/preview');
+    assert.equal(evidence.results.r02_mcpInspectBucketed, true, 'P5-R02-T05: MCP inspect must resolve bucketed CAS hash');
+
     // Verify stdout log checks
     assert.match(stdout, /\[P5-E2E\] Check savePngSucceeded: true/);
     assert.match(stdout, /\[P5-E2E\] Check pngMimeDetected: true/);
@@ -160,6 +167,11 @@ describe('Union Bot Phase P5 Gate: Windows Real Electron E2E Suite', () => {
     assert.match(stdout, /\[P5-E2E\] Check mcpInspectComputed: true/);
     assert.match(stdout, /\[P5-E2E\] Check mcpSummaryComputed: true/);
     assert.match(stdout, /\[P5-E2E\] Check exportBundleSucceeded: true/);
+    assert.match(stdout, /\[P5-E2E\] Check r02_largeFileRejected: true/);
+    assert.match(stdout, /\[P5-E2E\] Check r02_unapprovedScriptBlocked: true/);
+    assert.match(stdout, /\[P5-E2E\] Check r02_maliciousRoomExportBlocked: true/);
+    assert.match(stdout, /\[P5-E2E\] Check r02_svgSanitized: true/);
+    assert.match(stdout, /\[P5-E2E\] Check r02_mcpInspectBucketed: true/);
 
     // Clean up test directory
     try {

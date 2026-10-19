@@ -125,6 +125,12 @@ function createWindow() {
     },
   });
 
+  mainWindow.webContents.on('console-message', (_event, _level, message) => {
+    if (isDedicatedTestHarness) {
+      console.log(`[RendererConsole] ${message}`);
+    }
+  });
+
   // Phase P4: Embedded Chromium & AI Provider BrowserService
   try {
     browserService = new BrowserService(mainWindow, storage);
@@ -2609,7 +2615,7 @@ function createWindow() {
             });
             results.mcpSummaryComputed = Boolean(mcpSummaryRes && !mcpSummaryRes.isError && mcpSummaryRes.data?.directories?.length > 0);
 
-            // 12. P5-010: SVG XSS sanitization
+            // 12. P5-010 / UB-P5-R01-004: SVG XSS sanitization & read-back proof
             const maliciousSvg = '<svg><script>alert("xss")</script><circle cx="5" cy="5" r="5" onclick="alert(1)"/><a href="javascript:alert(2)">click</a></svg>';
             const svgSaveRes = await window.unionBotAPI.saveAttachment({
               filename: 'test.svg',
@@ -2617,13 +2623,46 @@ function createWindow() {
             });
             results.svgSaved = Boolean(svgSaveRes?.success);
 
-            // 13. P5-011: Transcript Bundle Export
+            let svgSanitizedOk = false;
+            if (svgSaveRes?.attachment?.sha256) {
+              const readBack = await window.unionBotAPI.readAttachment(svgSaveRes.attachment.sha256);
+              if (readBack?.success && readBack?.dataBase64) {
+                const decoded = atob(readBack.dataBase64);
+                svgSanitizedOk = !decoded.includes('<script>') && !decoded.includes('alert("xss")') && !decoded.includes('onclick=') && !decoded.includes('javascript:');
+              }
+            }
+            results.r02_svgSanitized = svgSanitizedOk;
+
+            // 13. P5-011 / UB-P5-R01-003: Transcript Bundle Export with durable SQLite history
             const exportBundleRes = await window.unionBotAPI.exportTranscriptBundle({
               roomId: 'orchestration',
             });
             results.exportBundleSucceeded = Boolean(exportBundleRes?.success && exportBundleRes?.transcriptPath && exportBundleRes?.manifestPath);
 
-            // 14. UI Component verification in DOM (P5-002, P5-003, P5-004)
+            // 14. UB-P5-R01-001 / P5-R02-T01: 50MB file size fail-closed denial
+            const largeSaveRes = await window.unionBotAPI.saveAttachment({
+              filename: 'oversize.bin',
+              textContent: 'A'.repeat(51 * 1024 * 1024),
+            });
+            results.r02_largeFileRejected = Boolean(largeSaveRes?.success === false && largeSaveRes?.code === 'ERR_FILE_TOO_LARGE');
+
+            // 15. UB-P5-R01-002 / P5-R02-T02: ToolHost unapproved script execution blocked
+            const unapprovedScriptRes = await window.unionBotAPI.toolHostExecute({
+              command: 'runSafeTest',
+              args: ['malicious_script.bat'],
+            });
+            results.r02_unapprovedScriptBlocked = Boolean(unapprovedScriptRes?.success === false && (unapprovedScriptRes?.code === 'ERR_APPROVAL_REQUIRED' || unapprovedScriptRes?.error?.includes('ERR_APPROVAL_REQUIRED')));
+
+            // 16. UB-P5-R01-003 / P5-R02-T03: Path traversal on export roomId blocked
+            const maliciousRoomExportRes = await window.unionBotAPI.exportTranscriptBundle({
+              roomId: '../../malicious_escape',
+            });
+            results.r02_maliciousRoomExportBlocked = Boolean(maliciousRoomExportRes?.success === false && maliciousRoomExportRes?.code === 'ERR_INVALID_ROOM_ID');
+
+            // 17. UB-P5-R01-005 / P5-R02-T05: Bucketed CAS layout verified via MCP inspect
+            results.r02_mcpInspectBucketed = Boolean(mcpInspectRes && !mcpInspectRes.isError && mcpInspectRes.data?.exists && mcpInspectRes.data?.byteSize > 0);
+
+            // 18. UI Component verification in DOM (P5-002, P5-003, P5-004)
             const exportBundleBtn = document.querySelector('[data-testid="export-transcript-bundle-btn"]');
             results.domExportBundleBtnRendered = Boolean(exportBundleBtn);
 
@@ -2655,7 +2694,12 @@ function createWindow() {
           'mcpInspectComputed',
           'mcpSummaryComputed',
           'svgSaved',
+          'r02_svgSanitized',
           'exportBundleSucceeded',
+          'r02_largeFileRejected',
+          'r02_unapprovedScriptBlocked',
+          'r02_maliciousRoomExportBlocked',
+          'r02_mcpInspectBucketed',
           'domExportBundleBtnRendered',
         ];
 
@@ -3121,14 +3165,14 @@ ipcMain.handle('union-bot:reject-approval', async (event, payload) => {
   }
 });
 
-// P3-004 / P3-005 / P3-C03: Attachments CAS store & file dialogue IPC
+// P3-004 / P3-005 / P3-C03 / UB-P5-R01-001 / UB-P5-R01-004: Attachments CAS store & file dialogue IPC
 ipcMain.handle('union-bot:save-attachment', async (event, payload) => {
   if (!checkSenderAuthorized(event)) {
     return { success: false, error: 'Unauthorized IPC sender origin' };
   }
   try {
     const { filename, mimeType, dataBase64, textContent } = payload || {};
-    if (!filename) {
+    if (!filename || typeof filename !== 'string') {
       return { success: false, error: 'Filename is required' };
     }
     let buffer;
@@ -3141,31 +3185,41 @@ ipcMain.handle('union-bot:save-attachment', async (event, payload) => {
       return { success: false, error: 'File data is required' };
     }
 
-    const crypto = require('crypto');
-    const sha256 = crypto.createHash('sha256').update(buffer).digest('hex').toLowerCase();
-    const userDataDir = app.getPath('userData');
-    const casDir = path.resolve(userDataDir, 'cas-store');
-    if (!fs.existsSync(casDir)) {
-      fs.mkdirSync(casDir, { recursive: true });
+    // UB-P5-R01-001 / P5-R02-T01: Enforce 50MB maximum artifact size fail-closed
+    const MAX_SIZE = ArtifactStore.DEFAULT_MAX_ARTIFACT_SIZE_BYTES || 50 * 1024 * 1024;
+    if (buffer.length > MAX_SIZE) {
+      return {
+        success: false,
+        code: 'ERR_FILE_TOO_LARGE',
+        error: `ERR_FILE_TOO_LARGE: File exceeds maximum allowed size of 50MB (size: ${buffer.length} bytes)`,
+      };
     }
-    const casFilePath = path.resolve(casDir, sha256);
-    if (!casFilePath.startsWith(casDir + path.sep)) {
-      return { success: false, error: 'ERR_PATH_TRAVERSAL: Access denied outside CAS store' };
-    }
-    fs.writeFileSync(casFilePath, buffer);
 
-    const sizeBytes = buffer.length;
-    const cleanMime = mimeType || (filename.endsWith('.png') ? 'image/png' : filename.endsWith('.pdf') ? 'application/pdf' : 'application/octet-stream');
+    // Sniff MIME type using magic bytes
+    let cleanMime = detectMimeType(buffer, mimeType);
+
+    // UB-P5-R01-004 / P5-R02-T04: Sanitize SVG before storing
+    const isSvg = cleanMime === 'image/svg+xml' || filename.toLowerCase().endsWith('.svg');
+    if (isSvg) {
+      const svgText = buffer.toString('utf8');
+      const sanitizedSvg = sanitizeSvg(svgText);
+      buffer = Buffer.from(sanitizedSvg, 'utf8');
+      cleanMime = 'image/svg+xml';
+    }
+
+    // Store via ArtifactStore CAS
+    const meta = artifactStore.storeBytes(buffer, filename, { mimeType: cleanMime });
     const dataUrl = cleanMime.startsWith('image/') ? `data:${cleanMime};base64,${buffer.toString('base64')}` : undefined;
 
     return {
       success: true,
       attachment: {
         filename,
-        sha256,
-        mimeType: cleanMime,
-        sizeBytes,
-        casPath: casFilePath,
+        sha256: meta.sha256,
+        mimeType: meta.mimeType || cleanMime,
+        sizeBytes: buffer.length,
+        byteSize: buffer.length,
+        casPath: meta.storedPath,
         dataUrl,
       },
     };
@@ -3174,29 +3228,32 @@ ipcMain.handle('union-bot:save-attachment', async (event, payload) => {
   }
 });
 
-// P3-R02 / UB-P3-R01-001: Strict SHA-256 validation & canonical path traversal defense
+// P3-R02 / UB-P3-R01-001 / UB-P5-R01-005: Strict SHA-256 validation & CAS fallback lookup
 ipcMain.handle('union-bot:read-attachment', async (event, sha256) => {
   if (!checkSenderAuthorized(event)) {
     return { success: false, error: 'Unauthorized IPC sender origin' };
   }
   try {
-    const SHA256_HEX_REGEX = /^[a-f0-9]{64}$/i;
-    if (!sha256 || typeof sha256 !== 'string' || !SHA256_HEX_REGEX.test(sha256)) {
+    if (!sha256 || !ArtifactStore.isValidSha256(sha256)) {
       return { success: false, code: 'ERR_INVALID_SHA256', error: 'ERR_INVALID_SHA256: Input must be a valid 64-character hexadecimal SHA-256 hash' };
     }
-    const userDataDir = app.getPath('userData');
-    const casDir = path.resolve(userDataDir, 'cas-store');
-    const casFilePath = path.resolve(casDir, sha256.toLowerCase());
-    if (!casFilePath.startsWith(casDir + path.sep)) {
-      return { success: false, code: 'ERR_PATH_TRAVERSAL', error: 'ERR_PATH_TRAVERSAL: Access denied outside CAS store' };
+    const cleanSha = sha256.trim().toLowerCase();
+    let buffer;
+    try {
+      buffer = artifactStore.readBytes(cleanSha);
+    } catch {
+      const userDataDir = app.getPath('userData');
+      const casDir = path.resolve(userDataDir, 'cas-store');
+      const flatPath = path.resolve(casDir, cleanSha);
+      if (flatPath.startsWith(casDir + path.sep) && fs.existsSync(flatPath)) {
+        buffer = fs.readFileSync(flatPath);
+      } else {
+        return { success: false, error: 'Attachment not found in CAS store' };
+      }
     }
-    if (!fs.existsSync(casFilePath)) {
-      return { success: false, error: 'Attachment not found in CAS store' };
-    }
-    const buffer = fs.readFileSync(casFilePath);
     return {
       success: true,
-      sha256: sha256.toLowerCase(),
+      sha256: cleanSha,
       sizeBytes: buffer.length,
       dataBase64: buffer.toString('base64'),
     };
@@ -3214,12 +3271,15 @@ ipcMain.handle('union-bot:open-file-dialog', async (event) => {
     if (isDedicatedTestHarness && testQueuedFileDialogPaths.length > 0) {
       selectedPath = testQueuedFileDialogPaths.shift();
     } else {
+      if (isDedicatedTestHarness && process.argv.includes('--headless')) {
+        return { success: false, error: 'No queued file dialog path in headless test harness' };
+      }
       const result = await dialog.showOpenDialog(mainWindow, {
         title: 'Select File to Attach',
         properties: ['openFile'],
         filters: [
-          { name: 'Images & Documents', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'pdf', 'txt', 'json', 'md'] },
-          { name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp'] },
+          { name: 'Images & Documents', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'pdf', 'txt', 'json', 'md', 'svg'] },
+          { name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'] },
           { name: 'PDF Documents', extensions: ['pdf'] },
           { name: 'All Files', extensions: ['*'] },
         ],
@@ -3233,43 +3293,38 @@ ipcMain.handle('union-bot:open-file-dialog', async (event) => {
       return { success: false, error: `File not found on filesystem: ${selectedPath}` };
     }
     const filename = path.basename(selectedPath);
-    const buffer = fs.readFileSync(selectedPath);
-    const crypto = require('crypto');
-    const sha256 = crypto.createHash('sha256').update(buffer).digest('hex').toLowerCase();
-    const userDataDir = app.getPath('userData');
-    const casDir = path.resolve(userDataDir, 'cas-store');
-    if (!fs.existsSync(casDir)) {
-      fs.mkdirSync(casDir, { recursive: true });
-    }
-    const casFilePath = path.resolve(casDir, sha256);
-    if (!casFilePath.startsWith(casDir + path.sep)) {
-      return { success: false, error: 'ERR_PATH_TRAVERSAL: Access denied outside CAS store' };
-    }
-    fs.writeFileSync(casFilePath, buffer);
+    let buffer = fs.readFileSync(selectedPath);
 
-    const ext = path.extname(filename).toLowerCase();
-    const mimeMap = {
-      '.png': 'image/png',
-      '.jpg': 'image/jpeg',
-      '.jpeg': 'image/jpeg',
-      '.gif': 'image/gif',
-      '.webp': 'image/webp',
-      '.pdf': 'application/pdf',
-      '.txt': 'text/plain',
-      '.json': 'application/json',
-      '.md': 'text/markdown',
-    };
-    const mimeType = mimeMap[ext] || 'application/octet-stream';
-    const dataUrl = mimeType.startsWith('image/') ? `data:${mimeType};base64,${buffer.toString('base64')}` : undefined;
+    const MAX_SIZE = ArtifactStore.DEFAULT_MAX_ARTIFACT_SIZE_BYTES || 50 * 1024 * 1024;
+    if (buffer.length > MAX_SIZE) {
+      return {
+        success: false,
+        code: 'ERR_FILE_TOO_LARGE',
+        error: `ERR_FILE_TOO_LARGE: File exceeds maximum allowed size of 50MB (size: ${buffer.length} bytes)`,
+      };
+    }
+
+    let cleanMime = detectMimeType(buffer);
+    const isSvg = cleanMime === 'image/svg+xml' || filename.toLowerCase().endsWith('.svg');
+    if (isSvg) {
+      const svgText = buffer.toString('utf8');
+      const sanitizedSvg = sanitizeSvg(svgText);
+      buffer = Buffer.from(sanitizedSvg, 'utf8');
+      cleanMime = 'image/svg+xml';
+    }
+
+    const meta = artifactStore.storeBytes(buffer, filename, { mimeType: cleanMime });
+    const dataUrl = cleanMime.startsWith('image/') ? `data:${cleanMime};base64,${buffer.toString('base64')}` : undefined;
 
     return {
       success: true,
       attachment: {
         filename,
-        sha256,
-        mimeType,
+        sha256: meta.sha256,
+        mimeType: meta.mimeType || cleanMime,
         sizeBytes: buffer.length,
-        casPath: casFilePath,
+        byteSize: buffer.length,
+        casPath: meta.storedPath,
         dataUrl,
       },
     };
@@ -3700,6 +3755,9 @@ ipcMain.handle('union-bot:artifact-save-as', async (event, payload) => {
     if (isDedicatedTestHarness && testQueuedSaveDialogPaths.length > 0) {
       targetPath = testQueuedSaveDialogPaths.shift();
     } else {
+      if (isDedicatedTestHarness && process.argv.includes('--headless')) {
+        return { success: false, error: 'No queued save dialog path in headless test harness' };
+      }
       const saveRes = await dialog.showSaveDialog(mainWindow, {
         title: 'Save Artifact As',
         defaultPath: suggestedName || cleanSha,
@@ -3836,23 +3894,56 @@ ipcMain.handle('union-bot:mcp-list-tools', async (event) => {
   return { success: true, tools: mcpService.listTools() };
 });
 
+// P5-011 / UB-P5-R01-003 / P5-R02-T03: Transcript bundle export with durable SQLite history and path safety
 ipcMain.handle('union-bot:export-transcript-bundle', async (event, options = {}) => {
   if (!checkSenderAuthorized(event)) {
     return { success: false, error: 'Unauthorized IPC sender origin' };
   }
   try {
     const { roomId = 'orchestration' } = options;
-    const history = orchestrator.getRoomHistory(roomId) || [];
+    const ROOM_ID_REGEX = /^[a-zA-Z0-9_-]+$/;
+    if (!roomId || typeof roomId !== 'string' || !ROOM_ID_REGEX.test(roomId)) {
+      return {
+        success: false,
+        code: 'ERR_INVALID_ROOM_ID',
+        error: 'ERR_INVALID_ROOM_ID: Room ID must contain only alphanumeric characters, underscores, and dashes',
+      };
+    }
+    const cleanRoomId = roomId.trim();
+
+    // UB-P5-R01-003 / P5-R02-T03: Fetch durable history from SQLite storage worker
+    let history = [];
+    if (storage) {
+      try {
+        const persisted = await storage.getRoomEnvelopes(cleanRoomId, 500);
+        if (Array.isArray(persisted) && persisted.length > 0) {
+          history = persisted;
+        }
+      } catch (err) {
+        console.warn(`[ExportBundle] Failed to fetch durable history from storage: ${err.message}`);
+      }
+    }
+    if (history.length === 0 && orchestrator) {
+      history = (await orchestrator.getRoomHistoryAsync(cleanRoomId)) || [];
+    }
+
     const userDataDir = app.getPath('userData');
     const exportsDir = path.resolve(userDataDir, 'exports');
     if (!fs.existsSync(exportsDir)) {
       fs.mkdirSync(exportsDir, { recursive: true });
     }
 
-    const bundleDir = path.join(exportsDir, `bundle_${roomId}_${Date.now()}`);
+    const bundleDir = path.resolve(exportsDir, `bundle_${cleanRoomId}_${Date.now()}`);
+    if (!bundleDir.startsWith(exportsDir + path.sep)) {
+      return {
+        success: false,
+        code: 'ERR_PATH_TRAVERSAL',
+        error: 'ERR_PATH_TRAVERSAL: Access denied outside exports directory',
+      };
+    }
     fs.mkdirSync(bundleDir, { recursive: true });
 
-    let transcriptMd = `# Transcript Export — Room: ${roomId}\nExported at: ${new Date().toISOString()}\nTotal Messages: ${history.length}\n\n---\n\n`;
+    let transcriptMd = `# Transcript Export — Room: ${cleanRoomId}\nExported at: ${new Date().toISOString()}\nTotal Messages: ${history.length}\n\n---\n\n`;
     const shaList = [];
 
     for (const env of history) {

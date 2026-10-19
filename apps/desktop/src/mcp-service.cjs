@@ -221,14 +221,26 @@ class MCPService {
           };
         }
         const cleanSha = sha256.trim().toLowerCase();
-        const targetPath = path.resolve(this.casStorePath, cleanSha);
-        if (!targetPath.startsWith(this.casStorePath + path.sep)) {
+        const prefix = cleanSha.substring(0, 2);
+        const bucketedPath = path.resolve(this.casStorePath, prefix, cleanSha);
+        const flatPath = path.resolve(this.casStorePath, cleanSha);
+
+        // Path traversal defense (UB-P5-R01-005)
+        if (!bucketedPath.startsWith(this.casStorePath + path.sep) || !flatPath.startsWith(this.casStorePath + path.sep)) {
           return {
             isError: true,
             content: [{ type: 'text', text: 'ERR_PATH_TRAVERSAL: Access denied outside CAS store' }],
           };
         }
-        if (!fs.existsSync(targetPath)) {
+
+        let targetPath = null;
+        if (fs.existsSync(bucketedPath)) {
+          targetPath = bucketedPath;
+        } else if (fs.existsSync(flatPath)) {
+          targetPath = flatPath;
+        }
+
+        if (!targetPath) {
           return {
             isError: false,
             content: [{ type: 'text', text: `Artifact ${cleanSha} not found in CAS store` }],
@@ -247,6 +259,7 @@ class MCPService {
           data: {
             sha256: cleanSha,
             exists: true,
+            byteSize: stats.size,
             sizeBytes: stats.size,
             mtime: stats.mtime.toISOString(),
           },

@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-10-19T15:10:14.313Z",
+  "timestamp": "2026-10-19T15:49:54.634Z",
   "environment": "Real Windows Electron Chromium E2E (Phase P4 Embedded AI Browser)",
   "nodeEnv": "test",
   "costGuardEgressBlocked": true,
@@ -64,7 +64,7 @@
     "domProviderTabsRendered": true,
     "a03TabCountBefore": 5,
     "a03TabCountAfter": 6,
-    "a03NewlyCreatedTabId": "tab_search_1792422613798_7lz1",
+    "a03NewlyCreatedTabId": "tab_search_1792424994122_2v6h",
     "a03AddTabCreatedSearchTab": true,
     "domToolbarAndMountRendered": true
   },

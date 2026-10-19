@@ -147,9 +147,21 @@ class ArtifactStore {
     return trimmed;
   }
 
-  storeBytes(buffer, mimeType, fidelity, provenance, originalFilename) {
+  storeBytes(buffer, mimeTypeOrOptions, fidelity, provenance, originalFilename) {
     if (buffer.length > this.maxSizeBytes) {
       throw new Error(`ERR_FILE_TOO_LARGE: Artifact size (${buffer.length} bytes) exceeds limit of ${this.maxSizeBytes} bytes (P5-012)`);
+    }
+
+    let mimeType = mimeTypeOrOptions;
+    let origFilename = originalFilename;
+    let fid = fidelity;
+    let prov = provenance;
+
+    if (typeof mimeTypeOrOptions === 'object' && mimeTypeOrOptions !== null) {
+      mimeType = mimeTypeOrOptions.mimeType;
+      origFilename = mimeTypeOrOptions.originalFilename || mimeTypeOrOptions.filename || originalFilename;
+      fid = mimeTypeOrOptions.fidelity || fidelity;
+      prov = mimeTypeOrOptions.provenance || provenance;
     }
 
     const sha256 = ArtifactStore.hashBuffer(buffer);
@@ -179,11 +191,12 @@ class ArtifactStore {
     return {
       sha256,
       byteSize: buffer.length,
+      sizeBytes: buffer.length,
       mimeType: detectedMime,
-      originalFilename,
-      fidelity,
+      originalFilename: origFilename,
+      fidelity: fid,
       transferState: 'local_verified',
-      provenance,
+      provenance: prov,
       storedPath: targetPath,
       deduplicated,
     };
@@ -248,6 +261,8 @@ class ArtifactStore {
     });
   }
 }
+
+ArtifactStore.DEFAULT_MAX_ARTIFACT_SIZE_BYTES = DEFAULT_MAX_ARTIFACT_SIZE_BYTES;
 
 module.exports = {
   ArtifactStore,

@@ -148,7 +148,12 @@ describe('Union Bot Phase P2 Gate R04: Idempotency & Schema Vectors (G04, G05, G
     // 3. Create worker database via StorageServiceClient (forced worker)
     const workerClient = new StorageServiceClient(workerDbPath, { forceWorker: true });
     await workerClient.ready;
-    workerClient.close();
+    if (typeof workerClient.closeAsync === 'function') {
+      await workerClient.closeAsync();
+    } else {
+      workerClient.close();
+    }
+    await new Promise((r) => setTimeout(r, 200));
 
     // Inspect all 3 databases with raw SQLite
     const inspectDb = (file: string) => {

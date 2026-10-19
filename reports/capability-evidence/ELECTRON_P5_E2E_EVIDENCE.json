@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-10-19T15:10:39.212Z",
+  "timestamp": "2026-10-19T15:50:21.586Z",
   "environment": "Real Windows Electron (Phase P5 Artifact Store, Previews, Tool Host & MCP)",
   "nodeEnv": "test",
   "results": {
@@ -25,7 +25,12 @@
     "mcpInspectComputed": true,
     "mcpSummaryComputed": true,
     "svgSaved": true,
+    "r02_svgSanitized": true,
     "exportBundleSucceeded": true,
+    "r02_largeFileRejected": true,
+    "r02_unapprovedScriptBlocked": true,
+    "r02_maliciousRoomExportBlocked": true,
+    "r02_mcpInspectBucketed": true,
     "domExportBundleBtnRendered": true
   },
   "allPassed": true
