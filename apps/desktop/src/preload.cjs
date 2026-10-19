@@ -277,6 +277,9 @@ const api = {
   taskGraphSubmitVote: async (payload) => {
     return ipcRenderer.invoke('union-bot:task-graph-submit-vote', payload);
   },
+  taskGraphRegisterReviewer: async (payload) => {
+    return ipcRenderer.invoke('union-bot:task-graph-register-reviewer', payload);
+  },
   taskGraphVerifyBoundary: async (targetPath) => {
     return ipcRenderer.invoke('union-bot:task-graph-verify-boundary', targetPath);
   },

@@ -24,6 +24,17 @@ const { AdmissionPolicyGate } = require('./orchestrator.cjs');
 
 // Schemas
 const StageTypeSchema = z.enum(['PLAN', 'IMPLEMENT', 'REVIEW', 'FIX', 'VERIFY']);
+const NodeExecutionStatusSchema = z.enum([
+  'PENDING',
+  'RUNNING',
+  'WAITING_APPROVAL',
+  'COMPLETED',
+  'FAILED',
+  'STALE',
+  'CANCELLED',
+  'SKIPPED',
+  'REMEDIATING',
+]);
 const RoleSchema = z.enum([
   'LEADER',
   'IMPLEMENTER',
@@ -37,10 +48,16 @@ const RoleSchema = z.enum([
 ]);
 const ConsensusDecisionSchema = z.enum(['APPROVE', 'REJECT', 'ABSTAIN']);
 
+const AuthorizedReviewerSchema = z.object({
+  voterId: z.string().min(1),
+  role: RoleSchema,
+});
+
 const ConsensusVoteSchema = z.object({
   voterId: z.string().min(1),
   voterRole: RoleSchema,
   decision: ConsensusDecisionSchema,
+  reviewedDigest: z.string().min(1),
   rationale: z.string().default(''),
   timestamp: z.number().int().nonnegative().default(() => Date.now()),
 });
@@ -49,6 +66,7 @@ const ConsensusPolicySchema = z.object({
   type: z.enum(['unanimous', 'majority', 'threshold']).default('majority'),
   minThreshold: z.number().min(0).max(1).optional(),
   requiredRoles: z.array(RoleSchema).optional(),
+  authorizedReviewers: z.array(AuthorizedReviewerSchema).optional(),
 });
 
 const TaskNodeDefinitionSchema = z.object({
@@ -58,6 +76,7 @@ const TaskNodeDefinitionSchema = z.object({
   assignedRole: RoleSchema,
   assignedProvider: z.string().optional(),
   dependencies: z.array(z.string()).default([]),
+  targetDigest: z.string().optional(),
   actionPayload: z.record(z.unknown()).optional(),
   metadata: z.record(z.unknown()).optional(),
 });
@@ -297,6 +316,20 @@ class TaskGraphEngineCJS extends EventEmitter {
   }
 
   static evaluateConsensus(votes, policy, currentAttempt = 1, maxAttempts = 3) {
+    if (!votes || votes.length === 0) {
+      const willRetry = currentAttempt < maxAttempts;
+      return {
+        consensusReached: false,
+        decision: 'REJECT',
+        action: willRetry ? 'TRIGGER_FIX' : 'ABORT',
+        approvedCount: 0,
+        rejectedCount: 0,
+        abstainCount: 0,
+        totalVotes: 0,
+        reasons: ['No consensus votes recorded for review node (fail-closed)'],
+      };
+    }
+
     let approvedCount = 0;
     let rejectedCount = 0;
     let abstainCount = 0;
@@ -384,6 +417,7 @@ class TaskGraphEngineCJS extends EventEmitter {
         assignedRole: nodeDef.assignedRole,
         assignedProvider: nodeDef.assignedProvider,
         dependencies: [...nodeDef.dependencies],
+        targetDigest: nodeDef.targetDigest,
         status: 'PENDING',
         attempt: 1,
         actionPayload: nodeDef.actionPayload ? { ...nodeDef.actionPayload } : undefined,
@@ -424,6 +458,33 @@ class TaskGraphEngineCJS extends EventEmitter {
     return Array.from(this.graphs.values());
   }
 
+  registerReviewer(graphId, reviewer) {
+    const graph = this.graphs.get(graphId);
+    if (!graph) {
+      const err = new Error(`Task graph '${graphId}' not found`);
+      err.code = 'ERR_TASK_GRAPH_FAILED';
+      throw err;
+    }
+
+    if (!graph.consensusPolicy.authorizedReviewers) {
+      graph.consensusPolicy.authorizedReviewers = [];
+    }
+
+    const existingIdx = graph.consensusPolicy.authorizedReviewers.findIndex(
+      (r) => r.voterId === reviewer.voterId
+    );
+    if (existingIdx >= 0) {
+      graph.consensusPolicy.authorizedReviewers[existingIdx] = { ...reviewer };
+    } else {
+      graph.consensusPolicy.authorizedReviewers.push({ ...reviewer });
+    }
+
+    this.recordHistory(graph, 'AUTHORIZED_REVIEWER_REGISTERED', undefined, {
+      voterId: reviewer.voterId,
+      role: reviewer.role,
+    });
+  }
+
   submitVote(graphId, nodeId, vote) {
     const graph = this.graphs.get(graphId);
     if (!graph) {
@@ -439,16 +500,60 @@ class TaskGraphEngineCJS extends EventEmitter {
       throw err;
     }
 
-    node.votes.push({
+    if (node.stage !== 'REVIEW') {
+      const err = new Error(`Cannot submit consensus vote on node '${nodeId}' in stage '${node.stage}'. Votes can only be submitted on REVIEW nodes.`);
+      err.code = 'ERR_INVALID_STAGE_TRANSITION';
+      throw err;
+    }
+
+    // 1. Authorized voter & role binding verification (P8-R01-003)
+    if (graph.consensusPolicy.authorizedReviewers && graph.consensusPolicy.authorizedReviewers.length > 0) {
+      const authorized = graph.consensusPolicy.authorizedReviewers.find(
+        (r) => r.voterId === vote.voterId
+      );
+      if (!authorized) {
+        const err = new Error(`Voter '${vote.voterId}' is not an authorized reviewer for graph '${graphId}'`);
+        err.code = 'ERR_UNAUTHORIZED_VOTER';
+        throw err;
+      }
+      if (vote.voterRole !== authorized.role) {
+        const err = new Error(`Voter '${vote.voterId}' claimed role '${vote.voterRole}', but is registered as '${authorized.role}'`);
+        err.code = 'ERR_ROLE_MISMATCH';
+        throw err;
+      }
+    }
+
+    // 2. Digest check: vote must be bound to active code/target digest (P8-R01-003)
+    if (node.targetDigest) {
+      if (!vote.reviewedDigest || vote.reviewedDigest !== node.targetDigest) {
+        const err = new Error(`Vote reviewedDigest '${vote.reviewedDigest}' does not match active review targetDigest '${node.targetDigest}'`);
+        err.code = 'ERR_STALE_VOTE_DIGEST';
+        throw err;
+      }
+    } else if (vote.reviewedDigest) {
+      node.targetDigest = vote.reviewedDigest;
+    }
+
+    // 3. Deduplication / Deterministic single-vote replacement per voter (P8-R01-003)
+    const existingIdx = node.votes.findIndex((v) => v.voterId === vote.voterId);
+    const voteEntry = {
       ...vote,
       timestamp: vote.timestamp || Date.now(),
-    });
+    };
+
+    if (existingIdx >= 0) {
+      node.votes[existingIdx] = voteEntry;
+    } else {
+      node.votes.push(voteEntry);
+    }
 
     this.recordHistory(graph, 'CONSENSUS_VOTE_RECORDED', nodeId, {
       voterId: vote.voterId,
       voterRole: vote.voterRole,
       decision: vote.decision,
+      reviewedDigest: vote.reviewedDigest,
       rationale: vote.rationale,
+      isReplacement: existingIdx >= 0,
     });
   }
 
@@ -457,12 +562,22 @@ class TaskGraphEngineCJS extends EventEmitter {
 
     for (const node of graph.nodes.values()) {
       if (node.status === 'PENDING' || node.status === 'STALE') {
-        const allDepsCompleted = node.dependencies.every((depId) => {
+        const allDepsSatisfied = node.dependencies.every((depId) => {
           const dep = graph.nodes.get(depId);
-          return dep && (dep.status === 'COMPLETED' || dep.status === 'SKIPPED');
+          if (!dep) return false;
+
+          // If this is a FIX node, its upstream REVIEW dependency is satisfied when REVIEW is REMEDIATING or FAILED
+          if (node.stage === 'FIX' && dep.stage === 'REVIEW') {
+            return dep.status === 'REMEDIATING' || dep.status === 'FAILED';
+          }
+
+          // If this is a VERIFY node:
+          // If upstream FIX was SKIPPED, satisfied
+          // If upstream FIX ran, FIX must be COMPLETED and REVIEW must be COMPLETED
+          return dep.status === 'COMPLETED' || dep.status === 'SKIPPED';
         });
 
-        if (allDepsCompleted) runnable.push(node);
+        if (allDepsSatisfied) runnable.push(node);
       }
     }
 
@@ -472,7 +587,6 @@ class TaskGraphEngineCJS extends EventEmitter {
   async executeNode(graph, node, handler) {
     node.status = 'RUNNING';
     node.startedAt = Date.now();
-    node.votes = []; // Fresh votes for this execution attempt
     this.recordHistory(graph, 'TASK_NODE_STARTED', node.id, {
       stage: node.stage,
       role: node.assignedRole,
@@ -561,16 +675,20 @@ class TaskGraphEngineCJS extends EventEmitter {
       }
 
       if (node.stage === 'REVIEW') {
-        if (node.votes.length === 0) {
-          this.submitVote(graph.id, node.id, {
-            voterId: `agent-${node.assignedRole.toLowerCase()}`,
-            voterRole: node.assignedRole,
-            decision: 'APPROVE',
-            rationale: 'Review approved by assigned agent policy',
-            timestamp: Date.now(),
-          });
+        if (!node.targetDigest) {
+          for (const depId of node.dependencies) {
+            const dep = graph.nodes.get(depId);
+            if (dep && dep.outputDigest) {
+              node.targetDigest = dep.outputDigest;
+              break;
+            }
+          }
+          if (!node.targetDigest) {
+            node.targetDigest = crypto.createHash('sha256').update(`${graph.id}:${node.id}:attempt:${node.attempt}`).digest('hex');
+          }
         }
 
+        // NO synthetic approvals (Ticket P8-R01-001): evaluate consensus strictly on authentic recorded votes
         const consensusResult = TaskGraphEngineCJS.evaluateConsensus(
           node.votes,
           graph.consensusPolicy,
@@ -596,8 +714,9 @@ class TaskGraphEngineCJS extends EventEmitter {
             }
           }
         } else if (consensusResult.action === 'TRIGGER_FIX') {
+          // Trigger Fix stage with explicit REMEDIATING state (P8-R01-002)
           graph.currentFixAttempt++;
-          node.status = 'FAILED';
+          node.status = 'REMEDIATING';
           node.error = `Consensus rejected: ${consensusResult.reasons.join('; ')}`;
 
           for (const candidate of graph.nodes.values()) {
@@ -617,16 +736,55 @@ class TaskGraphEngineCJS extends EventEmitter {
           graph.status = 'FAILED';
           graph.error = node.error;
         }
+      } else if (node.stage === 'IMPLEMENT') {
+        node.status = 'COMPLETED';
+        node.completedAt = Date.now();
+        node.outputDigest = executionResult.outputDigest || crypto.createHash('sha256').update(JSON.stringify(node.result || `${node.id}-v1`)).digest('hex');
+
+        // Propagate outputDigest to downstream REVIEW nodes as their targetDigest if not already set
+        for (const candidate of graph.nodes.values()) {
+          if (candidate.stage === 'REVIEW') {
+            if (!candidate.targetDigest) {
+              candidate.targetDigest = node.outputDigest;
+            }
+          }
+        }
+
+        const modFiles = executionResult.modifiedFiles || (node.actionPayload && node.actionPayload.files) || [];
+        if (modFiles.length > 0) {
+          this.invalidateDownstreamReviews(graph, node.id, modFiles);
+        }
+      } else if (node.stage === 'FIX') {
+        node.status = 'COMPLETED';
+        node.completedAt = Date.now();
+        node.outputDigest = executionResult.outputDigest || crypto.createHash('sha256').update(JSON.stringify(node.result || `${node.id}-fix-${node.attempt}`)).digest('hex');
+
+        // Automatic Remediation Loop (P8-R01-002): Reset upstream review node for re-review!
+        const reviewNodeId = (node.actionPayload && node.actionPayload.reviewNodeId) ||
+          Array.from(graph.nodes.values()).find((n) => n.stage === 'REVIEW')?.id;
+        if (reviewNodeId) {
+          const revNode = graph.nodes.get(reviewNodeId);
+          if (revNode) {
+            revNode.status = 'PENDING';
+            revNode.attempt++;
+            revNode.votes = [];
+            revNode.targetDigest = node.outputDigest;
+            revNode.error = undefined;
+            this.recordHistory(graph, 'TASK_NODE_RESET_FOR_REREVIEW', revNode.id, {
+              fixNodeId: node.id,
+              attempt: revNode.attempt,
+              newTargetDigest: revNode.targetDigest,
+            });
+          }
+        }
+
+        const modFiles = executionResult.modifiedFiles || (node.actionPayload && node.actionPayload.files) || [];
+        if (modFiles.length > 0) {
+          this.invalidateDownstreamReviews(graph, node.id, modFiles);
+        }
       } else {
         node.status = 'COMPLETED';
         node.completedAt = Date.now();
-
-        if (node.stage === 'IMPLEMENT' || node.stage === 'FIX') {
-          const modFiles = executionResult.modifiedFiles || (node.actionPayload?.files) || [];
-          if (modFiles.length > 0) {
-            this.invalidateDownstreamReviews(graph, node.id, modFiles);
-          }
-        }
       }
 
       this.recordHistory(graph, 'TASK_NODE_COMPLETED', node.id, {
@@ -723,10 +881,23 @@ class TaskGraphEngineCJS extends EventEmitter {
   }
 
   static createStandard5StagePipeline(params) {
+    const defaultAuthorizedReviewers = [
+      { voterId: 'reviewer-security-1', role: 'QA_SECURITY' },
+      { voterId: 'reviewer-arch-1', role: 'ARCHITECT' },
+      { voterId: 'reviewer-qa-1', role: 'REVIEWER' },
+      { voterId: 'qa-sec-auditor', role: 'QA_SECURITY' },
+      { voterId: 'agent-implementer', role: 'IMPLEMENTER' },
+    ];
+
     const policy = params.consensusPolicy || {
       type: 'majority',
       requiredRoles: ['QA_SECURITY'],
+      authorizedReviewers: defaultAuthorizedReviewers,
     };
+
+    if (!policy.authorizedReviewers || policy.authorizedReviewers.length === 0) {
+      policy.authorizedReviewers = defaultAuthorizedReviewers;
+    }
 
     return {
       id: params.id,
@@ -816,6 +987,10 @@ class TaskGraphService extends EventEmitter {
     return this.engine.listGraphs();
   }
 
+  registerReviewer(graphId, reviewer) {
+    return this.engine.registerReviewer(graphId, reviewer);
+  }
+
   submitVote(graphId, nodeId, vote) {
     return this.engine.submitVote(graphId, nodeId, vote);
   }
@@ -834,8 +1009,10 @@ class TaskGraphService extends EventEmitter {
 
 module.exports = {
   StageTypeSchema,
+  NodeExecutionStatusSchema,
   RoleSchema,
   ConsensusDecisionSchema,
+  AuthorizedReviewerSchema,
   ConsensusVoteSchema,
   ConsensusPolicySchema,
   TaskNodeDefinitionSchema,

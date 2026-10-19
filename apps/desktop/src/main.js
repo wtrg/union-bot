@@ -3171,13 +3171,82 @@ function createWindow() {
               (cyclicRes?.code === 'ERR_CYCLE_DETECTED' || cyclicRes?.error?.includes('Cyclic dependency'))
             );
 
-            // 4. P8-004, P8-005, P8-006: Live execution of 5-Stage Task Graph with Consensus & Invalidation
+            // 4. P8-R02 Voter Authentication, Digest Binding & Deduplication
+            // A. Attempt forged vote submission by unauthorized caller
+            const forgedRes = await window.unionBotAPI.taskGraphSubmitVote({
+              graphId: 'p8-e2e-pipeline',
+              nodeId: 'node-review',
+              vote: {
+                voterId: 'unauthorized-intruder',
+                voterRole: 'QA_SECURITY',
+                decision: 'APPROVE',
+                reviewedDigest: 'dummy-digest',
+                rationale: 'forged vote attempt',
+              },
+            });
+            results.forgedVoteDenied = Boolean(
+              forgedRes?.success === false &&
+              (forgedRes?.code === 'ERR_UNAUTHORIZED_VOTER' || forgedRes?.error?.includes('not an authorized reviewer'))
+            );
+
+            // B. Submit authentic vote from registered QA_SECURITY reviewer
+            const activeDigest = 'sha256-active-e2e-artifact-v1';
+            const authenticRes = await window.unionBotAPI.taskGraphSubmitVote({
+              graphId: 'p8-e2e-pipeline',
+              nodeId: 'node-review',
+              vote: {
+                voterId: 'qa-sec-auditor',
+                voterRole: 'QA_SECURITY',
+                decision: 'APPROVE',
+                reviewedDigest: activeDigest,
+                rationale: 'Authentic security review passed with 100% boundary & zero-cost guarantees',
+              },
+            });
+            results.authenticVoteAccepted = Boolean(authenticRes?.success === true);
+
+            // C. Attempt vote with stale / mismatched digest against active review targetDigest
+            const staleRes = await window.unionBotAPI.taskGraphSubmitVote({
+              graphId: 'p8-e2e-pipeline',
+              nodeId: 'node-review',
+              vote: {
+                voterId: 'reviewer-qa-1',
+                voterRole: 'REVIEWER',
+                decision: 'APPROVE',
+                reviewedDigest: 'stale-mismatched-digest-v0',
+                rationale: 'Reviewing outdated digest',
+              },
+            });
+            results.staleDigestVoteDenied = Boolean(
+              staleRes?.success === false &&
+              (staleRes?.code === 'ERR_STALE_VOTE_DIGEST' || staleRes?.error?.includes('does not match active review targetDigest'))
+            );
+
+            // D. Deduplication: update vote in-place without duplicating
+            const dupVoteRes = await window.unionBotAPI.taskGraphSubmitVote({
+              graphId: 'p8-e2e-pipeline',
+              nodeId: 'node-review',
+              vote: {
+                voterId: 'qa-sec-auditor',
+                voterRole: 'QA_SECURITY',
+                decision: 'APPROVE',
+                reviewedDigest: activeDigest,
+                rationale: 'Updated audit rationale: 100% verified',
+              },
+            });
+            const statusBeforeRun = await window.unionBotAPI.taskGraphStatus('p8-e2e-pipeline');
+            const revNodeBefore = (statusBeforeRun?.nodes || statusBeforeRun?.graph?.nodes)?.find(n => n.id === 'node-review');
+            results.duplicateVoteDeduplicated = Boolean(
+              dupVoteRes?.success === true &&
+              revNodeBefore?.votes?.length === 1 &&
+              revNodeBefore?.votes?.[0]?.rationale === 'Updated audit rationale: 100% verified'
+            );
+
+            // 5. Live execution of 5-Stage Task Graph with Consensus & Remediation
             const eventLog = [];
             const unsubEvents = window.unionBotAPI.onTaskGraphEvent((evt) => {
               if (evt) eventLog.push(evt);
             });
 
-            // Mark node-fix as SKIPPED so smooth path completes through verify
             const execRes = await window.unionBotAPI.taskGraphRun({
               graphId: 'p8-e2e-pipeline',
             });
@@ -3189,9 +3258,15 @@ function createWindow() {
               execRes?.nodes?.length === 5 &&
               execRes?.nodes?.every(n => n.status === 'COMPLETED' || n.status === 'SKIPPED')
             );
+            const reviewNodeAfter = execRes?.nodes?.find(n => n.stage === 'REVIEW');
+            const qaVote = reviewNodeAfter?.votes?.find(v => v.voterId === 'qa-sec-auditor');
             results.consensusVotesRecorded = Boolean(
-              execRes?.nodes?.some(n => n.stage === 'REVIEW')
+              qaVote &&
+              qaVote.voterRole === 'QA_SECURITY' &&
+              qaVote.decision === 'APPROVE' &&
+              qaVote.reviewedDigest === activeDigest
             );
+            results.requiredRoleApprovalVerified = Boolean(qaVote && qaVote.voterRole === 'QA_SECURITY');
             results.eventsEmitted = Boolean(eventLog.length >= 3);
 
             return results;
@@ -3212,10 +3287,15 @@ function createWindow() {
           'invalidBoundaryDenied',
           'junctionEscapeDenied',
           'cycleDetectionEnforced',
+          'forgedVoteDenied',
+          'authenticVoteAccepted',
+          'staleDigestVoteDenied',
+          'duplicateVoteDeduplicated',
           'runGraphSuccess',
           'graphStatusCompleted',
           'all5NodesCompleted',
           'consensusVotesRecorded',
+          'requiredRoleApprovalVerified',
           'eventsEmitted',
         ];
 
@@ -4700,6 +4780,7 @@ ipcMain.handle('union-bot:task-graph-status', async (event, graphId) => {
         id: n.id,
         stage: n.stage,
         status: n.status,
+        votes: n.votes,
       })),
       historyCount: graph.history.length,
     };
@@ -4715,6 +4796,19 @@ ipcMain.handle('union-bot:task-graph-submit-vote', async (event, payload) => {
   try {
     const { graphId, nodeId, vote } = payload || {};
     taskGraphService.submitVote(graphId, nodeId, vote);
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message, code: err.code };
+  }
+});
+
+ipcMain.handle('union-bot:task-graph-register-reviewer', async (event, payload) => {
+  if (!checkSenderAuthorized(event)) {
+    return { success: false, error: 'Unauthorized IPC sender origin' };
+  }
+  try {
+    const { graphId, reviewer } = payload || {};
+    taskGraphService.registerReviewer(graphId, reviewer);
     return { success: true };
   } catch (err) {
     return { success: false, error: err.message, code: err.code };

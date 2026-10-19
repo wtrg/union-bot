@@ -349,6 +349,7 @@ export const NodeExecutionStatusSchema = z.enum([
   'STALE',
   'CANCELLED',
   'SKIPPED',
+  'REMEDIATING',
 ]);
 export type NodeExecutionStatus = z.infer<typeof NodeExecutionStatusSchema>;
 
@@ -359,10 +360,17 @@ export const ConsensusDecisionSchema = z.enum([
 ]);
 export type ConsensusDecision = z.infer<typeof ConsensusDecisionSchema>;
 
+export const AuthorizedReviewerSchema = z.object({
+  voterId: z.string().min(1),
+  role: RoleSchema,
+});
+export type AuthorizedReviewer = z.infer<typeof AuthorizedReviewerSchema>;
+
 export const ConsensusVoteSchema = z.object({
   voterId: z.string().min(1),
   voterRole: RoleSchema,
   decision: ConsensusDecisionSchema,
+  reviewedDigest: z.string().min(1),
   rationale: z.string().default(''),
   timestamp: z.number().int().nonnegative().default(() => Date.now()),
 });
@@ -379,6 +387,7 @@ export const ConsensusPolicySchema = z.object({
   type: ConsensusPolicyTypeSchema.default('majority'),
   minThreshold: z.number().min(0).max(1).optional(),
   requiredRoles: z.array(RoleSchema).optional(),
+  authorizedReviewers: z.array(AuthorizedReviewerSchema).optional(),
 });
 export type ConsensusPolicy = z.infer<typeof ConsensusPolicySchema>;
 
@@ -389,6 +398,7 @@ export const TaskNodeDefinitionSchema = z.object({
   assignedRole: RoleSchema,
   assignedProvider: ProviderKindSchema.optional(),
   dependencies: z.array(z.string()).default([]),
+  targetDigest: z.string().optional(),
   actionPayload: z.record(z.unknown()).optional(),
   metadata: z.record(z.unknown()).optional(),
 });
@@ -477,6 +487,10 @@ export const UnionBotErrorCodeSchema = z.enum([
   'ERR_TASK_GRAPH_FAILED',
   'ERR_INVALID_STAGE_TRANSITION',
   'ERR_CONSENSUS_FAILED',
+  'ERR_UNAUTHORIZED_VOTER',
+  'ERR_ROLE_MISMATCH',
+  'ERR_STALE_VOTE_DIGEST',
+  'ERR_NO_VOTES_RECORDED',
 ]);
 export type UnionBotErrorCode = z.infer<typeof UnionBotErrorCodeSchema>;
 

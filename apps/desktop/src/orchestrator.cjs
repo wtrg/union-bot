@@ -293,6 +293,10 @@ const UnionBotErrorCodeSchema = z.enum([
   'ERR_TASK_GRAPH_FAILED',
   'ERR_INVALID_STAGE_TRANSITION',
   'ERR_CONSENSUS_FAILED',
+  'ERR_UNAUTHORIZED_VOTER',
+  'ERR_ROLE_MISMATCH',
+  'ERR_STALE_VOTE_DIGEST',
+  'ERR_NO_VOTES_RECORDED',
 ]);
 
 const AdmissionActionTypeSchema = z.enum([

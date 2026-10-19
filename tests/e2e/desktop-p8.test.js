@@ -146,10 +146,15 @@ describe('Union Bot Phase P8 Gate: Windows Real Electron E2E Suite', () => {
     assert.equal(evidence.results.invalidBoundaryDenied, true, 'P8-007: Directory traversal must be denied');
     assert.equal(evidence.results.junctionEscapeDenied, true, 'P8-007: Windows junction escape must be denied');
     assert.equal(evidence.results.cycleDetectionEnforced, true, 'P8-002: Cycle detection must throw ERR_CYCLE_DETECTED');
+    assert.equal(evidence.results.forgedVoteDenied, true, 'P8-R02: Forged voter without authorization must be denied');
+    assert.equal(evidence.results.authenticVoteAccepted, true, 'P8-R02: Authentic QA_SECURITY vote must be accepted');
+    assert.equal(evidence.results.staleDigestVoteDenied, true, 'P8-R02: Vote with mismatched digest must be denied');
+    assert.equal(evidence.results.duplicateVoteDeduplicated, true, 'P8-R02: Duplicate voter submission must be replaced in-place');
     assert.equal(evidence.results.runGraphSuccess, true, 'P8-003: Task graph execution must succeed');
     assert.equal(evidence.results.graphStatusCompleted, true, 'P8-003: Final graph status must be COMPLETED');
     assert.equal(evidence.results.all5NodesCompleted, true, 'P8-003: All 5 nodes must complete successfully');
-    assert.equal(evidence.results.consensusVotesRecorded, true, 'P8-006: Consensus votes must be recorded on review node');
+    assert.equal(evidence.results.consensusVotesRecorded, true, 'P8-006: Authentic vote with QA_SECURITY role & reviewed digest must be recorded');
+    assert.equal(evidence.results.requiredRoleApprovalVerified, true, 'P8-006: Required role approval from QA_SECURITY must be verified');
     assert.equal(evidence.results.eventsEmitted, true, 'P8-008: Real-time lifecycle events must be received');
 
     // Verify stdout log checks
@@ -164,10 +169,15 @@ describe('Union Bot Phase P8 Gate: Windows Real Electron E2E Suite', () => {
     assert.match(stdout, /\[P8-E2E\] Check invalidBoundaryDenied: true/);
     assert.match(stdout, /\[P8-E2E\] Check junctionEscapeDenied: true/);
     assert.match(stdout, /\[P8-E2E\] Check cycleDetectionEnforced: true/);
+    assert.match(stdout, /\[P8-E2E\] Check forgedVoteDenied: true/);
+    assert.match(stdout, /\[P8-E2E\] Check authenticVoteAccepted: true/);
+    assert.match(stdout, /\[P8-E2E\] Check staleDigestVoteDenied: true/);
+    assert.match(stdout, /\[P8-E2E\] Check duplicateVoteDeduplicated: true/);
     assert.match(stdout, /\[P8-E2E\] Check runGraphSuccess: true/);
     assert.match(stdout, /\[P8-E2E\] Check graphStatusCompleted: true/);
     assert.match(stdout, /\[P8-E2E\] Check all5NodesCompleted: true/);
     assert.match(stdout, /\[P8-E2E\] Check consensusVotesRecorded: true/);
+    assert.match(stdout, /\[P8-E2E\] Check requiredRoleApprovalVerified: true/);
     assert.match(stdout, /\[P8-E2E\] Check eventsEmitted: true/);
 
     // Clean up test directory

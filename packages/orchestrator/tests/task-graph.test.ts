@@ -142,7 +142,7 @@ describe('Phase P8: Multi-Agent Task Graph & Consensus Engine', () => {
     graph.nodes.get('node-implement')!.status = 'COMPLETED';
     const reviewNode = graph.nodes.get('node-review')!;
     reviewNode.status = 'COMPLETED';
-    reviewNode.votes = [{ voterId: 'rev-1', voterRole: 'QA_SECURITY', decision: 'APPROVE', rationale: 'OK', timestamp: Date.now() }];
+    reviewNode.votes = [{ voterId: 'rev-1', voterRole: 'QA_SECURITY', decision: 'APPROVE', reviewedDigest: 'digest-001', rationale: 'OK', timestamp: Date.now() }];
     const verifyNode = graph.nodes.get('node-verify')!;
     verifyNode.status = 'COMPLETED';
 
@@ -165,16 +165,16 @@ describe('Phase P8: Multi-Agent Task Graph & Consensus Engine', () => {
     const policy = { type: 'unanimous' as const };
 
     const votesPassing: ConsensusVote[] = [
-      { voterId: 'agent-1', voterRole: 'QA_SECURITY', decision: 'APPROVE', rationale: 'Good', timestamp: Date.now() },
-      { voterId: 'agent-2', voterRole: 'REVIEWER', decision: 'APPROVE', rationale: 'Clean', timestamp: Date.now() },
+      { voterId: 'agent-1', voterRole: 'QA_SECURITY', decision: 'APPROVE', reviewedDigest: 'digest-001', rationale: 'Good', timestamp: Date.now() },
+      { voterId: 'agent-2', voterRole: 'REVIEWER', decision: 'APPROVE', reviewedDigest: 'digest-001', rationale: 'Clean', timestamp: Date.now() },
     ];
     const resPass = TaskGraphEngine.evaluateConsensus(votesPassing, policy, 1, 3);
     assert.equal(resPass.consensusReached, true);
     assert.equal(resPass.action, 'PROCEED');
 
     const votesFailing: ConsensusVote[] = [
-      { voterId: 'agent-1', voterRole: 'QA_SECURITY', decision: 'APPROVE', rationale: 'Good', timestamp: Date.now() },
-      { voterId: 'agent-2', voterRole: 'REVIEWER', decision: 'REJECT', rationale: 'Security flaw', timestamp: Date.now() },
+      { voterId: 'agent-1', voterRole: 'QA_SECURITY', decision: 'APPROVE', reviewedDigest: 'digest-001', rationale: 'Good', timestamp: Date.now() },
+      { voterId: 'agent-2', voterRole: 'REVIEWER', decision: 'REJECT', reviewedDigest: 'digest-001', rationale: 'Security flaw', timestamp: Date.now() },
     ];
     const resFail = TaskGraphEngine.evaluateConsensus(votesFailing, policy, 1, 3);
     assert.equal(resFail.consensusReached, false);
@@ -190,9 +190,9 @@ describe('Phase P8: Multi-Agent Task Graph & Consensus Engine', () => {
 
     // 2 approves, 1 reject = 66% majority, but QA_SECURITY rejected
     const votesMissingReq: ConsensusVote[] = [
-      { voterId: 'agent-1', voterRole: 'REVIEWER', decision: 'APPROVE', rationale: 'OK', timestamp: Date.now() },
-      { voterId: 'agent-2', voterRole: 'ARCHITECT', decision: 'APPROVE', rationale: 'OK', timestamp: Date.now() },
-      { voterId: 'agent-3', voterRole: 'QA_SECURITY', decision: 'REJECT', rationale: 'Vulnerability found', timestamp: Date.now() },
+      { voterId: 'agent-1', voterRole: 'REVIEWER', decision: 'APPROVE', reviewedDigest: 'digest-001', rationale: 'OK', timestamp: Date.now() },
+      { voterId: 'agent-2', voterRole: 'ARCHITECT', decision: 'APPROVE', reviewedDigest: 'digest-001', rationale: 'OK', timestamp: Date.now() },
+      { voterId: 'agent-3', voterRole: 'QA_SECURITY', decision: 'REJECT', reviewedDigest: 'digest-001', rationale: 'Vulnerability found', timestamp: Date.now() },
     ];
 
     const res = TaskGraphEngine.evaluateConsensus(votesMissingReq, policy, 1, 3);
@@ -202,9 +202,9 @@ describe('Phase P8: Multi-Agent Task Graph & Consensus Engine', () => {
 
     // Once QA_SECURITY approves, consensus passes
     const votesPassing: ConsensusVote[] = [
-      { voterId: 'agent-1', voterRole: 'REVIEWER', decision: 'APPROVE', rationale: 'OK', timestamp: Date.now() },
-      { voterId: 'agent-2', voterRole: 'ARCHITECT', decision: 'REJECT', rationale: 'Minor issue', timestamp: Date.now() },
-      { voterId: 'agent-3', voterRole: 'QA_SECURITY', decision: 'APPROVE', rationale: 'Security verified', timestamp: Date.now() },
+      { voterId: 'agent-1', voterRole: 'REVIEWER', decision: 'APPROVE', reviewedDigest: 'digest-001', rationale: 'OK', timestamp: Date.now() },
+      { voterId: 'agent-2', voterRole: 'ARCHITECT', decision: 'REJECT', reviewedDigest: 'digest-001', rationale: 'Minor issue', timestamp: Date.now() },
+      { voterId: 'agent-3', voterRole: 'QA_SECURITY', decision: 'APPROVE', reviewedDigest: 'digest-001', rationale: 'Security verified', timestamp: Date.now() },
     ];
     const resPass = TaskGraphEngine.evaluateConsensus(votesPassing, policy, 1, 3);
     assert.equal(resPass.consensusReached, true);
@@ -214,7 +214,7 @@ describe('Phase P8: Multi-Agent Task Graph & Consensus Engine', () => {
   it('P8-008: aborts permanently when maxFixAttempts is exhausted', () => {
     const policy = { type: 'unanimous' as const };
     const votesFailing: ConsensusVote[] = [
-      { voterId: 'agent-1', voterRole: 'QA_SECURITY', decision: 'REJECT', rationale: 'Fatal flaw', timestamp: Date.now() },
+      { voterId: 'agent-1', voterRole: 'QA_SECURITY', decision: 'REJECT', reviewedDigest: 'digest-001', rationale: 'Fatal flaw', timestamp: Date.now() },
     ];
 
     // Attempt 3 of 3 -> Should abort
@@ -320,13 +320,14 @@ describe('Phase P8: Multi-Agent Task Graph & Consensus Engine', () => {
       }),
       IMPLEMENT: async (node) => ({
         result: { code: 'export class Auth {}' },
+        outputDigest: 'digest-auth-v1',
         modifiedFiles: ['src/auth.ts'],
       }),
       REVIEW: async (node) => ({
         result: { approved: true },
         votes: [
-          { voterId: 'reviewer-codex', voterRole: 'QA_SECURITY', decision: 'APPROVE', rationale: 'LGTM', timestamp: Date.now() },
-          { voterId: 'reviewer-antigravity', voterRole: 'REVIEWER', decision: 'APPROVE', rationale: 'Clean code', timestamp: Date.now() },
+          { voterId: 'qa-sec-auditor', voterRole: 'QA_SECURITY', decision: 'APPROVE', reviewedDigest: node.targetDigest || 'digest-auth-v1', rationale: 'LGTM', timestamp: Date.now() },
+          { voterId: 'reviewer-qa-1', voterRole: 'REVIEWER', decision: 'APPROVE', reviewedDigest: node.targetDigest || 'digest-auth-v1', rationale: 'Clean code', timestamp: Date.now() },
         ],
       }),
       FIX: async (node) => {
@@ -352,79 +353,258 @@ describe('Phase P8: Multi-Agent Task Graph & Consensus Engine', () => {
     assert.ok(finalState.history.length >= 8);
   });
 
-  it('P8-012: handles Review rejection -> Fix remediation -> Stale Invalidation -> Verify loop', async () => {
+  it('P8-012: handles Review rejection -> Fix remediation -> Stale Invalidation -> Re-review loop via runGraph()', async () => {
     const pipeline = TaskGraphEngine.createStandard5StagePipeline({
       id: 'graph-fix-loop',
       name: 'Fix Remediation Loop',
       workspaceRoot: tempWorkspace,
       planPrompt: 'Build secure token vault',
       targetFiles: ['src/vault.ts'],
-      consensusPolicy: { type: 'unanimous' },
+      consensusPolicy: {
+        type: 'unanimous',
+        requiredRoles: ['QA_SECURITY'],
+        authorizedReviewers: [
+          { voterId: 'qa-sec-agent', role: 'QA_SECURITY' },
+        ],
+      },
       maxFixAttempts: 2,
     });
 
     const graph = engine.createGraph(pipeline);
 
     let reviewAttempt = 0;
+    let fixAttempt = 0;
 
     const handlers: Record<string, TaskNodeHandler> = {
       PLAN: async () => ({ result: 'Vault plan' }),
-      IMPLEMENT: async () => ({ result: 'Initial vault code', modifiedFiles: ['src/vault.ts'] }),
-      REVIEW: async () => {
+      IMPLEMENT: async () => ({
+        result: 'Initial vault code v1',
+        outputDigest: 'digest-vault-v1',
+        modifiedFiles: ['src/vault.ts'],
+      }),
+      REVIEW: async (node) => {
         reviewAttempt++;
-        if (reviewAttempt === 1) {
+        if (node.attempt === 1) {
           // First attempt: reject with security finding
           return {
-            result: 'Rejected',
+            result: 'Rejected due to missing entropy',
             votes: [
-              { voterId: 'qa-agent', voterRole: 'QA_SECURITY', decision: 'REJECT', rationale: 'Missing entropy', timestamp: Date.now() },
+              {
+                voterId: 'qa-sec-agent',
+                voterRole: 'QA_SECURITY',
+                decision: 'REJECT',
+                reviewedDigest: node.targetDigest || 'digest-vault-v1',
+                rationale: 'Missing entropy',
+                timestamp: Date.now(),
+              },
             ],
           };
         } else {
           // Second attempt after fix: approve
           return {
-            result: 'Approved',
+            result: 'Approved after crypto patch',
             votes: [
-              { voterId: 'qa-agent', voterRole: 'QA_SECURITY', decision: 'APPROVE', rationale: 'Entropy resolved', timestamp: Date.now() },
+              {
+                voterId: 'qa-sec-agent',
+                voterRole: 'QA_SECURITY',
+                decision: 'APPROVE',
+                reviewedDigest: node.targetDigest!,
+                rationale: 'Entropy resolved',
+                timestamp: Date.now(),
+              },
             ],
           };
         }
       },
       FIX: async (node) => {
-        // Remediation handler
+        fixAttempt++;
         return {
           result: 'Patched vault with crypto.randomBytes',
+          outputDigest: 'digest-vault-v2-patched',
           modifiedFiles: ['src/vault.ts'],
         };
       },
       VERIFY: async () => ({ result: 'All security checks pass' }),
     };
 
-    // 1. First execution tick through plan & implement
-    await engine.executeNode(graph, graph.nodes.get('node-plan')!, handlers.PLAN);
-    await engine.executeNode(graph, graph.nodes.get('node-implement')!, handlers.IMPLEMENT);
+    // Entire remediation cycle executed autonomously via runGraph() (P8-R01-002)
+    const finalState = await engine.runGraph(graph.id, handlers);
 
-    // 2. Review executes and fails consensus
-    await engine.executeNode(graph, graph.nodes.get('node-review')!, handlers.REVIEW);
-    assert.equal(graph.nodes.get('node-review')!.status, 'FAILED');
-    assert.equal(graph.currentFixAttempt, 1);
+    assert.equal(finalState.status, 'COMPLETED');
+    assert.equal(reviewAttempt, 2, 'REVIEW must execute twice: initial rejection + re-review');
+    assert.equal(fixAttempt, 1, 'FIX must execute once for remediation');
+    assert.equal(finalState.nodes.get('node-review')!.status, 'COMPLETED');
+    assert.equal(finalState.nodes.get('node-fix')!.status, 'COMPLETED');
+    assert.equal(finalState.nodes.get('node-verify')!.status, 'COMPLETED');
+    assert.equal(finalState.currentFixAttempt, 1);
+  });
 
-    // 3. Fix node is now runnable with review feedback
-    const fixNode = graph.nodes.get('node-fix')!;
-    assert.equal(fixNode.status, 'PENDING');
-    assert.ok(Array.isArray(fixNode.actionPayload?.reviewFeedback));
+  // =========================================================================
+  // 6. Mandatory Regression Suite for Round R02 (Technical Leader Audit)
+  // =========================================================================
 
-    // 4. Run Fix node
-    await engine.executeNode(graph, fixNode, handlers.FIX);
-    assert.equal(fixNode.status, 'COMPLETED');
+  it('P8-R02-001: enforces missing-vote fail-closed without synthetic approval', async () => {
+    const pipeline = TaskGraphEngine.createStandard5StagePipeline({
+      id: 'graph-no-vote-test',
+      name: 'No Synthetic Approval Test',
+      workspaceRoot: tempWorkspace,
+      planPrompt: 'Build feature',
+    });
 
-    // 5. Re-run Review node (attempt 2)
-    graph.nodes.get('node-review')!.status = 'PENDING';
-    await engine.executeNode(graph, graph.nodes.get('node-review')!, handlers.REVIEW);
-    assert.equal(graph.nodes.get('node-review')!.status, 'COMPLETED');
+    const graph = engine.createGraph(pipeline);
+    const reviewNode = graph.nodes.get('node-review')!;
+    reviewNode.targetDigest = 'target-sha256-v1';
 
-    // 6. Verify node runs and completes graph
-    await engine.executeNode(graph, graph.nodes.get('node-verify')!, handlers.VERIFY);
-    assert.equal(graph.nodes.get('node-verify')!.status, 'COMPLETED');
+    // Execute review node with handler returning 0 votes
+    await engine.executeNode(graph, reviewNode, async () => ({
+      result: 'No reviewer showed up',
+      votes: [], // Empty votes
+    }));
+
+    // Must transition to REMEDIATING or FAILED, NEVER COMPLETED or synthesize approval!
+    assert.equal(reviewNode.status, 'REMEDIATING');
+    assert.equal(reviewNode.votes.length, 0, 'Must NOT synthesize any fake approval vote');
+    assert.match(reviewNode.error || '', /No consensus votes recorded/);
+  });
+
+  it('P8-R02-002: denies forged QA_SECURITY votes (role mismatch & unauthorized voter)', () => {
+    const pipeline = TaskGraphEngine.createStandard5StagePipeline({
+      id: 'graph-trusted-voter-test',
+      name: 'Trusted Voter Test',
+      workspaceRoot: tempWorkspace,
+      planPrompt: 'Build feature',
+      consensusPolicy: {
+        type: 'majority',
+        requiredRoles: ['QA_SECURITY'],
+        authorizedReviewers: [
+          { voterId: 'authentic-qa-agent', role: 'QA_SECURITY' },
+          { voterId: 'authentic-dev-agent', role: 'IMPLEMENTER' },
+        ],
+      },
+    });
+
+    const graph = engine.createGraph(pipeline);
+    const reviewNode = graph.nodes.get('node-review')!;
+    reviewNode.targetDigest = 'target-sha256-v1';
+
+    // 1. Unauthorized voter
+    assert.throws(
+      () => {
+        engine.submitVote(graph.id, reviewNode.id, {
+          voterId: 'fake-security-agent',
+          voterRole: 'QA_SECURITY',
+          decision: 'APPROVE',
+          reviewedDigest: 'target-sha256-v1',
+          rationale: 'I claim I am QA_SECURITY',
+          timestamp: Date.now(),
+        });
+      },
+      (err: any) => {
+        assert.equal(err.code, 'ERR_UNAUTHORIZED_VOTER');
+        return true;
+      }
+    );
+
+    // 2. Role mismatch: authorized voter tries to claim different role
+    assert.throws(
+      () => {
+        engine.submitVote(graph.id, reviewNode.id, {
+          voterId: 'authentic-dev-agent',
+          voterRole: 'QA_SECURITY', // Registered as IMPLEMENTER!
+          decision: 'APPROVE',
+          reviewedDigest: 'target-sha256-v1',
+          rationale: 'I want to forge QA_SECURITY role',
+          timestamp: Date.now(),
+        });
+      },
+      (err: any) => {
+        assert.equal(err.code, 'ERR_ROLE_MISMATCH');
+        return true;
+      }
+    );
+  });
+
+  it('P8-R02-003: deduplicates votes deterministically with single active vote per voter', () => {
+    const pipeline = TaskGraphEngine.createStandard5StagePipeline({
+      id: 'graph-dedup-vote-test',
+      name: 'Vote Dedup Test',
+      workspaceRoot: tempWorkspace,
+      planPrompt: 'Build feature',
+      consensusPolicy: {
+        type: 'majority',
+        authorizedReviewers: [
+          { voterId: 'qa-sec-auditor', role: 'QA_SECURITY' },
+        ],
+      },
+    });
+
+    const graph = engine.createGraph(pipeline);
+    const reviewNode = graph.nodes.get('node-review')!;
+    reviewNode.targetDigest = 'target-sha256-v1';
+
+    // Submit initial rejection
+    engine.submitVote(graph.id, reviewNode.id, {
+      voterId: 'qa-sec-auditor',
+      voterRole: 'QA_SECURITY',
+      decision: 'REJECT',
+      reviewedDigest: 'target-sha256-v1',
+      rationale: 'First impression: issues found',
+      timestamp: Date.now(),
+    });
+    assert.equal(reviewNode.votes.length, 1);
+    assert.equal(reviewNode.votes[0].decision, 'REJECT');
+
+    // Submit revised approval from same voter for same digest
+    engine.submitVote(graph.id, reviewNode.id, {
+      voterId: 'qa-sec-auditor',
+      voterRole: 'QA_SECURITY',
+      decision: 'APPROVE',
+      reviewedDigest: 'target-sha256-v1',
+      rationale: 'Clarification received: approved',
+      timestamp: Date.now() + 10,
+    });
+
+    // Length must remain 1 (replaced in-place, NOT duplicated!)
+    assert.equal(reviewNode.votes.length, 1);
+    assert.equal(reviewNode.votes[0].decision, 'APPROVE');
+    assert.equal(reviewNode.votes[0].rationale, 'Clarification received: approved');
+  });
+
+  it('P8-R02-004: denies vote on stale digest mismatch (ERR_STALE_VOTE_DIGEST)', () => {
+    const pipeline = TaskGraphEngine.createStandard5StagePipeline({
+      id: 'graph-stale-digest-test',
+      name: 'Stale Digest Test',
+      workspaceRoot: tempWorkspace,
+      planPrompt: 'Build feature',
+      consensusPolicy: {
+        type: 'majority',
+        authorizedReviewers: [
+          { voterId: 'qa-sec-auditor', role: 'QA_SECURITY' },
+        ],
+      },
+    });
+
+    const graph = engine.createGraph(pipeline);
+    const reviewNode = graph.nodes.get('node-review')!;
+    reviewNode.targetDigest = 'active-sha256-code-v2';
+
+    // Submit vote for old digest 'stale-sha256-code-v1'
+    assert.throws(
+      () => {
+        engine.submitVote(graph.id, reviewNode.id, {
+          voterId: 'qa-sec-auditor',
+          voterRole: 'QA_SECURITY',
+          decision: 'APPROVE',
+          reviewedDigest: 'stale-sha256-code-v1', // Outdated digest!
+          rationale: 'Reviewed old code version',
+          timestamp: Date.now(),
+        });
+      },
+      (err: any) => {
+        assert.equal(err.code, 'ERR_STALE_VOTE_DIGEST');
+        assert.match(err.message, /does not match active review targetDigest/);
+        return true;
+      }
+    );
   });
 });

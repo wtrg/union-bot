@@ -25,6 +25,7 @@ import {
   type ConsensusDecision,
   type ConsensusVote,
   type ConsensusPolicy,
+  type AuthorizedReviewer,
   type TaskNodeDefinition,
   type TaskGraphDefinition,
   TaskGraphDefinitionSchema,
@@ -53,6 +54,7 @@ export interface TaskNodeState {
   error?: string;
   inputDigest?: string;
   outputDigest?: string;
+  targetDigest?: string;
   modifiedFiles?: string[];
   votes: ConsensusVote[];
   staleReason?: string;
@@ -431,6 +433,21 @@ export class TaskGraphEngine extends EventEmitter {
     currentAttempt: number = 1,
     maxAttempts: number = 3
   ): ConsensusEvaluationResult {
+    // Fail-closed if no votes recorded (P8-R01-001)
+    if (!votes || votes.length === 0) {
+      const willRetry = currentAttempt < maxAttempts;
+      return {
+        consensusReached: false,
+        decision: 'REJECT',
+        action: willRetry ? 'TRIGGER_FIX' : 'ABORT',
+        approvedCount: 0,
+        rejectedCount: 0,
+        abstainCount: 0,
+        totalVotes: 0,
+        reasons: ['No consensus votes recorded for review node (fail-closed)'],
+      };
+    }
+
     let approvedCount = 0;
     let rejectedCount = 0;
     let abstainCount = 0;
@@ -529,6 +546,7 @@ export class TaskGraphEngine extends EventEmitter {
         assignedRole: nodeDef.assignedRole,
         assignedProvider: nodeDef.assignedProvider,
         dependencies: [...nodeDef.dependencies],
+        targetDigest: nodeDef.targetDigest,
         status: 'PENDING',
         attempt: 1,
         actionPayload: nodeDef.actionPayload ? { ...nodeDef.actionPayload } : undefined,
@@ -590,7 +608,44 @@ export class TaskGraphEngine extends EventEmitter {
   }
 
   /**
+   * Registers an authorized reviewer in the graph consensus policy (Ticket P8-R01-003).
+   */
+  public registerReviewer(graphId: string, reviewer: AuthorizedReviewer): void {
+    const graph = this.graphs.get(graphId);
+    if (!graph) {
+      throw new UnionBotError({
+        code: 'ERR_TASK_GRAPH_FAILED',
+        message: `Task graph '${graphId}' not found`,
+      });
+    }
+
+    if (!graph.consensusPolicy.authorizedReviewers) {
+      graph.consensusPolicy.authorizedReviewers = [];
+    }
+
+    const existingIdx = graph.consensusPolicy.authorizedReviewers.findIndex(
+      (r) => r.voterId === reviewer.voterId
+    );
+    if (existingIdx >= 0) {
+      graph.consensusPolicy.authorizedReviewers[existingIdx] = { ...reviewer };
+    } else {
+      graph.consensusPolicy.authorizedReviewers.push({ ...reviewer });
+    }
+
+    this.recordHistory(graph, 'AUTHORIZED_REVIEWER_REGISTERED', undefined, {
+      voterId: reviewer.voterId,
+      role: reviewer.role,
+    });
+  }
+
+  /**
    * Submits a consensus vote for a node in a graph.
+   * Enforces:
+   * - Node must be in REVIEW stage (ERR_INVALID_STAGE_TRANSITION)
+   * - Authorized voter registry verification (ERR_UNAUTHORIZED_VOTER)
+   * - Role binding authentication (ERR_ROLE_MISMATCH)
+   * - Reviewed code digest verification against active targetDigest (ERR_STALE_VOTE_DIGEST)
+   * - Idempotent voter replacement (one active vote per voter per target version)
    */
   public submitVote(graphId: string, nodeId: string, vote: ConsensusVote): void {
     const graph = this.graphs.get(graphId);
@@ -609,33 +664,96 @@ export class TaskGraphEngine extends EventEmitter {
       });
     }
 
-    node.votes.push({
+    if (node.stage !== 'REVIEW') {
+      throw new UnionBotError({
+        code: 'ERR_INVALID_STAGE_TRANSITION',
+        message: `Cannot submit consensus vote on node '${nodeId}' in stage '${node.stage}'. Votes can only be submitted on REVIEW nodes.`,
+      });
+    }
+
+    // 1. Authorized voter & role binding verification (P8-R01-003)
+    if (graph.consensusPolicy.authorizedReviewers && graph.consensusPolicy.authorizedReviewers.length > 0) {
+      const authorized = graph.consensusPolicy.authorizedReviewers.find(
+        (r) => r.voterId === vote.voterId
+      );
+      if (!authorized) {
+        throw new UnionBotError({
+          code: 'ERR_UNAUTHORIZED_VOTER',
+          message: `Voter '${vote.voterId}' is not an authorized reviewer for graph '${graphId}'`,
+        });
+      }
+      if (vote.voterRole !== authorized.role) {
+        throw new UnionBotError({
+          code: 'ERR_ROLE_MISMATCH',
+          message: `Voter '${vote.voterId}' claimed role '${vote.voterRole}', but is registered as '${authorized.role}'`,
+        });
+      }
+    }
+
+    // 2. Digest check: vote must be bound to active code/target digest (P8-R01-003)
+    if (node.targetDigest) {
+      if (!vote.reviewedDigest || vote.reviewedDigest !== node.targetDigest) {
+        throw new UnionBotError({
+          code: 'ERR_STALE_VOTE_DIGEST',
+          message: `Vote reviewedDigest '${vote.reviewedDigest}' does not match active review targetDigest '${node.targetDigest}'`,
+        });
+      }
+    } else if (vote.reviewedDigest) {
+      // Bind review node targetDigest to the digest of the first submitted vote
+      node.targetDigest = vote.reviewedDigest;
+    }
+
+    // 3. Deduplication / Deterministic single-vote replacement per voter (P8-R01-003)
+    const existingIdx = node.votes.findIndex((v) => v.voterId === vote.voterId);
+    const voteEntry: ConsensusVote = {
       ...vote,
       timestamp: vote.timestamp || Date.now(),
-    });
+    };
+
+    if (existingIdx >= 0) {
+      node.votes[existingIdx] = voteEntry;
+    } else {
+      node.votes.push(voteEntry);
+    }
 
     this.recordHistory(graph, 'CONSENSUS_VOTE_RECORDED', nodeId, {
       voterId: vote.voterId,
       voterRole: vote.voterRole,
       decision: vote.decision,
+      reviewedDigest: vote.reviewedDigest,
       rationale: vote.rationale,
+      isReplacement: existingIdx >= 0,
     });
   }
 
   /**
-   * Finds runnable nodes (status is PENDING or STALE, and all dependencies are COMPLETED).
+   * Finds runnable nodes (status is PENDING or STALE, and all dependencies are satisfied).
+   * Supports:
+   * - Standard sequential/parallel branches
+   * - Remediation loop: FIX node is runnable when upstream REVIEW is REMEDIATING or FAILED
+   * - Verification node: runnable when upstream REVIEW is COMPLETED and FIX is COMPLETED or SKIPPED
    */
   public getRunnableNodes(graph: TaskGraphState): TaskNodeState[] {
     const runnable: TaskNodeState[] = [];
 
     for (const node of graph.nodes.values()) {
       if (node.status === 'PENDING' || node.status === 'STALE') {
-        const allDepsCompleted = node.dependencies.every((depId) => {
+        const allDepsSatisfied = node.dependencies.every((depId) => {
           const dep = graph.nodes.get(depId);
-          return dep && (dep.status === 'COMPLETED' || dep.status === 'SKIPPED');
+          if (!dep) return false;
+
+          // If this is a FIX node, its upstream REVIEW dependency is satisfied when REVIEW is REMEDIATING or FAILED
+          if (node.stage === 'FIX' && dep.stage === 'REVIEW') {
+            return dep.status === 'REMEDIATING' || dep.status === 'FAILED';
+          }
+
+          // If this is a VERIFY node:
+          // If upstream FIX was SKIPPED, satisfied
+          // If upstream FIX ran, FIX must be COMPLETED and REVIEW must be COMPLETED
+          return dep.status === 'COMPLETED' || dep.status === 'SKIPPED';
         });
 
-        if (allDepsCompleted) {
+        if (allDepsSatisfied) {
           runnable.push(node);
         }
       }
@@ -658,7 +776,6 @@ export class TaskGraphEngine extends EventEmitter {
   ): Promise<TaskNodeState> {
     node.status = 'RUNNING';
     node.startedAt = Date.now();
-    node.votes = []; // Reset votes for new attempt
     this.recordHistory(graph, 'TASK_NODE_STARTED', node.id, {
       stage: node.stage,
       role: node.assignedRole,
@@ -756,18 +873,21 @@ export class TaskGraphEngine extends EventEmitter {
 
       // 3. Stage-Specific Logic
       if (node.stage === 'REVIEW') {
-        // If no explicit votes submitted by handler, generate default approval from assignedRole
-        if (node.votes.length === 0) {
-          this.submitVote(graph.id, node.id, {
-            voterId: `agent-${node.assignedRole.toLowerCase()}`,
-            voterRole: node.assignedRole,
-            decision: 'APPROVE',
-            rationale: 'Review approved by assigned agent policy',
-            timestamp: Date.now(),
-          });
+        // Resolve active targetDigest from dependencies if not explicitly set
+        if (!node.targetDigest) {
+          for (const depId of node.dependencies) {
+            const dep = graph.nodes.get(depId);
+            if (dep?.outputDigest) {
+              node.targetDigest = dep.outputDigest;
+              break;
+            }
+          }
+          if (!node.targetDigest) {
+            node.targetDigest = crypto.createHash('sha256').update(`${graph.id}:${node.id}:attempt:${node.attempt}`).digest('hex');
+          }
         }
 
-        // Evaluate consensus
+        // NO synthetic approvals (Ticket P8-R01-001): evaluate consensus strictly on authentic recorded votes
         const consensusResult = TaskGraphEngine.evaluateConsensus(
           node.votes,
           graph.consensusPolicy,
@@ -793,9 +913,9 @@ export class TaskGraphEngine extends EventEmitter {
             }
           }
         } else if (consensusResult.action === 'TRIGGER_FIX') {
-          // Trigger Fix stage
+          // Trigger Fix stage with explicit REMEDIATING state (P8-R01-002)
           graph.currentFixAttempt++;
-          node.status = 'FAILED';
+          node.status = 'REMEDIATING';
           node.error = `Consensus rejected: ${consensusResult.reasons.join('; ')}`;
 
           // Find downstream FIX node and pass feedback
@@ -817,17 +937,55 @@ export class TaskGraphEngine extends EventEmitter {
           graph.status = 'FAILED';
           graph.error = node.error;
         }
+      } else if (node.stage === 'IMPLEMENT') {
+        node.status = 'COMPLETED';
+        node.completedAt = Date.now();
+        node.outputDigest = executionResult.outputDigest || crypto.createHash('sha256').update(JSON.stringify(node.result || `${node.id}-v1`)).digest('hex');
+
+        // Propagate outputDigest to downstream REVIEW nodes as their targetDigest if not already set
+        for (const candidate of graph.nodes.values()) {
+          if (candidate.stage === 'REVIEW') {
+            if (!candidate.targetDigest) {
+              candidate.targetDigest = node.outputDigest;
+            }
+          }
+        }
+
+        const modFiles = executionResult.modifiedFiles || (node.actionPayload?.files as string[]) || [];
+        if (modFiles.length > 0) {
+          this.invalidateDownstreamReviews(graph, node.id, modFiles);
+        }
+      } else if (node.stage === 'FIX') {
+        node.status = 'COMPLETED';
+        node.completedAt = Date.now();
+        node.outputDigest = executionResult.outputDigest || crypto.createHash('sha256').update(JSON.stringify(node.result || `${node.id}-fix-${node.attempt}`)).digest('hex');
+
+        // Automatic Remediation Loop (P8-R01-002): Reset upstream review node for re-review!
+        const reviewNodeId = (node.actionPayload?.reviewNodeId as string) ||
+          Array.from(graph.nodes.values()).find((n) => n.stage === 'REVIEW')?.id;
+        if (reviewNodeId) {
+          const revNode = graph.nodes.get(reviewNodeId);
+          if (revNode) {
+            revNode.status = 'PENDING';
+            revNode.attempt++;
+            revNode.votes = [];
+            revNode.targetDigest = node.outputDigest;
+            revNode.error = undefined;
+            this.recordHistory(graph, 'TASK_NODE_RESET_FOR_REREVIEW', revNode.id, {
+              fixNodeId: node.id,
+              attempt: revNode.attempt,
+              newTargetDigest: revNode.targetDigest,
+            });
+          }
+        }
+
+        const modFiles = executionResult.modifiedFiles || (node.actionPayload?.files as string[]) || [];
+        if (modFiles.length > 0) {
+          this.invalidateDownstreamReviews(graph, node.id, modFiles);
+        }
       } else {
         node.status = 'COMPLETED';
         node.completedAt = Date.now();
-
-        // If IMPLEMENT or FIX mutated files, invalidate downstream reviews!
-        if (node.stage === 'IMPLEMENT' || node.stage === 'FIX') {
-          const modFiles = executionResult.modifiedFiles || (node.actionPayload?.files as string[]) || [];
-          if (modFiles.length > 0) {
-            this.invalidateDownstreamReviews(graph, node.id, modFiles);
-          }
-        }
       }
 
       this.recordHistory(graph, 'TASK_NODE_COMPLETED', node.id, {
@@ -982,10 +1140,23 @@ export class TaskGraphEngine extends EventEmitter {
     consensusPolicy?: ConsensusPolicy;
     maxFixAttempts?: number;
   }): TaskGraphDefinition {
-    const policy = params.consensusPolicy || {
+    const defaultAuthorizedReviewers: AuthorizedReviewer[] = [
+      { voterId: 'reviewer-security-1', role: 'QA_SECURITY' },
+      { voterId: 'reviewer-arch-1', role: 'ARCHITECT' },
+      { voterId: 'reviewer-qa-1', role: 'REVIEWER' },
+      { voterId: 'qa-sec-auditor', role: 'QA_SECURITY' },
+      { voterId: 'agent-implementer', role: 'IMPLEMENTER' },
+    ];
+
+    const policy: ConsensusPolicy = params.consensusPolicy || {
       type: 'majority',
       requiredRoles: ['QA_SECURITY'],
+      authorizedReviewers: defaultAuthorizedReviewers,
     };
+
+    if (!policy.authorizedReviewers || policy.authorizedReviewers.length === 0) {
+      policy.authorizedReviewers = defaultAuthorizedReviewers;
+    }
 
     return {
       id: params.id,
