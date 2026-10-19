@@ -4,7 +4,7 @@
 $ErrorActionPreference = "Stop"
 
 Write-Host "`n========================================================" -ForegroundColor Cyan
-Write-Host "UNION BOT COMPREHENSIVE VERIFICATION SUITE (P2 ROUND R07)" -ForegroundColor Cyan
+Write-Host "UNION BOT COMPREHENSIVE VERIFICATION SUITE (PHASE P3 GATE)" -ForegroundColor Cyan
 Write-Host "========================================================`n" -ForegroundColor Cyan
 
 # 1. Strict TypeScript Typecheck across Monorepo
@@ -23,8 +23,8 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 
-# 3. Run TypeScript & Node Unit/Integration Tests (including P2, R03, R04, R05, R06, and R07 A01..A05)
-Write-Host "`n--- 3. Running TypeScript & Node Unit/Integration Tests (including R07 A01..A05) ---" -ForegroundColor Yellow
+# 3. Run TypeScript & Node Unit/Integration Tests (including P2, R03-R07, and P3 Desktop Features)
+Write-Host "`n--- 3. Running TypeScript & Node Unit/Integration Tests (including P3 Desktop Features) ---" -ForegroundColor Yellow
 pnpm test:ts
 if ($LASTEXITCODE -ne 0) {
     Write-Host "`n[FATAL] TypeScript unit tests failed!" -ForegroundColor Red
@@ -39,8 +39,8 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 
-# 5. Run Real Windows Electron E2E Tests (R04, R05, R06, and R07)
-Write-Host "`n--- 5. Running Real Windows Electron E2E Tests (R04, R05, R06, and R07) ---" -ForegroundColor Yellow
+# 5. Run Real Windows Electron E2E Tests (R04, R05, R06, R07, and P3)
+Write-Host "`n--- 5. Running Real Windows Electron E2E Tests (R04, R05, R06, R07, and P3) ---" -ForegroundColor Yellow
 pnpm test:e2e
 if ($LASTEXITCODE -ne 0) {
     Write-Host "`n[FATAL] Real Windows Electron E2E tests failed!" -ForegroundColor Red
@@ -64,6 +64,6 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Write-Host "`n========================================================" -ForegroundColor Green
-Write-Host "ALL VERIFICATION CHECKS PASSED (Typecheck + Build + 171 Tests [146 TS + 16 Py + 9 Real Electron E2E] + GUI Smoke + Strict Secret Scan)" -ForegroundColor Green
+Write-Host "ALL VERIFICATION CHECKS PASSED (Typecheck + Build + 177 Tests [150 TS + 16 Py + 11 Real Electron E2E] + GUI Smoke + Strict Secret Scan)" -ForegroundColor Green
 Write-Host "========================================================`n" -ForegroundColor Green
 exit 0

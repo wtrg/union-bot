@@ -1307,6 +1307,213 @@ function createWindow() {
     return;
   }
 
+  // 7k. P3-E2E: Full Windows Electron Verification for Phase P3 Desktop Workspace UI
+  if (process.argv.includes('--p3-e2e')) {
+    mainWindow.webContents.once('did-finish-load', async () => {
+      try {
+        console.log('[P3-E2E] Running Real Windows Electron P3 Verification...');
+
+        const p3Result = await mainWindow.webContents.executeJavaScript(`
+          (async () => {
+            // 1. Create a dynamic room (P3-003)
+            const roomRes = await window.unionBotAPI.createRoom({
+              id: 'gate-p3-room',
+              name: 'Gate P3 Collaboration Room',
+            });
+            const roomCreated = roomRes && roomRes.success === true && roomRes.room && roomRes.room.id === 'gate-p3-room';
+
+            // 2. Query rooms list and verify it contains the created room
+            const rooms = await window.unionBotAPI.getRooms();
+            const roomInList = Array.isArray(rooms) && rooms.some(r => r.id === 'gate-p3-room');
+
+            // 3. Save PNG and PDF attachments into local CAS store (P3-004, P3-005, P3-C03)
+            const fakePngData = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+            const savePng = await window.unionBotAPI.saveAttachment({
+              filename: 'architecture_diagram.png',
+              mimeType: 'image/png',
+              dataBase64: fakePngData,
+            });
+            const pngSaved = savePng && savePng.success && Boolean(savePng.attachment && savePng.attachment.sha256);
+
+            const fakePdfText = '%PDF-1.4\\n1 0 obj\\n<< /Title (P3 Specifications) >>\\nendobj\\ntrailer\\n<< /Root 1 0 R >>\\n%%EOF';
+            const savePdf = await window.unionBotAPI.saveAttachment({
+              filename: 'specifications_doc.pdf',
+              mimeType: 'application/pdf',
+              textContent: fakePdfText,
+            });
+            const pdfSaved = savePdf && savePdf.success && Boolean(savePdf.attachment && savePdf.attachment.sha256);
+
+            // 4. Send multi-line message with attached files to the newly created room (P3-004)
+            const envelopeId = 'env_p3_e2e_' + Date.now();
+            const envelope = {
+              id: envelopeId,
+              traceId: 'trc_p3_e2e_' + Date.now(),
+              roomId: 'gate-p3-room',
+              sender: { kind: 'user', id: 'usr_local', name: 'Gate Evaluator', role: 'USER' },
+              recipient: { kind: 'room', id: 'gate-p3-room' },
+              parts: [
+                { kind: 'text', text: 'Multi-line message:\\nLine 1: Architecture review\\nLine 2: Specifications attached' },
+                { kind: 'artifact', filename: savePng.attachment.filename, sha256: savePng.attachment.sha256, mimeType: 'image/png', sizeBytes: savePng.attachment.sizeBytes },
+                { kind: 'artifact', filename: savePdf.attachment.filename, sha256: savePdf.attachment.sha256, mimeType: 'application/pdf', sizeBytes: savePdf.attachment.sizeBytes },
+              ],
+              fidelity: 'L2_STANDALONE_ARTIFACT',
+              timestamp: Date.now(),
+            };
+            const dispatchRes = await window.unionBotAPI.dispatchEnvelope(envelope);
+            const envelopeDispatched = dispatchRes && dispatchRes.success === true;
+
+            // 5. Query room history from SQLite WAL (P3-C03)
+            const history = await window.unionBotAPI.getRoomHistory('gate-p3-room');
+            const historyFound = Array.isArray(history) && history.some(e => e.id === envelopeId && e.parts && e.parts.length === 3);
+
+            // 6. Test Approval Inbox inspection (P3-007, P3-C01)
+            const tokenPayload = { action: 'format_disk_simulated', path: '/local/test' };
+            const digestRes = await window.unionBotAPI.computeActionDigest(tokenPayload);
+            const tokenId = 'tok_p3_e2e_' + Date.now();
+            const createTokenRes = await window.unionBotAPI.createApprovalToken({
+              tokenId,
+              actionType: 'format_disk_simulated',
+              payloadDigest: digestRes.digest,
+              origin: 'E2E Test Runner',
+              workspaceId: 'gate-p3-ws',
+              roomId: 'gate-p3-room',
+              actorId: 'evaluator',
+              recipient: 'local-storage',
+              status: 'PENDING',
+              expiresInMs: 60000,
+            });
+            const tokenCreated = createTokenRes && createTokenRes.success === true;
+
+            const approvals = await window.unionBotAPI.listApprovals({ limit: 20 });
+            const tokenInList = Array.isArray(approvals) && approvals.some(t => t.token_id === tokenId && t.payload_digest === digestRes.digest);
+
+            // 7. Test Rejection from Approval Inbox (P3-007)
+            const rejectRes = await window.unionBotAPI.rejectApproval(tokenId, 'Operator rejected from Approval Inbox');
+            const tokenRejected = rejectRes && rejectRes.success === true;
+
+            // 8. Test Workspace Export (P3-009, Gate P3)
+            const exportRes = await window.unionBotAPI.exportWorkspace();
+            const exportSucceeded = exportRes && exportRes.success === true &&
+              typeof exportRes.exportMarkdown === 'string' &&
+              exportRes.exportMarkdown.includes('gate-p3-room') &&
+              exportRes.roomCount >= 1;
+
+            return {
+              roomCreated,
+              roomInList,
+              pngSaved,
+              pdfSaved,
+              envelopeDispatched,
+              historyFound,
+              tokenCreated,
+              tokenInList,
+              tokenRejected,
+              exportSucceeded,
+              pngSha256: savePng.attachment.sha256,
+              pdfSha256: savePdf.attachment.sha256,
+            };
+          })()
+        `);
+
+        console.log('[P3-E2E] P3-003 Dynamic room created in SQLite:', p3Result.roomCreated);
+        console.log('[P3-E2E] P3-003 Dynamic room in rooms list:', p3Result.roomInList);
+        console.log('[P3-E2E] P3-004 PNG attachment saved in CAS store:', p3Result.pngSaved);
+        console.log('[P3-E2E] P3-004 PDF attachment saved in CAS store:', p3Result.pdfSaved);
+        console.log('[P3-E2E] P3-004 Multi-line envelope dispatched:', p3Result.envelopeDispatched);
+        console.log('[P3-E2E] P3-005 Room history with attachments retrieved from SQLite:', p3Result.historyFound);
+        console.log('[P3-E2E] P3-007 Approval token created:', p3Result.tokenCreated);
+        console.log('[P3-E2E] P3-C01 Approval inbox displays full parameters & digest:', p3Result.tokenInList);
+        console.log('[P3-E2E] P3-007 Approval token rejected via inbox:', p3Result.tokenRejected);
+        console.log('[P3-E2E] Gate P3 Workspace exported to Markdown & JSON:', p3Result.exportSucceeded);
+
+        const allPassed =
+          p3Result.roomCreated &&
+          p3Result.roomInList &&
+          p3Result.pngSaved &&
+          p3Result.pdfSaved &&
+          p3Result.envelopeDispatched &&
+          p3Result.historyFound &&
+          p3Result.tokenCreated &&
+          p3Result.tokenInList &&
+          p3Result.tokenRejected &&
+          p3Result.exportSucceeded;
+
+        if (!allPassed) {
+          console.error('[P3-E2E] FAILED: Some P3 checks did not pass');
+          app.quit();
+          process.exit(1);
+        }
+
+        const evidencePath = path.resolve(__dirname, '../../../reports/capability-evidence/ELECTRON_P3_E2E_EVIDENCE.json');
+        fs.mkdirSync(path.dirname(evidencePath), { recursive: true });
+        fs.writeFileSync(evidencePath, JSON.stringify({
+          timestamp: new Date().toISOString(),
+          environment: 'Real Windows Electron Chromium E2E (Phase P3 Gate)',
+          nodeEnv: process.env.NODE_ENV,
+          results: p3Result,
+          allPassed: true,
+        }, null, 2));
+
+        console.log('[P3-E2E] ALL_P3_E2E_CHECKS_PASSED');
+        app.quit();
+        process.exit(0);
+      } catch (err) {
+        console.error('[P3-E2E] Exception:', err);
+        app.quit();
+        process.exit(1);
+      }
+    });
+    return;
+  }
+
+  // 7l. P3-REOPEN-E2E: Reopen App and verify SQLite & CAS Durability (P3-C03)
+  if (process.argv.includes('--p3-reopen-e2e')) {
+    mainWindow.webContents.once('did-finish-load', async () => {
+      try {
+        console.log('[P3-REOPEN-E2E] Running Real Windows Electron Reopen Durability Check (P3-C03)...');
+
+        const reopenResult = await mainWindow.webContents.executeJavaScript(`
+          (async () => {
+            const rooms = await window.unionBotAPI.getRooms();
+            const roomFound = Array.isArray(rooms) && rooms.some(r => r.id === 'gate-p3-room');
+
+            const history = await window.unionBotAPI.getRoomHistory('gate-p3-room');
+            const historyFound = Array.isArray(history) && history.length > 0;
+            const env = history.find(e => e.parts && e.parts.length === 3);
+            const hasAttachments = Boolean(env && env.parts[1].filename === 'architecture_diagram.png' && env.parts[2].filename === 'specifications_doc.pdf');
+
+            return {
+              roomFound,
+              historyFound,
+              hasAttachments,
+              historyLength: history ? history.length : 0,
+            };
+          })()
+        `);
+
+        console.log('[P3-REOPEN-E2E] P3-C03 Room survived app restart:', reopenResult.roomFound);
+        console.log('[P3-REOPEN-E2E] P3-C03 Envelopes survived app restart:', reopenResult.historyFound);
+        console.log('[P3-REOPEN-E2E] P3-C03 Attachments (PNG & PDF) survived app restart:', reopenResult.hasAttachments);
+
+        const allPassed = reopenResult.roomFound && reopenResult.historyFound && reopenResult.hasAttachments;
+        if (!allPassed) {
+          console.error('[P3-REOPEN-E2E] FAILED: Data did not survive app restart');
+          app.quit();
+          process.exit(1);
+        }
+
+        console.log('[P3-REOPEN-E2E] ALL_P3_REOPEN_CHECKS_PASSED');
+        app.quit();
+        process.exit(0);
+      } catch (err) {
+        console.error('[P3-REOPEN-E2E] Exception:', err);
+        app.quit();
+        process.exit(1);
+      }
+    });
+    return;
+  }
+
   // 7. Handle Standard GUI Smoke Test Mode
   if (isSmoke) {
     console.log('[SmokeTest] Running Union Bot Automated GUI Smoke Test...');
@@ -1485,6 +1692,283 @@ ipcMain.handle('union-bot:get-room-history', async (event, roomId) => {
   }
   if (typeof roomId !== 'string') return [];
   return await orchestrator.getRoomHistoryAsync(roomId);
+});
+
+// P3-003: Dynamic Room Management IPC
+ipcMain.handle('union-bot:get-rooms', async (event) => {
+  if (!checkSenderAuthorized(event)) {
+    return [];
+  }
+  if (appStatus !== 'READY') {
+    return [];
+  }
+  try {
+    let rooms = await storage.getRooms();
+    if (!rooms || rooms.length === 0) {
+      // Seed initial default rooms if table is empty
+      const defaultRooms = [
+        { id: 'orchestration', name: 'orchestration' },
+        { id: 'agent-dev', name: 'agent-dev' },
+        { id: 'qa-audit', name: 'qa-audit' },
+        { id: 'review-briefing', name: 'review-briefing' },
+      ];
+      for (const r of defaultRooms) {
+        await storage.ensureRoom(r.id, r.name);
+      }
+      rooms = await storage.getRooms();
+    }
+    return rooms || [];
+  } catch (err) {
+    console.error('[UnionBot] Failed to get rooms:', err);
+    return [];
+  }
+});
+
+ipcMain.handle('union-bot:create-room', async (event, payload) => {
+  if (!checkSenderAuthorized(event)) {
+    return { success: false, error: 'Unauthorized IPC sender origin' };
+  }
+  if (appStatus !== 'READY') {
+    return { success: false, error: `ERR_STORAGE_UNAVAILABLE: Desktop storage is not ready (${appStatus})` };
+  }
+  try {
+    const { id, name } = payload || {};
+    if (!id || !name) {
+      return { success: false, error: 'Room id and name are required' };
+    }
+    const cleanId = String(id).trim().toLowerCase().replace(/[^a-z0-9_-]/g, '-');
+    const cleanName = String(name).trim();
+    const result = await storage.createRoom(cleanId, cleanName);
+    return { success: true, room: result };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+// P3-007 / P3-C01: Approval Inbox list and rejection IPC
+ipcMain.handle('union-bot:list-approvals', async (event, options) => {
+  if (!checkSenderAuthorized(event)) {
+    return [];
+  }
+  if (appStatus !== 'READY') {
+    return [];
+  }
+  try {
+    const limit = (options && options.limit) || 50;
+    return await storage.listApprovals(limit);
+  } catch (err) {
+    console.error('[UnionBot] Failed to list approvals:', err);
+    return [];
+  }
+});
+
+ipcMain.handle('union-bot:reject-approval', async (event, payload) => {
+  if (!checkSenderAuthorized(event)) {
+    return { success: false, error: 'Unauthorized IPC sender origin' };
+  }
+  if (appStatus !== 'READY') {
+    return { success: false, error: `ERR_STORAGE_UNAVAILABLE: Desktop storage is not ready (${appStatus})` };
+  }
+  try {
+    const { tokenId, reason } = payload || {};
+    if (!tokenId) {
+      return { success: false, error: 'tokenId is required' };
+    }
+    return await storage.rejectToken(tokenId, reason);
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+// P3-004 / P3-005 / P3-C03: Attachments CAS store & file dialogue IPC
+ipcMain.handle('union-bot:save-attachment', async (event, payload) => {
+  if (!checkSenderAuthorized(event)) {
+    return { success: false, error: 'Unauthorized IPC sender origin' };
+  }
+  try {
+    const { filename, mimeType, dataBase64, textContent } = payload || {};
+    if (!filename) {
+      return { success: false, error: 'Filename is required' };
+    }
+    let buffer;
+    if (dataBase64) {
+      const base64Data = dataBase64.includes('base64,') ? dataBase64.split('base64,')[1] : dataBase64;
+      buffer = Buffer.from(base64Data, 'base64');
+    } else if (typeof textContent === 'string') {
+      buffer = Buffer.from(textContent, 'utf8');
+    } else {
+      return { success: false, error: 'File data is required' };
+    }
+
+    const crypto = require('crypto');
+    const sha256 = crypto.createHash('sha256').update(buffer).digest('hex');
+    const userDataDir = app.getPath('userData');
+    const casDir = path.join(userDataDir, 'cas-store');
+    if (!fs.existsSync(casDir)) {
+      fs.mkdirSync(casDir, { recursive: true });
+    }
+    const casFilePath = path.join(casDir, sha256);
+    fs.writeFileSync(casFilePath, buffer);
+
+    const sizeBytes = buffer.length;
+    const cleanMime = mimeType || (filename.endsWith('.png') ? 'image/png' : filename.endsWith('.pdf') ? 'application/pdf' : 'application/octet-stream');
+    const dataUrl = cleanMime.startsWith('image/') ? `data:${cleanMime};base64,${buffer.toString('base64')}` : undefined;
+
+    return {
+      success: true,
+      attachment: {
+        filename,
+        sha256,
+        mimeType: cleanMime,
+        sizeBytes,
+        casPath: casFilePath,
+        dataUrl,
+      },
+    };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('union-bot:read-attachment', async (event, sha256) => {
+  if (!checkSenderAuthorized(event)) {
+    return { success: false, error: 'Unauthorized IPC sender origin' };
+  }
+  try {
+    if (!sha256 || typeof sha256 !== 'string') {
+      return { success: false, error: 'Valid sha256 required' };
+    }
+    const userDataDir = app.getPath('userData');
+    const casFilePath = path.join(userDataDir, 'cas-store', sha256);
+    if (!fs.existsSync(casFilePath)) {
+      return { success: false, error: 'Attachment not found in CAS store' };
+    }
+    const buffer = fs.readFileSync(casFilePath);
+    return {
+      success: true,
+      sha256,
+      sizeBytes: buffer.length,
+      dataBase64: buffer.toString('base64'),
+    };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('union-bot:open-file-dialog', async (event) => {
+  if (!checkSenderAuthorized(event)) {
+    return { success: false, error: 'Unauthorized IPC sender origin' };
+  }
+  try {
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: 'Select File to Attach',
+      properties: ['openFile'],
+      filters: [
+        { name: 'Images & Documents', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'pdf', 'txt', 'json', 'md'] },
+        { name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp'] },
+        { name: 'PDF Documents', extensions: ['pdf'] },
+        { name: 'All Files', extensions: ['*'] },
+      ],
+    });
+    if (result.canceled || !result.filePaths || result.filePaths.length === 0) {
+      return { success: false, canceled: true };
+    }
+    const selectedPath = result.filePaths[0];
+    const filename = path.basename(selectedPath);
+    const buffer = fs.readFileSync(selectedPath);
+    const crypto = require('crypto');
+    const sha256 = crypto.createHash('sha256').update(buffer).digest('hex');
+    const userDataDir = app.getPath('userData');
+    const casDir = path.join(userDataDir, 'cas-store');
+    if (!fs.existsSync(casDir)) {
+      fs.mkdirSync(casDir, { recursive: true });
+    }
+    const casFilePath = path.join(casDir, sha256);
+    fs.writeFileSync(casFilePath, buffer);
+
+    const ext = path.extname(filename).toLowerCase();
+    const mimeMap = {
+      '.png': 'image/png',
+      '.jpg': 'image/jpeg',
+      '.jpeg': 'image/jpeg',
+      '.gif': 'image/gif',
+      '.webp': 'image/webp',
+      '.pdf': 'application/pdf',
+      '.txt': 'text/plain',
+      '.json': 'application/json',
+      '.md': 'text/markdown',
+    };
+    const mimeType = mimeMap[ext] || 'application/octet-stream';
+    const dataUrl = mimeType.startsWith('image/') ? `data:${mimeType};base64,${buffer.toString('base64')}` : undefined;
+
+    return {
+      success: true,
+      attachment: {
+        filename,
+        sha256,
+        mimeType,
+        sizeBytes: buffer.length,
+        casPath: casFilePath,
+        dataUrl,
+      },
+    };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+// P3-009 / Gate P3: Export Workspace Data
+ipcMain.handle('union-bot:export-workspace', async (event, options = {}) => {
+  if (!checkSenderAuthorized(event)) {
+    return { success: false, error: 'Unauthorized IPC sender origin' };
+  }
+  try {
+    const rooms = await storage.getRooms();
+    const exportData = {
+      exportedAt: new Date().toISOString(),
+      rooms: [],
+    };
+    for (const r of rooms) {
+      const history = await storage.getRoomEnvelopes(r.id, 500);
+      exportData.rooms.push({
+        id: r.id,
+        name: r.name,
+        envelopes: history,
+      });
+    }
+
+    const jsonString = JSON.stringify(exportData, null, 2);
+    let mdContent = `# Union Bot Workspace Export\n*Exported at: ${exportData.exportedAt}*\n\n`;
+    for (const r of exportData.rooms) {
+      mdContent += `## Room: #${r.name} (${r.id})\n\n`;
+      if (!r.envelopes || r.envelopes.length === 0) {
+        mdContent += `*No messages in this room.*\n\n`;
+      } else {
+        for (const env of r.envelopes) {
+          const sender = env.sender ? `${env.sender.name} (${env.sender.role || env.sender.kind})` : 'Unknown';
+          const time = env.timestamp ? new Date(env.timestamp).toLocaleString() : '';
+          mdContent += `### [${time}] ${sender}\n`;
+          if (env.parts) {
+            for (const p of env.parts) {
+              if (p.kind === 'text') mdContent += `${p.text}\n\n`;
+              else if (p.kind === 'code') mdContent += `\`\`\`${p.language || ''}\n${p.code || p.content}\n\`\`\`\n\n`;
+              else if (p.kind === 'artifact' || p.kind === 'attachment') mdContent += `📎 **Attachment:** ${p.filename} (${p.sizeBytes} bytes, SHA256: \`${p.sha256}\`)\n\n`;
+            }
+          }
+        }
+      }
+    }
+
+    return {
+      success: true,
+      exportJson: jsonString,
+      exportMarkdown: mdContent,
+      roomCount: exportData.rooms.length,
+      totalEnvelopes: exportData.rooms.reduce((acc, r) => acc + (r.envelopes ? r.envelopes.length : 0), 0),
+    };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
 });
 
 ipcMain.handle('union-bot:create-approval-token', async (event, tokenData) => {

@@ -76,6 +76,30 @@ function handleRequest(msg) {
         process.send({ id, result: rows });
         break;
       }
+      case 'createRoom': {
+        const now = new Date().toISOString();
+        db.prepare('INSERT OR REPLACE INTO rooms (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)')
+          .run(args.id, args.name, now, now);
+        process.send({ id, result: { id: args.id, name: args.name, created_at: now, updated_at: now } });
+        break;
+      }
+      case 'listApprovals': {
+        const limit = args.limit || 50;
+        const rows = db.prepare('SELECT * FROM approvals ORDER BY created_at DESC LIMIT ?').all(limit);
+        process.send({ id, result: rows });
+        break;
+      }
+      case 'rejectToken': {
+        const { tokenId, reason } = args;
+        const nowIso = new Date().toISOString();
+        const res = db.prepare(`
+          UPDATE approvals
+          SET status = 'REJECTED', rejected_at = ?, rejection_reason = ?
+          WHERE token_id = ? AND status = 'PENDING'
+        `).run(nowIso, reason || 'User rejected', tokenId);
+        process.send({ id, result: { success: res.changes > 0, tokenId, rejectedAt: nowIso } });
+        break;
+      }
       case 'getIdempotencyRecord': {
         const row = db.prepare('SELECT key, target_id, status, payload_digest, response_json, dispatch_prepared, created_at, expires_at FROM idempotency_keys WHERE key = ?').get(args.key);
         process.send({

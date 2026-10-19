@@ -350,3 +350,22 @@ body {
 .send-button:hover {
   opacity: 0.9;
 }
+
+/* P3 Utilities & Accessibility Focus Rings (P3-011) */
+button:focus-visible, input:focus-visible, textarea:focus-visible {
+  outline: 2px solid var(--accent-blue) !important;
+  outline-offset: 1px;
+}
+
+.filter-btn:hover {
+  background-color: var(--bg-hover) !important;
+}
+
+.approval-card {
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+
+.approval-card:hover {
+  background-color: #151b2a !important;
+}
+

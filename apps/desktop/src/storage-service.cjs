@@ -236,6 +236,26 @@ class StorageServiceClient extends EventEmitter {
       }
       case 'getRooms':
         return Promise.resolve(Array.from(this.fallbackRooms.values()));
+      case 'createRoom': {
+        const now = new Date().toISOString();
+        const record = { id: args.id, name: args.name, created_at: now, updated_at: now };
+        this.fallbackRooms.set(args.id, record);
+        return Promise.resolve(record);
+      }
+      case 'listApprovals': {
+        const rows = Array.from(this.fallbackApprovals.values()).reverse();
+        return Promise.resolve(rows);
+      }
+      case 'rejectToken': {
+        const token = this.fallbackApprovals.get(args.tokenId);
+        if (token && token.status === 'PENDING') {
+          token.status = 'REJECTED';
+          token.rejectedAt = new Date().toISOString();
+          token.rejectionReason = args.reason || 'User rejected';
+          return Promise.resolve({ success: true, tokenId: args.tokenId });
+        }
+        return Promise.resolve({ success: false, tokenId: args.tokenId });
+      }
       case 'getIdempotencyRecord': {
         return Promise.resolve(null);
       }
@@ -291,6 +311,27 @@ class StorageServiceClient extends EventEmitter {
           case 'getRooms': {
             const rows = this.nativeDb.prepare('SELECT id, name, created_at, updated_at FROM rooms').all();
             return Promise.resolve(rows);
+          }
+          case 'createRoom': {
+            const now = new Date().toISOString();
+            this.nativeDb.prepare('INSERT OR REPLACE INTO rooms (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)')
+              .run(args.id, args.name, now, now);
+            return Promise.resolve({ id: args.id, name: args.name, created_at: now, updated_at: now });
+          }
+          case 'listApprovals': {
+            const limit = args.limit || 50;
+            const rows = this.nativeDb.prepare('SELECT * FROM approvals ORDER BY created_at DESC LIMIT ?').all(limit);
+            return Promise.resolve(rows);
+          }
+          case 'rejectToken': {
+            const { tokenId, reason } = args;
+            const nowIso = new Date().toISOString();
+            const res = this.nativeDb.prepare(`
+              UPDATE approvals
+              SET status = 'REJECTED', rejected_at = ?, rejection_reason = ?
+              WHERE token_id = ? AND status = 'PENDING'
+            `).run(nowIso, reason || 'User rejected', tokenId);
+            return Promise.resolve({ success: res.changes > 0, tokenId, rejectedAt: nowIso });
           }
           case 'getIdempotencyRecord': {
             const row = this.nativeDb.prepare('SELECT key, target_id, status, payload_digest, response_json, dispatch_prepared, created_at, expires_at FROM idempotency_keys WHERE key = ?').get(args.key);
@@ -681,6 +722,18 @@ class StorageServiceClient extends EventEmitter {
 
   async ensureRoom(roomId, name) {
     return this.sendRequest('ensureRoom', { roomId, name });
+  }
+
+  async createRoom(id, name) {
+    return this.sendRequest('createRoom', { id, name });
+  }
+
+  async listApprovals(limit = 50) {
+    return this.sendRequest('listApprovals', { limit });
+  }
+
+  async rejectToken(tokenId, reason) {
+    return this.sendRequest('rejectToken', { tokenId, reason });
   }
 
   async createApprovalToken(token) {

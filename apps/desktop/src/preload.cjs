@@ -17,6 +17,38 @@ const api = {
     return ipcRenderer.invoke('union-bot:get-room-history', roomId);
   },
 
+  getRooms: async () => {
+    return ipcRenderer.invoke('union-bot:get-rooms');
+  },
+
+  createRoom: async (roomData) => {
+    return ipcRenderer.invoke('union-bot:create-room', roomData);
+  },
+
+  listApprovals: async (options) => {
+    return ipcRenderer.invoke('union-bot:list-approvals', options);
+  },
+
+  rejectApproval: async (tokenId, reason) => {
+    return ipcRenderer.invoke('union-bot:reject-approval', { tokenId, reason });
+  },
+
+  saveAttachment: async (payload) => {
+    return ipcRenderer.invoke('union-bot:save-attachment', payload);
+  },
+
+  readAttachment: async (sha256) => {
+    return ipcRenderer.invoke('union-bot:read-attachment', sha256);
+  },
+
+  openFileDialog: async () => {
+    return ipcRenderer.invoke('union-bot:open-file-dialog');
+  },
+
+  exportWorkspace: async (options) => {
+    return ipcRenderer.invoke('union-bot:export-workspace', options);
+  },
+
   getAppStatus: async () => {
     return ipcRenderer.invoke('union-bot:get-app-status');
   },
