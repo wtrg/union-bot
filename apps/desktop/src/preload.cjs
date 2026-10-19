@@ -17,12 +17,48 @@ const api = {
     return ipcRenderer.invoke('union-bot:get-room-history', roomId);
   },
 
-  getRooms: async () => {
-    return ipcRenderer.invoke('union-bot:get-rooms');
+  getProjects: async (options) => {
+    return ipcRenderer.invoke('union-bot:get-projects', options);
+  },
+
+  createProject: async (payload) => {
+    return ipcRenderer.invoke('union-bot:create-project', payload);
+  },
+
+  renameProject: async (id, newName) => {
+    return ipcRenderer.invoke('union-bot:rename-project', { id, newName });
+  },
+
+  archiveProject: async (id) => {
+    return ipcRenderer.invoke('union-bot:archive-project', id);
+  },
+
+  deleteProject: async (id) => {
+    return ipcRenderer.invoke('union-bot:delete-project', id);
+  },
+
+  getRooms: async (options) => {
+    return ipcRenderer.invoke('union-bot:get-rooms', options);
   },
 
   createRoom: async (roomData) => {
     return ipcRenderer.invoke('union-bot:create-room', roomData);
+  },
+
+  listTasks: async (options) => {
+    return ipcRenderer.invoke('union-bot:list-tasks', options);
+  },
+
+  createTask: async (taskData) => {
+    return ipcRenderer.invoke('union-bot:create-task', taskData);
+  },
+
+  updateTask: async (taskId, updates) => {
+    return ipcRenderer.invoke('union-bot:update-task', { taskId, updates });
+  },
+
+  getStorageDiagnostics: async () => {
+    return ipcRenderer.invoke('union-bot:get-storage-diagnostics');
   },
 
   listApprovals: async (options) => {

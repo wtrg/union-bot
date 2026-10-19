@@ -7,6 +7,31 @@ interface ChatRoomProps {
   onSendMessage: (text: string, attachments?: AttachmentInfo[]) => Promise<boolean> | boolean | void;
 }
 
+// Search Keyword Highlighting Component (UB-P3-R01-007)
+const HighlightedText: React.FC<{ text?: string; query?: string }> = ({ text = '', query = '' }) => {
+  if (!query.trim() || !text) return <>{text}</>;
+  try {
+    const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const regex = new RegExp(`(${escaped})`, 'gi');
+    const tokens = text.split(regex);
+    return (
+      <>
+        {tokens.map((token, i) =>
+          regex.test(token) ? (
+            <mark key={i} className="search-highlight">
+              {token}
+            </mark>
+          ) : (
+            token
+          )
+        )}
+      </>
+    );
+  } catch {
+    return <>{text}</>;
+  }
+};
+
 export const ChatRoom: React.FC<ChatRoomProps> = ({ roomName, envelopes, onSendMessage }) => {
   const [inputText, setInputText] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -177,7 +202,7 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ roomName, envelopes, onSendM
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
-      {/* Search & Filter Header (P3-009) */}
+      {/* Search & Filter Header with Keyword Highlighting (UB-P3-R01-007) */}
       <div
         style={{
           padding: '8px 16px',
@@ -191,7 +216,7 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ roomName, envelopes, onSendM
         <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>🔍</span>
         <input
           type="text"
-          placeholder="Filter messages or artifacts in this room (P3-009)..."
+          placeholder="Filter messages or artifacts in this room (highlight matches)..."
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
           style={{
@@ -213,7 +238,7 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ roomName, envelopes, onSendM
         )}
       </div>
 
-      {/* Chat Messages Feed (P3-005) */}
+      {/* Chat Messages Feed */}
       <div className="chat-feed" style={{ flex: 1, overflowY: 'auto', padding: 16 }}>
         {filteredEnvelopes.length === 0 ? (
           <div
@@ -228,12 +253,30 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ roomName, envelopes, onSendM
               padding: 40,
             }}
           >
-            <div style={{ fontSize: 32, marginBottom: 12 }}>💬</div>
-            <div style={{ fontWeight: 600, fontSize: 16, color: 'var(--text-primary)' }}>
-              #{roomName || 'Room'} Ready
-            </div>
-            <div style={{ fontSize: 13, marginTop: 6, maxWidth: 360 }}>
-              {searchQuery ? 'No messages matched your filter query.' : 'Zero-Cost (0đ) collaboration channel active. Send a message or attach a PNG/PDF to start coordination.'}
+            {/* First-Run Onboarding Banner (UB-P3-R01-007) */}
+            <div
+              style={{
+                background: 'var(--bg-secondary)',
+                border: '1px solid var(--border-color)',
+                borderRadius: 12,
+                padding: '24px 32px',
+                maxWidth: 480,
+                textAlign: 'center',
+              }}
+            >
+              <div style={{ fontSize: 36, marginBottom: 10 }}>👋</div>
+              <div style={{ fontWeight: 700, fontSize: 18, color: 'var(--text-primary)', marginBottom: 8 }}>
+                Welcome to #{roomName || 'Room'}
+              </div>
+              <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.5, margin: 0 }}>
+                Zero-Cost 0đ Desktop AI Workspace is active. All interactions and attachments are stored locally in SQLite WAL and Content Addressable Storage (CAS).
+              </p>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 16, textAlign: 'left', fontSize: 12, color: 'var(--text-muted)' }}>
+                <div>💬 <strong>Coordinate:</strong> Send directives and collaboration messages.</div>
+                <div>📎 <strong>Attachments:</strong> Drag & drop PNG diagrams or PDF documents into this room.</div>
+                <div>🛡️ <strong>Governance:</strong> Sensitive actions trigger Approval Inbox review.</div>
+              </div>
             </div>
           </div>
         ) : (
@@ -241,8 +284,14 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ roomName, envelopes, onSendM
             <div key={env.id} className="envelope-card">
               <div className="envelope-meta">
                 <div className="sender-tag">
-                  <span className="sender-name">{env.sender.name}</span>
-                  {env.sender.role && <span className="sender-role">{env.sender.role}</span>}
+                  <span className="sender-name">
+                    <HighlightedText text={env.sender.name} query={searchQuery} />
+                  </span>
+                  {env.sender.role && (
+                    <span className="sender-role">
+                      <HighlightedText text={env.sender.role} query={searchQuery} />
+                    </span>
+                  )}
                   {env.isDemo && (
                     <span
                       style={{
@@ -271,7 +320,7 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ roomName, envelopes, onSendM
                   case 'text':
                     return (
                       <div key={idx} className="part-text" style={{ whiteSpace: 'pre-wrap' }}>
-                        {part.text}
+                        <HighlightedText text={part.text} query={searchQuery} />
                       </div>
                     );
                   case 'code':
@@ -279,10 +328,12 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ roomName, envelopes, onSendM
                       <div key={idx} className="part-code">
                         {part.filename && (
                           <div style={{ color: 'var(--text-muted)', marginBottom: 4 }}>
-                            // File: {part.filename}
+                            // File: <HighlightedText text={part.filename} query={searchQuery} />
                           </div>
                         )}
-                        <code>{part.content || part.code}</code>
+                        <code>
+                          <HighlightedText text={part.content || part.code} query={searchQuery} />
+                        </code>
                       </div>
                     );
                   case 'artifact':
@@ -294,7 +345,7 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ roomName, envelopes, onSendM
                           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                             <span style={{ fontSize: 16 }}>{isImg ? '🖼️' : '📄'}</span>
                             <span className="artifact-name" style={{ fontWeight: 600 }}>
-                              {part.filename || 'Attached File'}
+                              <HighlightedText text={part.filename || 'Attached File'} query={searchQuery} />
                             </span>
                           </div>
                           {isImg && part.dataUrl && (
@@ -354,38 +405,37 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ roomName, envelopes, onSendM
         )}
       </div>
 
-      {/* Drag & Drop Visual Overlay */}
+      {/* Drag & Drop Overlay */}
       {isDragging && (
         <div
           style={{
             position: 'absolute',
             inset: 0,
-            background: 'rgba(59, 130, 246, 0.2)',
+            background: 'rgba(56, 189, 248, 0.1)',
             border: '2px dashed var(--accent-blue)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            color: '#fff',
-            fontSize: 18,
-            fontWeight: 700,
-            pointerEvents: 'none',
             zIndex: 50,
+            pointerEvents: 'none',
           }}
         >
-          📥 Drop PNG, PDF, or files here to attach
+          <div style={{ background: 'var(--bg-secondary)', padding: '16px 24px', borderRadius: 8, fontWeight: 600, color: 'var(--accent-blue)' }}>
+            📥 Drop files to attach (PNG, PDF, etc.)
+          </div>
         </div>
       )}
 
-      {/* Pending Attachments Bar (P3-004) */}
+      {/* Pending Attachments Bar */}
       {pendingAttachments.length > 0 && (
         <div
           style={{
-            padding: '6px 14px',
-            background: 'var(--bg-secondary)',
-            borderTop: '1px solid var(--border-color)',
             display: 'flex',
             flexWrap: 'wrap',
             gap: 8,
+            padding: '8px 14px',
+            background: 'var(--bg-tertiary)',
+            borderTop: '1px solid var(--border-color)',
           }}
         >
           {pendingAttachments.map((att, i) => (
@@ -395,7 +445,7 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ roomName, envelopes, onSendM
                 display: 'flex',
                 alignItems: 'center',
                 gap: 6,
-                background: 'var(--bg-tertiary)',
+                background: 'var(--bg-secondary)',
                 border: '1px solid var(--border-color)',
                 borderRadius: 4,
                 padding: '4px 8px',

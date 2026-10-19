@@ -6,7 +6,12 @@ import { ApprovalInbox } from './components/ApprovalInbox.tsx';
 import { TasksInbox } from './components/TasksInbox.tsx';
 import { PreferencesModal } from './components/PreferencesModal.tsx';
 import { CreateRoomModal } from './components/CreateRoomModal.tsx';
-import { AgentInfo, RoomInfo, EnvelopeView, AttachmentInfo, MessagePart } from './types.ts';
+import { CreateProjectModal } from './components/CreateProjectModal.tsx';
+import { AgentInfo, RoomInfo, EnvelopeView, AttachmentInfo, MessagePart, ProjectInfo } from './types.ts';
+
+const INITIAL_PROJECTS: ProjectInfo[] = [
+  { id: 'default', name: 'Default Project', description: 'Primary Union Bot collaboration workspace' },
+];
 
 const INITIAL_ROOMS: RoomInfo[] = [
   { id: 'orchestration', name: 'orchestration', description: 'Cross-agent coordination & Leader directive tracking' },
@@ -55,6 +60,8 @@ const INITIAL_DEMO_ENVELOPES: Record<string, EnvelopeView[]> = {
 export const App: React.FC = () => {
   const isDesktop = typeof window !== 'undefined' && Boolean(window.unionBotAPI);
   const [activeView, setActiveView] = useState<'chat' | 'approvals' | 'tasks'>('chat');
+  const [projects, setProjects] = useState<ProjectInfo[]>(INITIAL_PROJECTS);
+  const [selectedProjectId, setSelectedProjectId] = useState<string>('default');
   const [rooms, setRooms] = useState<RoomInfo[]>(INITIAL_ROOMS);
   const [activeRoomId, setActiveRoomId] = useState<string>('orchestration');
   const [roomEnvelopes, setRoomEnvelopes] = useState<Record<string, EnvelopeView[]>>(
@@ -63,10 +70,25 @@ export const App: React.FC = () => {
   const [isDemoMode, setIsDemoMode] = useState<boolean>(!isDesktop);
   const [pendingApprovalsCount, setPendingApprovalsCount] = useState<number>(0);
   const [isCreateRoomOpen, setIsCreateRoomOpen] = useState<boolean>(false);
+  const [isCreateProjectOpen, setIsCreateProjectOpen] = useState<boolean>(false);
+  const [editingProject, setEditingProject] = useState<ProjectInfo | null>(null);
   const [isPreferencesOpen, setIsPreferencesOpen] = useState<boolean>(false);
-  const [isExporting, setIsExporting] = useState<boolean>(false);
   const [storageStatus, setStorageStatus] = useState<string>('READY');
   const [storageError, setStorageError] = useState<string | null>(null);
+  const [theme, setTheme] = useState<'dark' | 'light' | 'high-contrast'>('dark');
+
+  // Apply theme class to document body (UB-P3-R01-007)
+  useEffect(() => {
+    if (theme === 'light') {
+      document.body.className = 'theme-light';
+    } else {
+      document.body.className = '';
+    }
+  }, [theme]);
+
+  const toggleTheme = () => {
+    setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
+  };
 
   const appendOrUpdateEnvelope = (roomId: string, env: EnvelopeView) => {
     setRoomEnvelopes((prev) => {
@@ -94,12 +116,45 @@ export const App: React.FC = () => {
     }
   };
 
-  // 1. Initial Room loading & App Status from SQLite IPC
+  const loadProjects = async () => {
+    if (window.unionBotAPI && typeof window.unionBotAPI.getProjects === 'function') {
+      try {
+        const projs = await window.unionBotAPI.getProjects();
+        if (Array.isArray(projs) && projs.length > 0) {
+          setProjects(projs);
+          if (!projs.some((p) => p.id === selectedProjectId)) {
+            setSelectedProjectId(projs[0].id);
+          }
+        }
+      } catch (err) {
+        console.warn('[App] Failed to load projects:', err);
+      }
+    }
+  };
+
+  const loadRoomsForProject = async (projId: string) => {
+    if (window.unionBotAPI && typeof window.unionBotAPI.getRooms === 'function') {
+      try {
+        const loadedRooms = await window.unionBotAPI.getRooms({ projectId: projId });
+        if (loadedRooms && loadedRooms.length > 0) {
+          setRooms(loadedRooms);
+          if (!loadedRooms.some((r) => r.id === activeRoomId)) {
+            setActiveRoomId(loadedRooms[0].id);
+          }
+        } else {
+          setRooms([]);
+        }
+      } catch (err) {
+        console.warn('[App] Failed to load rooms for project:', err);
+      }
+    }
+  };
+
+  // 1. Initial Load: Projects, Rooms & Status from SQLite IPC
   useEffect(() => {
     if (window.unionBotAPI) {
       setIsDemoMode(false);
 
-      // Check app status
       window.unionBotAPI.getAppStatus().then((res) => {
         if (res) {
           setStorageStatus(res.status);
@@ -107,21 +162,10 @@ export const App: React.FC = () => {
         }
       });
 
-      // Load persistent rooms from SQLite
-      if (typeof window.unionBotAPI.getRooms === 'function') {
-        window.unionBotAPI.getRooms().then((loadedRooms) => {
-          if (loadedRooms && loadedRooms.length > 0) {
-            setRooms(loadedRooms);
-            if (!loadedRooms.some((r) => r.id === activeRoomId)) {
-              setActiveRoomId(loadedRooms[0].id);
-            }
-          }
-        });
-      }
-
+      loadProjects();
+      loadRoomsForProject(selectedProjectId);
       refreshApprovalsCount();
 
-      // Listen for runtime status changes (e.g. worker exit)
       const unsubStatus = window.unionBotAPI.onAppStatusChanged((s) => {
         if (s) {
           setStorageStatus(s.status);
@@ -133,9 +177,16 @@ export const App: React.FC = () => {
     }
   }, []);
 
-  // 2. Load Room History when active room changes
+  // Reload rooms whenever selected project changes (UB-P3-R01-002)
   useEffect(() => {
     if (window.unionBotAPI) {
+      loadRoomsForProject(selectedProjectId);
+    }
+  }, [selectedProjectId]);
+
+  // 2. Load Room History when active room changes
+  useEffect(() => {
+    if (window.unionBotAPI && activeRoomId) {
       window.unionBotAPI.getRoomHistory(activeRoomId).then((history) => {
         setRoomEnvelopes((prev) => ({
           ...prev,
@@ -153,13 +204,13 @@ export const App: React.FC = () => {
     }
   }, [activeRoomId]);
 
-  const activeRoom = rooms.find((r) => r.id === activeRoomId) || rooms[0];
+  const activeRoom = rooms.find((r) => r.id === activeRoomId) || rooms[0] || { id: 'default', name: 'General' };
   const currentEnvelopes = roomEnvelopes[activeRoomId] || [];
 
   const handleCreateRoom = async (id: string, name: string): Promise<boolean> => {
     if (window.unionBotAPI && typeof window.unionBotAPI.createRoom === 'function') {
       try {
-        const res = await window.unionBotAPI.createRoom({ id, name });
+        const res = await window.unionBotAPI.createRoom({ id, name, projectId: selectedProjectId });
         if (res && res.success && res.room) {
           setRooms((prev) => {
             if (prev.some((r) => r.id === res.room!.id)) return prev;
@@ -180,6 +231,65 @@ export const App: React.FC = () => {
       setActiveRoomId(id);
       setActiveView('chat');
       return true;
+    }
+  };
+
+  // Project CRUD Handlers (UB-P3-R01-002)
+  const handleCreateProject = async (name: string, description?: string): Promise<boolean> => {
+    if (window.unionBotAPI && typeof window.unionBotAPI.createProject === 'function') {
+      try {
+        const res = await window.unionBotAPI.createProject({ name, description });
+        if (res && res.success && res.project) {
+          await loadProjects();
+          setSelectedProjectId(res.project.id);
+          return true;
+        }
+        return false;
+      } catch (err) {
+        console.error('[App] Failed to create project:', err);
+        return false;
+      }
+    } else {
+      const newP: ProjectInfo = { id: `proj_${Date.now()}`, name, description };
+      setProjects((prev) => [...prev, newP]);
+      setSelectedProjectId(newP.id);
+      return true;
+    }
+  };
+
+  const handleRenameProject = async (id: string, newName: string): Promise<boolean> => {
+    if (window.unionBotAPI && typeof window.unionBotAPI.renameProject === 'function') {
+      try {
+        const res = await window.unionBotAPI.renameProject(id, newName);
+        if (res && res.success) {
+          await loadProjects();
+          return true;
+        }
+        return false;
+      } catch (err) {
+        console.error('[App] Failed to rename project:', err);
+        return false;
+      }
+    } else {
+      setProjects((prev) => prev.map((p) => (p.id === id ? { ...p, name: newName } : p)));
+      return true;
+    }
+  };
+
+  const handleArchiveProject = async (id: string) => {
+    if (window.unionBotAPI && typeof window.unionBotAPI.archiveProject === 'function') {
+      try {
+        const res = await window.unionBotAPI.archiveProject(id);
+        if (res && res.success) {
+          await loadProjects();
+          setSelectedProjectId('default');
+        }
+      } catch (err) {
+        console.error('[App] Failed to archive project:', err);
+      }
+    } else {
+      setProjects((prev) => prev.filter((p) => p.id !== id));
+      setSelectedProjectId('default');
     }
   };
 
@@ -241,43 +351,8 @@ export const App: React.FC = () => {
     }
   };
 
-  const handleExportWorkspace = async () => {
-    if (window.unionBotAPI && typeof window.unionBotAPI.exportWorkspace === 'function') {
-      setIsExporting(true);
-      try {
-        const res = await window.unionBotAPI.exportWorkspace();
-        if (res && res.success) {
-          const exportContent = res.exportMarkdown || res.exportJson || '';
-          const blob = new Blob([exportContent], { type: 'text/markdown;charset=utf-8' });
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = `union_bot_workspace_export_${Date.now()}.md`;
-          document.body.appendChild(a);
-          a.click();
-          document.body.removeChild(a);
-          URL.revokeObjectURL(url);
-        } else {
-          throw new Error(res?.error || 'Export failed');
-        }
-      } finally {
-        setIsExporting(false);
-      }
-    } else {
-      // Demo export
-      const json = JSON.stringify({ rooms, roomEnvelopes, exportedAt: new Date().toISOString() }, null, 2);
-      const blob = new Blob([json], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `union_bot_demo_export_${Date.now()}.json`;
-      a.click();
-      URL.revokeObjectURL(url);
-    }
-  };
-
   return (
-    <div className="workspace-layout">
+    <div className={`workspace-layout ${theme === 'light' ? 'theme-light' : ''}`}>
       {/* Storage Offline Error Alert Banner (P3-C03) */}
       {storageStatus === 'STORAGE_ERROR_BLOCKED' && (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, background: 'var(--accent-red)', color: '#fff', padding: '8px 16px', fontSize: 13, fontWeight: 600, display: 'flex', justifyContent: 'space-between', zIndex: 9999 }}>
@@ -298,6 +373,20 @@ export const App: React.FC = () => {
         pendingApprovalsCount={pendingApprovalsCount}
         onOpenCreateRoom={() => setIsCreateRoomOpen(true)}
         onOpenPreferences={() => setIsPreferencesOpen(true)}
+        projects={projects}
+        selectedProjectId={selectedProjectId}
+        onSelectProject={setSelectedProjectId}
+        onOpenCreateProject={() => {
+          setEditingProject(null);
+          setIsCreateProjectOpen(true);
+        }}
+        onOpenEditProject={(p) => {
+          setEditingProject(p);
+          setIsCreateProjectOpen(true);
+        }}
+        onArchiveProject={handleArchiveProject}
+        theme={theme === 'light' ? 'light' : 'dark'}
+        onToggleTheme={toggleTheme}
       />
 
       <main className="main-content">
@@ -324,11 +413,22 @@ export const App: React.FC = () => {
         onCreateRoom={handleCreateRoom}
       />
 
+      <CreateProjectModal
+        isOpen={isCreateProjectOpen}
+        onClose={() => {
+          setIsCreateProjectOpen(false);
+          setEditingProject(null);
+        }}
+        onCreateProject={handleCreateProject}
+        onRenameProject={handleRenameProject}
+        editingProject={editingProject}
+      />
+
       <PreferencesModal
         isOpen={isPreferencesOpen}
         onClose={() => setIsPreferencesOpen(false)}
-        onExport={handleExportWorkspace}
-        isExporting={isExporting}
+        theme={theme}
+        onThemeChange={setTheme}
       />
     </div>
   );

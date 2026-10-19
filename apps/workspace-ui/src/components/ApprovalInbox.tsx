@@ -5,11 +5,60 @@ interface ApprovalInboxProps {
   onTokenStatusChanged?: () => void;
 }
 
+// Collapsible JSON Tree Viewer for nested parameters (UB-P3-R01-004)
+const JsonTreeViewer: React.FC<{ data: any; label?: string }> = ({ data, label }) => {
+  const [isExpanded, setIsExpanded] = useState(true);
+
+  if (data === null || data === undefined) {
+    return <span style={{ color: 'var(--text-muted)' }}>null</span>;
+  }
+
+  if (typeof data !== 'object') {
+    return (
+      <span style={{ color: typeof data === 'string' ? '#38bdf8' : typeof data === 'number' ? '#f59e0b' : '#a855f7' }}>
+        {JSON.stringify(data)}
+      </span>
+    );
+  }
+
+  const isArray = Array.isArray(data);
+  const keys = Object.keys(data);
+
+  return (
+    <div style={{ marginLeft: label ? 12 : 0, fontFamily: 'monospace', fontSize: 12 }}>
+      {label && (
+        <span
+          onClick={() => setIsExpanded(!isExpanded)}
+          style={{ cursor: 'pointer', color: 'var(--text-secondary)', userSelect: 'none', fontWeight: 600 }}
+        >
+          {isExpanded ? '▼ ' : '▶ '}
+          {label}: {isArray ? `Array(${data.length})` : `Object(${keys.length})`}
+        </span>
+      )}
+      {isExpanded && (
+        <div style={{ paddingLeft: label ? 12 : 0, borderLeft: label ? '1px dashed var(--border-color)' : 'none', marginTop: 2 }}>
+          {keys.map((k) => (
+            <div key={k} style={{ padding: '1px 0' }}>
+              <span style={{ color: 'var(--text-muted)' }}>{k}: </span>
+              <JsonTreeViewer data={data[k]} />
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
 export const ApprovalInbox: React.FC<ApprovalInboxProps> = ({ onTokenStatusChanged }) => {
   const [tokens, setTokens] = useState<ApprovalTokenRecord[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [filter, setFilter] = useState<'ALL' | 'PENDING' | 'RESOLVED'>('ALL');
   const [actionMessage, setActionMessage] = useState<{ text: string; isError?: boolean } | null>(null);
+  const [expandedDetails, setExpandedDetails] = useState<Record<string, boolean>>({});
+
+  const toggleExpand = (tokenId: string) => {
+    setExpandedDetails((prev) => ({ ...prev, [tokenId]: !prev[tokenId] }));
+  };
 
   const fetchApprovals = async () => {
     if (!window.unionBotAPI) return;
@@ -79,6 +128,34 @@ export const ApprovalInbox: React.FC<ApprovalInboxProps> = ({ onTokenStatusChang
 
   const pendingCount = tokens.filter((t) => t.status === 'PENDING').length;
 
+  // Helper to extract or derive target path and impact parameters
+  const analyzeImpact = (token: ApprovalTokenRecord) => {
+    let riskLevel = 'LOW';
+    let isReversible = 'YES';
+    let targetSubsystem = 'SQLite WAL / Local CAS';
+    let targetPath = 'Internal Storage';
+
+    const act = (token.action_type || '').toLowerCase();
+    if (act.includes('format') || act.includes('delete') || act.includes('destroy') || act.includes('wipe')) {
+      riskLevel = 'HIGH';
+      isReversible = 'NO';
+      targetSubsystem = 'Disk / Filesystem';
+    } else if (act.includes('write') || act.includes('modify') || act.includes('export')) {
+      riskLevel = 'MEDIUM';
+      isReversible = 'PARTIAL';
+      targetSubsystem = 'Local Filesystem';
+    }
+
+    if (token.workspace_id) {
+      targetPath = `Workspace: ${token.workspace_id}`;
+    }
+    if (token.room_id) {
+      targetPath += ` / Room: #${token.room_id}`;
+    }
+
+    return { riskLevel, isReversible, targetSubsystem, targetPath };
+  };
+
   return (
     <div className="inbox-container" style={{ display: 'flex', flexDirection: 'column', flex: 1, padding: 24, overflowY: 'auto' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
@@ -92,7 +169,7 @@ export const ApprovalInbox: React.FC<ApprovalInboxProps> = ({ onTokenStatusChang
             )}
           </h2>
           <p style={{ margin: '4px 0 0 0', fontSize: 13, color: 'var(--text-muted)' }}>
-            Human-in-the-loop governance: Inspect action parameters and cryptographic digests before affirmative authorization (P3-C01).
+            Human-in-the-loop governance: Inspect nested action parameters, target paths, and anticipated impact breakdown before authorization (UB-P3-R01-004).
           </p>
         </div>
 
@@ -142,127 +219,186 @@ export const ApprovalInbox: React.FC<ApprovalInboxProps> = ({ onTokenStatusChang
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-          {filteredTokens.map((token) => (
-            <div
-              key={token.token_id}
-              className="approval-card"
-              style={{
-                background: 'var(--bg-secondary)',
-                border: `1px solid ${token.status === 'PENDING' ? 'var(--accent-amber)' : 'var(--border-color)'}`,
-                borderRadius: 8,
-                padding: 16,
-              }}
-            >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
-                <div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <span style={{ fontWeight: 700, fontSize: 15, color: 'var(--text-primary)' }}>
-                      Action: {token.action_type}
-                    </span>
-                    <span
-                      style={{
-                        fontSize: 10,
-                        fontWeight: 700,
-                        padding: '2px 6px',
-                        borderRadius: 3,
-                        background:
-                          token.status === 'APPROVED'
-                            ? 'var(--accent-green)'
-                            : token.status === 'CONSUMED'
-                            ? 'var(--accent-blue)'
-                            : token.status === 'REJECTED'
-                            ? 'var(--accent-red)'
-                            : 'var(--accent-amber)',
-                        color: token.status === 'PENDING' ? '#000' : '#fff',
-                      }}
-                    >
-                      {token.status}
-                    </span>
+          {filteredTokens.map((token) => {
+            const impact = analyzeImpact(token);
+            const isCardExpanded = expandedDetails[token.token_id] !== false; // expanded by default
+
+            return (
+              <div
+                key={token.token_id}
+                className="approval-card"
+                style={{
+                  background: 'var(--bg-secondary)',
+                  border: `1px solid ${token.status === 'PENDING' ? 'var(--accent-amber)' : 'var(--border-color)'}`,
+                  borderRadius: 8,
+                  padding: 16,
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ fontWeight: 700, fontSize: 15, color: 'var(--text-primary)' }}>
+                        Action: {token.action_type}
+                      </span>
+                      <span
+                        style={{
+                          fontSize: 10,
+                          fontWeight: 700,
+                          padding: '2px 6px',
+                          borderRadius: 3,
+                          background:
+                            token.status === 'APPROVED'
+                              ? 'var(--accent-green)'
+                              : token.status === 'CONSUMED'
+                              ? 'var(--accent-blue)'
+                              : token.status === 'REJECTED'
+                              ? 'var(--accent-red)'
+                              : 'var(--accent-amber)',
+                          color: token.status === 'PENDING' ? '#000' : '#fff',
+                        }}
+                      >
+                        {token.status}
+                      </span>
+                    </div>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
+                      Token ID: <code>{token.token_id}</code> • Created: {new Date(token.created_at).toLocaleString()}
+                    </div>
                   </div>
-                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
-                    Token ID: <code>{token.token_id}</code> • Created: {new Date(token.created_at).toLocaleString()}
+
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                    <button
+                      onClick={() => toggleExpand(token.token_id)}
+                      style={{ background: 'transparent', border: '1px solid var(--border-color)', color: 'var(--text-muted)', borderRadius: 4, padding: '4px 8px', fontSize: 11, cursor: 'pointer' }}
+                    >
+                      {isCardExpanded ? 'Collapse ▲' : 'Inspect ▼'}
+                    </button>
+
+                    {token.status === 'PENDING' && (
+                      <>
+                        <button
+                          onClick={() => handleReject(token)}
+                          style={{
+                            padding: '6px 14px',
+                            borderRadius: 4,
+                            border: '1px solid var(--accent-red)',
+                            background: 'transparent',
+                            color: 'var(--accent-red)',
+                            fontSize: 12,
+                            fontWeight: 600,
+                            cursor: 'pointer',
+                          }}
+                        >
+                          Reject
+                        </button>
+                        <button
+                          onClick={() => handleApprove(token)}
+                          style={{
+                            padding: '6px 14px',
+                            borderRadius: 4,
+                            border: 'none',
+                            background: 'var(--accent-green)',
+                            color: '#000',
+                            fontSize: 12,
+                            fontWeight: 700,
+                            cursor: 'pointer',
+                          }}
+                        >
+                          Approve & Authorize
+                        </button>
+                      </>
+                    )}
                   </div>
                 </div>
 
-                {token.status === 'PENDING' && (
-                  <div style={{ display: 'flex', gap: 8 }}>
-                    <button
-                      onClick={() => handleReject(token)}
-                      style={{
-                        padding: '6px 14px',
-                        borderRadius: 4,
-                        border: '1px solid var(--accent-red)',
-                        background: 'transparent',
-                        color: 'var(--accent-red)',
-                        fontSize: 12,
-                        fontWeight: 600,
-                        cursor: 'pointer',
+                {/* Detailed Parameter Inspection (UB-P3-R01-004 Requirement) */}
+                <div style={{ background: 'var(--bg-tertiary)', padding: 12, borderRadius: 6, fontSize: 12, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 8 }}>
+                  <div>
+                    <span style={{ color: 'var(--text-muted)' }}>Origin: </span>
+                    <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{token.origin || 'Renderer IPC'}</span>
+                  </div>
+                  <div>
+                    <span style={{ color: 'var(--text-muted)' }}>Target Path / Scope: </span>
+                    <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{impact.targetPath}</span>
+                  </div>
+                  <div>
+                    <span style={{ color: 'var(--text-muted)' }}>Requester / Actor: </span>
+                    <span style={{ color: 'var(--text-primary)' }}>{token.actor_id || 'System'}</span>
+                  </div>
+                  <div>
+                    <span style={{ color: 'var(--text-muted)' }}>Expires: </span>
+                    <span style={{ color: 'var(--text-primary)' }}>{new Date(token.expires_at).toLocaleTimeString()}</span>
+                  </div>
+                </div>
+
+                {/* Anticipated Impact Breakdown Table (UB-P3-R01-004) */}
+                {isCardExpanded && (
+                  <div style={{ marginTop: 12, border: '1px solid var(--border-color)', borderRadius: 6, overflow: 'hidden' }}>
+                    <div style={{ background: 'var(--bg-tertiary)', padding: '6px 12px', fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                      Anticipated Impact Breakdown
+                    </div>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                      <tbody>
+                        <tr style={{ borderBottom: '1px solid var(--border-color)' }}>
+                          <td style={{ padding: '8px 12px', color: 'var(--text-muted)', width: '30%' }}>Risk Level</td>
+                          <td style={{ padding: '8px 12px', fontWeight: 700, color: impact.riskLevel === 'HIGH' ? 'var(--accent-red)' : impact.riskLevel === 'MEDIUM' ? 'var(--accent-amber)' : 'var(--accent-green)' }}>
+                            {impact.riskLevel}
+                          </td>
+                        </tr>
+                        <tr style={{ borderBottom: '1px solid var(--border-color)' }}>
+                          <td style={{ padding: '8px 12px', color: 'var(--text-muted)' }}>Reversible</td>
+                          <td style={{ padding: '8px 12px', color: 'var(--text-primary)' }}>{impact.isReversible}</td>
+                        </tr>
+                        <tr style={{ borderBottom: '1px solid var(--border-color)' }}>
+                          <td style={{ padding: '8px 12px', color: 'var(--text-muted)' }}>Target Subsystem</td>
+                          <td style={{ padding: '8px 12px', color: 'var(--text-primary)' }}>{impact.targetSubsystem}</td>
+                        </tr>
+                        <tr>
+                          <td style={{ padding: '8px 12px', color: 'var(--text-muted)' }}>API Egress Cost</td>
+                          <td style={{ padding: '8px 12px', color: 'var(--accent-green)', fontWeight: 700 }}>$0.00 (Zero-Cost Local)</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+                {/* Structured JSON Parameters Tree (UB-P3-R01-004) */}
+                {isCardExpanded && (
+                  <div style={{ marginTop: 12, background: 'var(--bg-primary)', border: '1px solid var(--border-color)', borderRadius: 6, padding: 12 }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: 6 }}>
+                      Structured Parameters & Digest
+                    </div>
+                    <JsonTreeViewer
+                      label="token_parameters"
+                      data={{
+                        token_id: token.token_id,
+                        action_type: token.action_type,
+                        origin: token.origin,
+                        workspace_id: token.workspace_id,
+                        room_id: token.room_id,
+                        actor_id: token.actor_id,
+                        payload_digest: token.payload_digest,
+                        status: token.status,
                       }}
-                    >
-                      Reject
-                    </button>
-                    <button
-                      onClick={() => handleApprove(token)}
-                      style={{
-                        padding: '6px 14px',
-                        borderRadius: 4,
-                        border: 'none',
-                        background: 'var(--accent-green)',
-                        color: '#000',
-                        fontSize: 12,
-                        fontWeight: 700,
-                        cursor: 'pointer',
-                      }}
-                    >
-                      Approve & Authorize
-                    </button>
+                    />
+                  </div>
+                )}
+
+                {/* Immutable Cryptographic Digest Display */}
+                <div style={{ marginTop: 10, fontSize: 11 }}>
+                  <span style={{ color: 'var(--text-muted)' }}>Immutable Payload Digest (SHA-256): </span>
+                  <code style={{ background: 'var(--bg-tertiary)', padding: '2px 6px', borderRadius: 3, color: 'var(--text-primary)', wordBreak: 'break-all' }}>
+                    {token.payload_digest}
+                  </code>
+                </div>
+
+                {token.rejection_reason && (
+                  <div style={{ marginTop: 8, fontSize: 12, color: 'var(--accent-red)' }}>
+                    Rejection Reason: {token.rejection_reason}
                   </div>
                 )}
               </div>
-
-              {/* Detailed Parameter Inspection (P3-C01 Requirement) */}
-              <div style={{ background: 'var(--bg-tertiary)', padding: 12, borderRadius: 6, fontSize: 12, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 8 }}>
-                <div>
-                  <span style={{ color: 'var(--text-muted)' }}>Origin: </span>
-                  <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{token.origin || 'Renderer IPC'}</span>
-                </div>
-                <div>
-                  <span style={{ color: 'var(--text-muted)' }}>Workspace: </span>
-                  <span style={{ color: 'var(--text-primary)' }}>{token.workspace_id || 'active-workspace'}</span>
-                </div>
-                <div>
-                  <span style={{ color: 'var(--text-muted)' }}>Room: </span>
-                  <span style={{ color: 'var(--text-primary)' }}>#{token.room_id || 'global'}</span>
-                </div>
-                <div>
-                  <span style={{ color: 'var(--text-muted)' }}>Requester / Actor: </span>
-                  <span style={{ color: 'var(--text-primary)' }}>{token.actor_id || 'System'}</span>
-                </div>
-                <div>
-                  <span style={{ color: 'var(--text-muted)' }}>Expires: </span>
-                  <span style={{ color: 'var(--text-primary)' }}>{new Date(token.expires_at).toLocaleTimeString()}</span>
-                </div>
-                <div>
-                  <span style={{ color: 'var(--text-muted)' }}>Cost Egress: </span>
-                  <span style={{ color: 'var(--accent-green)', fontWeight: 700 }}>$0.00 (Zero-Cost Local)</span>
-                </div>
-              </div>
-
-              {/* Immutable Cryptographic Digest Display */}
-              <div style={{ marginTop: 10, fontSize: 11 }}>
-                <span style={{ color: 'var(--text-muted)' }}>Immutable Payload Digest (SHA-256): </span>
-                <code style={{ background: 'var(--bg-tertiary)', padding: '2px 6px', borderRadius: 3, color: 'var(--text-primary)', wordBreak: 'break-all' }}>
-                  {token.payload_digest}
-                </code>
-              </div>
-
-              {token.rejection_reason && (
-                <div style={{ marginTop: 8, fontSize: 12, color: 'var(--accent-red)' }}>
-                  Rejection Reason: {token.rejection_reason}
-                </div>
-              )}
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>

@@ -1391,12 +1391,39 @@ function createWindow() {
             const rejectRes = await window.unionBotAPI.rejectApproval(tokenId, 'Operator rejected from Approval Inbox');
             const tokenRejected = rejectRes && rejectRes.success === true;
 
-            // 8. Test Workspace Export (P3-009, Gate P3)
+            // 8. UB-P3-R01-001: Path traversal defense & hash format validation
+            const traversalRes = await window.unionBotAPI.readAttachment('../../windows/system32/cmd.exe');
+            const pathTraversalBlocked = traversalRes && traversalRes.success === false;
+
+            const badShaRes = await window.unionBotAPI.readAttachment('invalid_sha_format_123');
+            const invalidShaBlocked = badShaRes && badShaRes.success === false && (badShaRes.code === 'ERR_INVALID_SHA256' || (badShaRes.error && badShaRes.error.includes('ERR_INVALID_SHA256')));
+
+            // 9. UB-P3-R01-002: Project CRUD
+            const projRes = await window.unionBotAPI.createProject({ id: 'proj-gate-p3', name: 'Gate P3 Project', description: 'Audit scope' });
+            const projectCreated = projRes && projRes.success === true;
+            const projs = await window.unionBotAPI.getProjects();
+            const projectInList = Array.isArray(projs) && projs.some(p => p.id === 'proj-gate-p3');
+
+            // 10. UB-P3-R01-003: Durable Tasks in SQLite WAL
+            const taskRes = await window.unionBotAPI.createTask({
+              title: 'CAS Byte Fidelity Verification Task',
+              status: 'pending',
+              progress: 0,
+              roomId: 'gate-p3-room',
+              metadata: { priority: 'P0', role: 'IMPLEMENTER' },
+            });
+            const taskCreated = taskRes && taskRes.success === true && Boolean(taskRes.task && taskRes.task.id);
+            const tasks = await window.unionBotAPI.listTasks();
+            const taskInList = Array.isArray(tasks) && tasks.some(t => t.title === 'CAS Byte Fidelity Verification Task');
+
+            // 11. UB-P3-R01-006: Workspace Export with Uncapped Projects and Tasks
             const exportRes = await window.unionBotAPI.exportWorkspace();
             const exportSucceeded = exportRes && exportRes.success === true &&
               typeof exportRes.exportMarkdown === 'string' &&
               exportRes.exportMarkdown.includes('gate-p3-room') &&
-              exportRes.roomCount >= 1;
+              exportRes.roomCount >= 1 &&
+              typeof exportRes.projectCount === 'number' &&
+              typeof exportRes.taskCount === 'number';
 
             return {
               roomCreated,
@@ -1409,6 +1436,12 @@ function createWindow() {
               tokenInList,
               tokenRejected,
               exportSucceeded,
+              pathTraversalBlocked,
+              invalidShaBlocked,
+              projectCreated,
+              projectInList,
+              taskCreated,
+              taskInList,
               pngSha256: savePng.attachment.sha256,
               pdfSha256: savePdf.attachment.sha256,
             };
@@ -1424,6 +1457,12 @@ function createWindow() {
         console.log('[P3-E2E] P3-007 Approval token created:', p3Result.tokenCreated);
         console.log('[P3-E2E] P3-C01 Approval inbox displays full parameters & digest:', p3Result.tokenInList);
         console.log('[P3-E2E] P3-007 Approval token rejected via inbox:', p3Result.tokenRejected);
+        console.log('[P3-E2E] UB-P3-R01-001 Path traversal defense active:', p3Result.pathTraversalBlocked);
+        console.log('[P3-E2E] UB-P3-R01-001 Invalid SHA format defense active:', p3Result.invalidShaBlocked);
+        console.log('[P3-E2E] UB-P3-R01-002 Project created:', p3Result.projectCreated);
+        console.log('[P3-E2E] UB-P3-R01-002 Project present in list:', p3Result.projectInList);
+        console.log('[P3-E2E] UB-P3-R01-003 Durable task created:', p3Result.taskCreated);
+        console.log('[P3-E2E] UB-P3-R01-003 Durable task present in list:', p3Result.taskInList);
         console.log('[P3-E2E] Gate P3 Workspace exported to Markdown & JSON:', p3Result.exportSucceeded);
 
         const allPassed =
@@ -1436,7 +1475,13 @@ function createWindow() {
           p3Result.tokenCreated &&
           p3Result.tokenInList &&
           p3Result.tokenRejected &&
-          p3Result.exportSucceeded;
+          p3Result.exportSucceeded &&
+          p3Result.pathTraversalBlocked &&
+          p3Result.invalidShaBlocked &&
+          p3Result.projectCreated &&
+          p3Result.projectInList &&
+          p3Result.taskCreated &&
+          p3Result.taskInList;
 
         if (!allPassed) {
           console.error('[P3-E2E] FAILED: Some P3 checks did not pass');
@@ -1448,7 +1493,7 @@ function createWindow() {
         fs.mkdirSync(path.dirname(evidencePath), { recursive: true });
         fs.writeFileSync(evidencePath, JSON.stringify({
           timestamp: new Date().toISOString(),
-          environment: 'Real Windows Electron Chromium E2E (Phase P3 Gate)',
+          environment: 'Real Windows Electron Chromium E2E (Phase P3 Gate R02)',
           nodeEnv: process.env.NODE_ENV,
           results: p3Result,
           allPassed: true,
@@ -1466,7 +1511,7 @@ function createWindow() {
     return;
   }
 
-  // 7l. P3-REOPEN-E2E: Reopen App and verify SQLite & CAS Durability (P3-C03)
+  // 7l. P3-REOPEN-E2E: Reopen App and verify SQLite & CAS Durability (P3-C03, UB-P3-R01-005)
   if (process.argv.includes('--p3-reopen-e2e')) {
     mainWindow.webContents.once('did-finish-load', async () => {
       try {
@@ -1477,25 +1522,50 @@ function createWindow() {
             const rooms = await window.unionBotAPI.getRooms();
             const roomFound = Array.isArray(rooms) && rooms.some(r => r.id === 'gate-p3-room');
 
+            const projs = await window.unionBotAPI.getProjects();
+            const projectFound = Array.isArray(projs) && projs.some(p => p.id === 'proj-gate-p3');
+
+            const tasks = await window.unionBotAPI.listTasks();
+            const taskFound = Array.isArray(tasks) && tasks.some(t => t.title === 'CAS Byte Fidelity Verification Task');
+
             const history = await window.unionBotAPI.getRoomHistory('gate-p3-room');
             const historyFound = Array.isArray(history) && history.length > 0;
             const env = history.find(e => e.parts && e.parts.length === 3);
             const hasAttachments = Boolean(env && env.parts[1].filename === 'architecture_diagram.png' && env.parts[2].filename === 'specifications_doc.pdf');
 
+            // UB-P3-R01-005: Read back CAS attachment and verify exact byte-for-byte fidelity
+            const pngSha = env && env.parts[1].sha256;
+            const readBackPng = await window.unionBotAPI.readAttachment(pngSha);
+            const expectedPngBase64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+            const casFidelityVerified = readBackPng && readBackPng.success === true && readBackPng.dataBase64 === expectedPngBase64;
+
             return {
               roomFound,
+              projectFound,
+              taskFound,
               historyFound,
               hasAttachments,
+              casFidelityVerified,
               historyLength: history ? history.length : 0,
             };
           })()
         `);
 
         console.log('[P3-REOPEN-E2E] P3-C03 Room survived app restart:', reopenResult.roomFound);
+        console.log('[P3-REOPEN-E2E] UB-P3-R01-002 Project survived app restart:', reopenResult.projectFound);
+        console.log('[P3-REOPEN-E2E] UB-P3-R01-003 Tasks survived app restart:', reopenResult.taskFound);
         console.log('[P3-REOPEN-E2E] P3-C03 Envelopes survived app restart:', reopenResult.historyFound);
         console.log('[P3-REOPEN-E2E] P3-C03 Attachments (PNG & PDF) survived app restart:', reopenResult.hasAttachments);
+        console.log('[P3-REOPEN-E2E] UB-P3-R01-005 Byte-for-byte CAS fidelity verified:', reopenResult.casFidelityVerified);
 
-        const allPassed = reopenResult.roomFound && reopenResult.historyFound && reopenResult.hasAttachments;
+        const allPassed =
+          reopenResult.roomFound &&
+          reopenResult.projectFound &&
+          reopenResult.taskFound &&
+          reopenResult.historyFound &&
+          reopenResult.hasAttachments &&
+          reopenResult.casFidelityVerified;
+
         if (!allPassed) {
           console.error('[P3-REOPEN-E2E] FAILED: Data did not survive app restart');
           app.quit();
@@ -1695,7 +1765,83 @@ ipcMain.handle('union-bot:get-room-history', async (event, roomId) => {
 });
 
 // P3-003: Dynamic Room Management IPC
-ipcMain.handle('union-bot:get-rooms', async (event) => {
+// P3-R02 / UB-P3-R01-002: Project Workspace Hierarchy IPC
+ipcMain.handle('union-bot:get-projects', async (event, options) => {
+  if (!checkSenderAuthorized(event)) return [];
+  if (appStatus !== 'READY') return [];
+  try {
+    const includeArchived = options && options.includeArchived === true;
+    return await storage.getProjects(includeArchived);
+  } catch (err) {
+    console.error('[UnionBot] Failed to get projects:', err);
+    return [];
+  }
+});
+
+ipcMain.handle('union-bot:create-project', async (event, payload) => {
+  if (!checkSenderAuthorized(event)) return { success: false, error: 'Unauthorized IPC sender origin' };
+  if (appStatus !== 'READY') return { success: false, error: `ERR_STORAGE_UNAVAILABLE: Desktop storage is not ready (${appStatus})` };
+  try {
+    const { id, name, description } = payload || {};
+    if (!name || typeof name !== 'string' || !name.trim()) {
+      return { success: false, error: 'Project name is required' };
+    }
+    const cleanId = (id && typeof id === 'string' && id.trim())
+      ? id.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '-')
+      : `proj_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    const cleanName = String(name).trim();
+    const result = await storage.createProject(cleanId, cleanName, description || '');
+    return { success: true, project: result };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('union-bot:rename-project', async (event, payload) => {
+  if (!checkSenderAuthorized(event)) return { success: false, error: 'Unauthorized IPC sender origin' };
+  if (appStatus !== 'READY') return { success: false, error: `ERR_STORAGE_UNAVAILABLE: Desktop storage is not ready (${appStatus})` };
+  try {
+    const { id, newName } = payload || {};
+    if (!id || !newName || typeof newName !== 'string' || !newName.trim()) {
+      return { success: false, error: 'Valid id and newName required' };
+    }
+    const result = await storage.renameProject(id, newName.trim());
+    return { success: true, result };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('union-bot:archive-project', async (event, id) => {
+  if (!checkSenderAuthorized(event)) return { success: false, error: 'Unauthorized IPC sender origin' };
+  if (appStatus !== 'READY') return { success: false, error: `ERR_STORAGE_UNAVAILABLE: Desktop storage is not ready (${appStatus})` };
+  try {
+    if (!id || id === 'default') {
+      return { success: false, error: 'Cannot archive default project' };
+    }
+    const result = await storage.archiveProject(id);
+    return { success: true, result };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('union-bot:delete-project', async (event, id) => {
+  if (!checkSenderAuthorized(event)) return { success: false, error: 'Unauthorized IPC sender origin' };
+  if (appStatus !== 'READY') return { success: false, error: `ERR_STORAGE_UNAVAILABLE: Desktop storage is not ready (${appStatus})` };
+  try {
+    if (!id || id === 'default') {
+      return { success: false, error: 'Cannot delete default project' };
+    }
+    const result = await storage.deleteProject(id);
+    return { success: true, result };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+// P3-003: Dynamic Room Management IPC
+ipcMain.handle('union-bot:get-rooms', async (event, options) => {
   if (!checkSenderAuthorized(event)) {
     return [];
   }
@@ -1703,19 +1849,22 @@ ipcMain.handle('union-bot:get-rooms', async (event) => {
     return [];
   }
   try {
-    let rooms = await storage.getRooms();
+    const projectId = options && options.projectId;
+    let rooms = await storage.getRooms(projectId);
     if (!rooms || rooms.length === 0) {
-      // Seed initial default rooms if table is empty
-      const defaultRooms = [
-        { id: 'orchestration', name: 'orchestration' },
-        { id: 'agent-dev', name: 'agent-dev' },
-        { id: 'qa-audit', name: 'qa-audit' },
-        { id: 'review-briefing', name: 'review-briefing' },
-      ];
-      for (const r of defaultRooms) {
-        await storage.ensureRoom(r.id, r.name);
+      if (!projectId || projectId === 'default') {
+        // Seed initial default rooms if table is empty
+        const defaultRooms = [
+          { id: 'orchestration', name: 'orchestration', projectId: 'default' },
+          { id: 'agent-dev', name: 'agent-dev', projectId: 'default' },
+          { id: 'qa-audit', name: 'qa-audit', projectId: 'default' },
+          { id: 'review-briefing', name: 'review-briefing', projectId: 'default' },
+        ];
+        for (const r of defaultRooms) {
+          await storage.ensureRoom(r.id, r.name, r.projectId);
+        }
+        rooms = await storage.getRooms(projectId);
       }
-      rooms = await storage.getRooms();
     }
     return rooms || [];
   } catch (err) {
@@ -1732,14 +1881,94 @@ ipcMain.handle('union-bot:create-room', async (event, payload) => {
     return { success: false, error: `ERR_STORAGE_UNAVAILABLE: Desktop storage is not ready (${appStatus})` };
   }
   try {
-    const { id, name } = payload || {};
+    const { id, name, projectId } = payload || {};
     if (!id || !name) {
       return { success: false, error: 'Room id and name are required' };
     }
     const cleanId = String(id).trim().toLowerCase().replace(/[^a-z0-9_-]/g, '-');
     const cleanName = String(name).trim();
-    const result = await storage.createRoom(cleanId, cleanName);
+    const cleanProjectId = projectId || 'default';
+    const result = await storage.createRoom(cleanId, cleanName, cleanProjectId);
     return { success: true, room: result };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+// P3-R02 / UB-P3-R01-003: Tasks Durable Tracking IPC
+ipcMain.handle('union-bot:list-tasks', async (event, options) => {
+  if (!checkSenderAuthorized(event)) return [];
+  if (appStatus !== 'READY') return [];
+  try {
+    return await storage.listTasks(options || {});
+  } catch (err) {
+    console.error('[UnionBot] Failed to list tasks:', err);
+    return [];
+  }
+});
+
+ipcMain.handle('union-bot:create-task', async (event, taskData) => {
+  if (!checkSenderAuthorized(event)) return { success: false, error: 'Unauthorized IPC sender origin' };
+  if (appStatus !== 'READY') return { success: false, error: `ERR_STORAGE_UNAVAILABLE: Desktop storage is not ready (${appStatus})` };
+  try {
+    const { title, status, progress, roomId, metadata } = taskData || {};
+    if (!title || typeof title !== 'string' || !title.trim()) {
+      return { success: false, error: 'Task title is required' };
+    }
+    const result = await storage.createTask({
+      title: title.trim(),
+      status: status || 'pending',
+      progress: typeof progress === 'number' ? progress : 0,
+      roomId: roomId || null,
+      metadata: metadata || null,
+    });
+    return { success: true, task: result };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('union-bot:update-task', async (event, payload) => {
+  if (!checkSenderAuthorized(event)) return { success: false, error: 'Unauthorized IPC sender origin' };
+  if (appStatus !== 'READY') return { success: false, error: `ERR_STORAGE_UNAVAILABLE: Desktop storage is not ready (${appStatus})` };
+  try {
+    const { taskId, updates } = payload || {};
+    if (!taskId) return { success: false, error: 'taskId is required' };
+    const result = await storage.updateTask(taskId, updates || {});
+    return { success: true, result };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+// P3-R02 / UB-P3-R01-007: Storage Diagnostics IPC
+ipcMain.handle('union-bot:get-storage-diagnostics', async (event) => {
+  if (!checkSenderAuthorized(event)) return { success: false, error: 'Unauthorized IPC sender origin' };
+  try {
+    const diag = await storage.getStorageDiagnostics();
+    const userDataDir = app.getPath('userData');
+    const casDir = path.resolve(userDataDir, 'cas-store');
+    let casSizeBytes = 0;
+    let casItemCount = 0;
+    if (fs.existsSync(casDir)) {
+      const files = fs.readdirSync(casDir);
+      casItemCount = files.length;
+      for (const f of files) {
+        try {
+          casSizeBytes += fs.statSync(path.join(casDir, f)).size;
+        } catch {}
+      }
+    }
+    return {
+      success: true,
+      diagnostics: {
+        ...diag,
+        casDir,
+        casSizeBytes,
+        casItemCount,
+        appStatus,
+      },
+    };
   } catch (err) {
     return { success: false, error: err.message };
   }
@@ -1801,13 +2030,16 @@ ipcMain.handle('union-bot:save-attachment', async (event, payload) => {
     }
 
     const crypto = require('crypto');
-    const sha256 = crypto.createHash('sha256').update(buffer).digest('hex');
+    const sha256 = crypto.createHash('sha256').update(buffer).digest('hex').toLowerCase();
     const userDataDir = app.getPath('userData');
-    const casDir = path.join(userDataDir, 'cas-store');
+    const casDir = path.resolve(userDataDir, 'cas-store');
     if (!fs.existsSync(casDir)) {
       fs.mkdirSync(casDir, { recursive: true });
     }
-    const casFilePath = path.join(casDir, sha256);
+    const casFilePath = path.resolve(casDir, sha256);
+    if (!casFilePath.startsWith(casDir + path.sep)) {
+      return { success: false, error: 'ERR_PATH_TRAVERSAL: Access denied outside CAS store' };
+    }
     fs.writeFileSync(casFilePath, buffer);
 
     const sizeBytes = buffer.length;
@@ -1830,23 +2062,29 @@ ipcMain.handle('union-bot:save-attachment', async (event, payload) => {
   }
 });
 
+// P3-R02 / UB-P3-R01-001: Strict SHA-256 validation & canonical path traversal defense
 ipcMain.handle('union-bot:read-attachment', async (event, sha256) => {
   if (!checkSenderAuthorized(event)) {
     return { success: false, error: 'Unauthorized IPC sender origin' };
   }
   try {
-    if (!sha256 || typeof sha256 !== 'string') {
-      return { success: false, error: 'Valid sha256 required' };
+    const SHA256_HEX_REGEX = /^[a-f0-9]{64}$/i;
+    if (!sha256 || typeof sha256 !== 'string' || !SHA256_HEX_REGEX.test(sha256)) {
+      return { success: false, code: 'ERR_INVALID_SHA256', error: 'ERR_INVALID_SHA256: Input must be a valid 64-character hexadecimal SHA-256 hash' };
     }
     const userDataDir = app.getPath('userData');
-    const casFilePath = path.join(userDataDir, 'cas-store', sha256);
+    const casDir = path.resolve(userDataDir, 'cas-store');
+    const casFilePath = path.resolve(casDir, sha256.toLowerCase());
+    if (!casFilePath.startsWith(casDir + path.sep)) {
+      return { success: false, code: 'ERR_PATH_TRAVERSAL', error: 'ERR_PATH_TRAVERSAL: Access denied outside CAS store' };
+    }
     if (!fs.existsSync(casFilePath)) {
       return { success: false, error: 'Attachment not found in CAS store' };
     }
     const buffer = fs.readFileSync(casFilePath);
     return {
       success: true,
-      sha256,
+      sha256: sha256.toLowerCase(),
       sizeBytes: buffer.length,
       dataBase64: buffer.toString('base64'),
     };
@@ -1877,13 +2115,16 @@ ipcMain.handle('union-bot:open-file-dialog', async (event) => {
     const filename = path.basename(selectedPath);
     const buffer = fs.readFileSync(selectedPath);
     const crypto = require('crypto');
-    const sha256 = crypto.createHash('sha256').update(buffer).digest('hex');
+    const sha256 = crypto.createHash('sha256').update(buffer).digest('hex').toLowerCase();
     const userDataDir = app.getPath('userData');
-    const casDir = path.join(userDataDir, 'cas-store');
+    const casDir = path.resolve(userDataDir, 'cas-store');
     if (!fs.existsSync(casDir)) {
       fs.mkdirSync(casDir, { recursive: true });
     }
-    const casFilePath = path.join(casDir, sha256);
+    const casFilePath = path.resolve(casDir, sha256);
+    if (!casFilePath.startsWith(casDir + path.sep)) {
+      return { success: false, error: 'ERR_PATH_TRAVERSAL: Access denied outside CAS store' };
+    }
     fs.writeFileSync(casFilePath, buffer);
 
     const ext = path.extname(filename).toLowerCase();
@@ -1917,30 +2158,42 @@ ipcMain.handle('union-bot:open-file-dialog', async (event) => {
   }
 });
 
-// P3-009 / Gate P3: Export Workspace Data
+// P3-009 / P3-R02 / Gate P3 / UB-P3-R01-006: Uncapped Multi-Format Workspace Export
 ipcMain.handle('union-bot:export-workspace', async (event, options = {}) => {
   if (!checkSenderAuthorized(event)) {
     return { success: false, error: 'Unauthorized IPC sender origin' };
   }
   try {
+    const limit = typeof options.limit === 'number' ? options.limit : 10000;
+    const projects = await storage.getProjects(true);
     const rooms = await storage.getRooms();
+    const tasks = await storage.listTasks({ limit: 500 });
     const exportData = {
       exportedAt: new Date().toISOString(),
+      projects,
       rooms: [],
+      tasks,
     };
     for (const r of rooms) {
-      const history = await storage.getRoomEnvelopes(r.id, 500);
+      const history = await storage.getRoomEnvelopes(r.id, limit);
       exportData.rooms.push({
         id: r.id,
         name: r.name,
+        projectId: r.project_id || 'default',
         envelopes: history,
       });
     }
 
     const jsonString = JSON.stringify(exportData, null, 2);
     let mdContent = `# Union Bot Workspace Export\n*Exported at: ${exportData.exportedAt}*\n\n`;
+    mdContent += `## Projects (${projects.length})\n\n`;
+    for (const p of projects) {
+      mdContent += `- **${p.name}** (\`${p.id}\`)${p.archived ? ' [ARCHIVED]' : ''}: ${p.description || 'No description'}\n`;
+    }
+    mdContent += '\n';
+
     for (const r of exportData.rooms) {
-      mdContent += `## Room: #${r.name} (${r.id})\n\n`;
+      mdContent += `## Room: #${r.name} (${r.id}) [Project: ${r.projectId}]\n\n`;
       if (!r.envelopes || r.envelopes.length === 0) {
         mdContent += `*No messages in this room.*\n\n`;
       } else {
@@ -1963,7 +2216,9 @@ ipcMain.handle('union-bot:export-workspace', async (event, options = {}) => {
       success: true,
       exportJson: jsonString,
       exportMarkdown: mdContent,
+      projectCount: exportData.projects.length,
       roomCount: exportData.rooms.length,
+      taskCount: exportData.tasks.length,
       totalEnvelopes: exportData.rooms.reduce((acc, r) => acc + (r.envelopes ? r.envelopes.length : 0), 0),
     };
   } catch (err) {

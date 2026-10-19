@@ -1,5 +1,5 @@
-import React from 'react';
-import { AgentInfo, RoomInfo } from '../types.ts';
+import React, { useState } from 'react';
+import { AgentInfo, RoomInfo, ProjectInfo } from '../types.ts';
 
 interface SidebarProps {
   rooms: RoomInfo[];
@@ -11,6 +11,14 @@ interface SidebarProps {
   pendingApprovalsCount: number;
   onOpenCreateRoom: () => void;
   onOpenPreferences: () => void;
+  projects?: ProjectInfo[];
+  selectedProjectId?: string;
+  onSelectProject?: (projectId: string) => void;
+  onOpenCreateProject?: () => void;
+  onOpenEditProject?: (project: ProjectInfo) => void;
+  onArchiveProject?: (projectId: string) => void;
+  theme?: 'dark' | 'light';
+  onToggleTheme?: () => void;
   projectName?: string;
 }
 
@@ -24,19 +32,180 @@ export const Sidebar: React.FC<SidebarProps> = ({
   pendingApprovalsCount,
   onOpenCreateRoom,
   onOpenPreferences,
+  projects = [],
+  selectedProjectId = 'default',
+  onSelectProject,
+  onOpenCreateProject,
+  onOpenEditProject,
+  onArchiveProject,
+  theme = 'dark',
+  onToggleTheme,
   projectName = 'Union Bot Workspace',
 }) => {
+  const [isProjectDropdownOpen, setIsProjectDropdownOpen] = useState(false);
+
+  const currentProject = projects.find((p) => p.id === selectedProjectId) || {
+    id: selectedProjectId,
+    name: projectName,
+  };
+
   return (
     <aside className="sidebar">
+      {/* Brand Header */}
       <div className="sidebar-header">
         <div className="brand-badge">
           <div className="brand-logo">UB</div>
           <div>
             <div className="brand-title">Union Bot</div>
-            <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>{projectName}</div>
+            <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>0đ Desktop AI Workspace</div>
           </div>
         </div>
-        <span className="zero-cost-pill">0đ ZERO COST</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          {onToggleTheme && (
+            <button
+              onClick={onToggleTheme}
+              title={`Switch to ${theme === 'dark' ? 'Light' : 'Dark'} mode`}
+              style={{
+                background: 'transparent',
+                border: '1px solid var(--border-color)',
+                borderRadius: 4,
+                padding: '2px 6px',
+                cursor: 'pointer',
+                fontSize: 12,
+                color: 'var(--text-primary)',
+              }}
+            >
+              {theme === 'dark' ? '☀️' : '🌙'}
+            </button>
+          )}
+          <span className="zero-cost-pill">0đ ZERO COST</span>
+        </div>
+      </div>
+
+      {/* Project Switcher Bar (UB-P3-R01-002) */}
+      <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--border-color)', position: 'relative' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+          <span className="section-label" style={{ padding: 0, fontSize: 10 }}>PROJECT SCOPE</span>
+          {onOpenCreateProject && (
+            <button
+              onClick={onOpenCreateProject}
+              title="Create New Project (UB-P3-R01-002)"
+              style={{
+                background: 'transparent',
+                border: '1px solid var(--border-color)',
+                color: 'var(--text-primary)',
+                borderRadius: 3,
+                padding: '1px 6px',
+                fontSize: 11,
+                cursor: 'pointer',
+              }}
+            >
+              + New
+            </button>
+          )}
+        </div>
+
+        <div
+          onClick={() => setIsProjectDropdownOpen(!isProjectDropdownOpen)}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            padding: '6px 10px',
+            background: 'var(--bg-tertiary)',
+            border: '1px solid var(--border-color)',
+            borderRadius: 6,
+            cursor: 'pointer',
+            fontSize: 13,
+            fontWeight: 600,
+            color: 'var(--text-primary)',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, overflow: 'hidden' }}>
+            <span>📁</span>
+            <span style={{ textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>
+              {currentProject.name}
+            </span>
+          </div>
+          <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{isProjectDropdownOpen ? '▲' : '▼'}</span>
+        </div>
+
+        {/* Project Dropdown Menu */}
+        {isProjectDropdownOpen && (
+          <div
+            style={{
+              position: 'absolute',
+              top: '100%',
+              left: 12,
+              right: 12,
+              background: 'var(--bg-secondary)',
+              border: '1px solid var(--border-color)',
+              borderRadius: 6,
+              boxShadow: '0 8px 16px rgba(0,0,0,0.4)',
+              zIndex: 100,
+              maxHeight: 220,
+              overflowY: 'auto',
+              padding: 4,
+            }}
+          >
+            {projects.map((proj) => (
+              <div
+                key={proj.id}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  padding: '6px 8px',
+                  borderRadius: 4,
+                  background: proj.id === selectedProjectId ? 'var(--bg-tertiary)' : 'transparent',
+                  cursor: 'pointer',
+                  fontSize: 12,
+                  color: 'var(--text-primary)',
+                }}
+              >
+                <div
+                  style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                  onClick={() => {
+                    if (onSelectProject) onSelectProject(proj.id);
+                    setIsProjectDropdownOpen(false);
+                  }}
+                >
+                  <span style={{ fontWeight: proj.id === selectedProjectId ? 700 : 400 }}>{proj.name}</span>
+                </div>
+                <div style={{ display: 'flex', gap: 4 }}>
+                  {onOpenEditProject && proj.id !== 'default' && (
+                    <button
+                      title="Rename Project"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onOpenEditProject(proj);
+                        setIsProjectDropdownOpen(false);
+                      }}
+                      style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 11 }}
+                    >
+                      ✏️
+                    </button>
+                  )}
+                  {onArchiveProject && proj.id !== 'default' && (
+                    <button
+                      title="Archive Project"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (confirm(`Archive project "${proj.name}"?`)) {
+                          onArchiveProject(proj.id);
+                          setIsProjectDropdownOpen(false);
+                        }
+                      }}
+                      style={{ background: 'transparent', border: 'none', color: 'var(--accent-red)', cursor: 'pointer', fontSize: 11 }}
+                    >
+                      📦
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Navigation Sections (P3-006, P3-007) */}
@@ -105,7 +274,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             fontSize: 13,
           }}
         >
-          <span>📋 Tasks & DAG</span>
+          <span>📋 Tasks & Execution</span>
         </button>
       </div>
 

@@ -45,13 +45,17 @@ class StorageServiceClient extends EventEmitter {
     this.isNative = false;
     this.nativeDb = null;
     this.fallbackEnvelopes = new Map();
+    this.fallbackProjects = new Map([
+      ['default', { id: 'default', name: 'General Project', description: 'Default local workspace project', archived: 0, created_at: new Date().toISOString(), updated_at: new Date().toISOString() }],
+    ]);
     this.fallbackRooms = new Map([
-      ['orchestration', { id: 'orchestration', name: 'orchestration' }],
-      ['agent-dev', { id: 'agent-dev', name: 'agent-dev' }],
-      ['qa-audit', { id: 'qa-audit', name: 'qa-audit' }],
-      ['review-briefing', { id: 'review-briefing', name: 'review-briefing' }],
+      ['orchestration', { id: 'orchestration', name: 'orchestration', project_id: 'default' }],
+      ['agent-dev', { id: 'agent-dev', name: 'agent-dev', project_id: 'default' }],
+      ['qa-audit', { id: 'qa-audit', name: 'qa-audit', project_id: 'default' }],
+      ['review-briefing', { id: 'review-briefing', name: 'review-briefing', project_id: 'default' }],
     ]);
     this.fallbackApprovals = new Map();
+    this.fallbackTasks = new Map();
 
     this.ready = this.init();
   }
@@ -210,12 +214,51 @@ class StorageServiceClient extends EventEmitter {
 
     // Run authoritative schema migrations with checksum & parity verification (UB-P2-R04-01, R05-H01..H03)
     runSchemaMigrations(this.nativeDb);
+    this.ensureP3Schema(this.nativeDb);
 
     const defaultRooms = ['orchestration', 'agent-dev', 'qa-audit', 'review-briefing'];
     const now = new Date().toISOString();
-    const insertRoom = this.nativeDb.prepare('INSERT OR IGNORE INTO rooms (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)');
+    const insertRoom = this.nativeDb.prepare('INSERT OR IGNORE INTO rooms (id, name, project_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?)');
     for (const r of defaultRooms) {
-      insertRoom.run(r, r, now, now);
+      insertRoom.run(r, r, 'default', now, now);
+    }
+  }
+
+  ensureP3Schema(db) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS projects (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        description TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        archived INTEGER NOT NULL DEFAULT 0
+      );
+      CREATE INDEX IF NOT EXISTS idx_projects_archived ON projects (archived);
+
+      CREATE TABLE IF NOT EXISTS tasks (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        status TEXT NOT NULL,
+        progress INTEGER NOT NULL DEFAULT 0,
+        room_id TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        metadata_json TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks (status);
+      CREATE INDEX IF NOT EXISTS idx_tasks_room ON tasks (room_id);
+    `);
+
+    const now = new Date().toISOString();
+    db.prepare(`
+      INSERT OR IGNORE INTO projects (id, name, description, created_at, updated_at, archived)
+      VALUES ('default', 'General Project', 'Default local workspace project', ?, ?, 0)
+    `).run(now, now);
+
+    const roomCols = db.prepare('PRAGMA table_info(rooms)').all();
+    if (!roomCols.some((c) => c.name === 'project_id')) {
+      db.exec("ALTER TABLE rooms ADD COLUMN project_id TEXT DEFAULT 'default';");
     }
   }
 
@@ -227,20 +270,119 @@ class StorageServiceClient extends EventEmitter {
     switch (method) {
       case 'init':
         return Promise.resolve({ success: true, dbPath: this.dbPath, mode: 'NON_DURABLE_DEMO' });
+      case 'getProjects': {
+        const includeArchived = args && args.includeArchived === true;
+        const list = Array.from(this.fallbackProjects.values()).filter(p => includeArchived || !p.archived);
+        return Promise.resolve(list);
+      }
+      case 'createProject': {
+        const now = new Date().toISOString();
+        const proj = { id: args.id, name: args.name, description: args.description || '', created_at: now, updated_at: now, archived: 0 };
+        this.fallbackProjects.set(args.id, proj);
+        return Promise.resolve(proj);
+      }
+      case 'renameProject': {
+        const proj = this.fallbackProjects.get(args.id);
+        if (proj) {
+          proj.name = args.newName;
+          proj.updated_at = new Date().toISOString();
+          return Promise.resolve({ success: true, project: proj });
+        }
+        return Promise.resolve({ success: false, error: 'Project not found' });
+      }
+      case 'archiveProject': {
+        if (args.id === 'default') {
+          return Promise.reject(new Error('Cannot archive default project'));
+        }
+        const proj = this.fallbackProjects.get(args.id);
+        if (proj) {
+          proj.archived = 1;
+          proj.updated_at = new Date().toISOString();
+          return Promise.resolve({ success: true, project: proj });
+        }
+        return Promise.resolve({ success: false, error: 'Project not found' });
+      }
+      case 'deleteProject': {
+        if (args.id === 'default') {
+          return Promise.reject(new Error('Cannot delete default project'));
+        }
+        for (const r of this.fallbackRooms.values()) {
+          if (r.project_id === args.id) r.project_id = 'default';
+        }
+        const deleted = this.fallbackProjects.delete(args.id);
+        return Promise.resolve({ success: deleted });
+      }
       case 'ensureRoom': {
         const roomId = args.roomId;
         if (!this.fallbackRooms.has(roomId)) {
-          this.fallbackRooms.set(roomId, { id: roomId, name: args.name || roomId });
+          this.fallbackRooms.set(roomId, { id: roomId, name: args.name || roomId, project_id: args.projectId || 'default' });
         }
         return Promise.resolve(true);
       }
-      case 'getRooms':
-        return Promise.resolve(Array.from(this.fallbackRooms.values()));
+      case 'getRooms': {
+        const projectId = args && args.projectId;
+        const rooms = Array.from(this.fallbackRooms.values()).filter(r => !projectId || r.project_id === projectId);
+        return Promise.resolve(rooms);
+      }
       case 'createRoom': {
         const now = new Date().toISOString();
-        const record = { id: args.id, name: args.name, created_at: now, updated_at: now };
+        const record = { id: args.id, name: args.name, project_id: args.projectId || 'default', created_at: now, updated_at: now };
         this.fallbackRooms.set(args.id, record);
         return Promise.resolve(record);
+      }
+      case 'listTasks': {
+        const limit = (args && args.limit) || 50;
+        const status = args && args.status;
+        const roomId = args && args.roomId;
+        let tasks = Array.from(this.fallbackTasks.values()).reverse();
+        if (status) tasks = tasks.filter(t => t.status === status);
+        if (roomId) tasks = tasks.filter(t => t.room_id === roomId);
+        return Promise.resolve(tasks.slice(0, limit));
+      }
+      case 'createTask': {
+        const now = new Date().toISOString();
+        const id = (args && args.id) || `task_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+        const title = (args && (args.title || args.name)) || 'Untitled Task';
+        const task = {
+          id,
+          title,
+          status: (args && args.status) || 'pending',
+          progress: typeof (args && args.progress) === 'number' ? args.progress : 0,
+          room_id: (args && (args.roomId || args.room_id)) || null,
+          metadata_json: (args && args.metadata) ? JSON.stringify(args.metadata) : null,
+          metadata: args ? args.metadata : undefined,
+          created_at: now,
+          updated_at: now
+        };
+        this.fallbackTasks.set(id, task);
+        return Promise.resolve(task);
+      }
+      case 'updateTask': {
+        const task = this.fallbackTasks.get(args.taskId);
+        if (task) {
+          if (args.updates.status !== undefined) task.status = args.updates.status;
+          if (args.updates.progress !== undefined) task.progress = args.updates.progress;
+          if (args.updates.metadata !== undefined) {
+            task.metadata = args.updates.metadata;
+            task.metadata_json = JSON.stringify(args.updates.metadata);
+          }
+          task.updated_at = new Date().toISOString();
+          return Promise.resolve({ success: true, task });
+        }
+        return Promise.resolve({ success: false, error: 'Task not found' });
+      }
+      case 'getStorageDiagnostics': {
+        return Promise.resolve({
+          mode: 'NON_DURABLE_DEMO',
+          dbPath: this.dbPath,
+          dbSizeBytes: 0,
+          walMode: false,
+          projectCount: this.fallbackProjects.size,
+          roomCount: this.fallbackRooms.size,
+          envelopeCount: this.fallbackEnvelopes.size,
+          taskCount: this.fallbackTasks.size,
+          approvalCount: Array.from(this.fallbackApprovals.values()).filter(a => a.status === 'PENDING').length
+        });
       }
       case 'listApprovals': {
         const rows = Array.from(this.fallbackApprovals.values()).reverse();
@@ -302,21 +444,139 @@ class StorageServiceClient extends EventEmitter {
     if (this.isNative && this.nativeDb) {
       try {
         switch (method) {
+          case 'getProjects': {
+            const includeArchived = args && args.includeArchived === true;
+            const q = includeArchived
+              ? 'SELECT id, name, description, created_at, updated_at, archived FROM projects ORDER BY created_at ASC'
+              : 'SELECT id, name, description, created_at, updated_at, archived FROM projects WHERE archived = 0 ORDER BY created_at ASC';
+            const rows = this.nativeDb.prepare(q).all();
+            return Promise.resolve(rows);
+          }
+          case 'createProject': {
+            const now = new Date().toISOString();
+            this.nativeDb.prepare(`
+              INSERT INTO projects (id, name, description, created_at, updated_at, archived)
+              VALUES (?, ?, ?, ?, ?, 0)
+            `).run(args.id, args.name, args.description || null, now, now);
+            return Promise.resolve({ id: args.id, name: args.name, description: args.description, created_at: now, updated_at: now, archived: 0 });
+          }
+          case 'renameProject': {
+            const now = new Date().toISOString();
+            const res = this.nativeDb.prepare('UPDATE projects SET name = ?, updated_at = ? WHERE id = ?').run(args.newName, now, args.id);
+            return Promise.resolve({ success: res.changes > 0, id: args.id, name: args.newName });
+          }
+          case 'archiveProject': {
+            if (args.id === 'default') {
+              throw new Error('Cannot archive default project');
+            }
+            const now = new Date().toISOString();
+            const res = this.nativeDb.prepare('UPDATE projects SET archived = 1, updated_at = ? WHERE id = ?').run(now, args.id);
+            return Promise.resolve({ success: res.changes > 0, id: args.id });
+          }
+          case 'deleteProject': {
+            if (args.id === 'default') {
+              throw new Error('Cannot delete default project');
+            }
+            this.nativeDb.prepare("UPDATE rooms SET project_id = 'default' WHERE project_id = ?").run(args.id);
+            const res = this.nativeDb.prepare('DELETE FROM projects WHERE id = ?').run(args.id);
+            return Promise.resolve({ success: res.changes > 0, id: args.id });
+          }
           case 'ensureRoom': {
             const now = new Date().toISOString();
-            this.nativeDb.prepare('INSERT OR IGNORE INTO rooms (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)')
-              .run(args.roomId, args.name || args.roomId, now, now);
+            this.nativeDb.prepare('INSERT OR IGNORE INTO rooms (id, name, project_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?)')
+              .run(args.roomId, args.name || args.roomId, args.projectId || 'default', now, now);
             return Promise.resolve(true);
           }
           case 'getRooms': {
-            const rows = this.nativeDb.prepare('SELECT id, name, created_at, updated_at FROM rooms').all();
+            const q = args && args.projectId
+              ? 'SELECT id, name, project_id, created_at, updated_at FROM rooms WHERE project_id = ? ORDER BY rowid ASC'
+              : 'SELECT id, name, project_id, created_at, updated_at FROM rooms ORDER BY rowid ASC';
+            const rows = args && args.projectId ? this.nativeDb.prepare(q).all(args.projectId) : this.nativeDb.prepare(q).all();
             return Promise.resolve(rows);
           }
           case 'createRoom': {
             const now = new Date().toISOString();
-            this.nativeDb.prepare('INSERT OR REPLACE INTO rooms (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)')
-              .run(args.id, args.name, now, now);
-            return Promise.resolve({ id: args.id, name: args.name, created_at: now, updated_at: now });
+            this.nativeDb.prepare('INSERT OR REPLACE INTO rooms (id, name, project_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?)')
+              .run(args.id, args.name, args.projectId || 'default', now, now);
+            return Promise.resolve({ id: args.id, name: args.name, project_id: args.projectId || 'default', created_at: now, updated_at: now });
+          }
+          case 'listTasks': {
+            const limit = (args && args.limit) || 50;
+            let query = 'SELECT * FROM tasks WHERE 1=1';
+            const params = [];
+            if (args && args.status) {
+              query += ' AND status = ?';
+              params.push(args.status);
+            }
+            if (args && args.roomId) {
+              query += ' AND room_id = ?';
+              params.push(args.roomId);
+            }
+            query += ' ORDER BY created_at DESC LIMIT ?';
+            params.push(limit);
+            const rows = this.nativeDb.prepare(query).all(...params);
+            return Promise.resolve(rows.map(r => ({
+              id: r.id,
+              title: r.title,
+              status: r.status,
+              progress: r.progress,
+              roomId: r.room_id || undefined,
+              createdAt: r.created_at,
+              updatedAt: r.updated_at,
+              metadata: r.metadata_json ? JSON.parse(r.metadata_json) : undefined
+            })));
+          }
+          case 'createTask': {
+            const id = (args && args.id) || `task_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+            const now = new Date().toISOString();
+            const title = (args && (args.title || args.name)) || 'Untitled Task';
+            const status = (args && args.status) || 'pending';
+            const progress = typeof (args && args.progress) === 'number' ? args.progress : 0;
+            const roomId = (args && (args.roomId || args.room_id)) || null;
+            const metadataJson = (args && args.metadata) ? JSON.stringify(args.metadata) : null;
+            this.nativeDb.prepare(`
+              INSERT INTO tasks (id, title, status, progress, room_id, created_at, updated_at, metadata_json)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            `).run(id, title, status, progress, roomId, now, now, metadataJson);
+            return Promise.resolve({ id, title, status, progress, roomId, createdAt: now, updatedAt: now, metadata: args ? args.metadata : undefined });
+          }
+          case 'updateTask': {
+            const now = new Date().toISOString();
+            const existing = this.nativeDb.prepare('SELECT * FROM tasks WHERE id = ?').get(args.taskId);
+            if (!existing) return Promise.resolve({ success: false, error: 'Task not found' });
+            const newStatus = args.updates && args.updates.status !== undefined ? args.updates.status : existing.status;
+            const newProgress = args.updates && args.updates.progress !== undefined ? args.updates.progress : existing.progress;
+            const newMetadata = args.updates && args.updates.metadata !== undefined ? JSON.stringify(args.updates.metadata) : existing.metadata_json;
+            const res = this.nativeDb.prepare(`
+              UPDATE tasks
+              SET status = ?, progress = ?, metadata_json = ?, updated_at = ?
+              WHERE id = ?
+            `).run(newStatus, newProgress, newMetadata, now, args.taskId);
+            return Promise.resolve({ success: res.changes > 0, taskId: args.taskId });
+          }
+          case 'getStorageDiagnostics': {
+            let dbSize = 0;
+            try {
+              if (this.dbPath !== ':memory:' && fs.existsSync(this.dbPath)) {
+                dbSize = fs.statSync(this.dbPath).size;
+              }
+            } catch {}
+            const projectCount = this.nativeDb.prepare('SELECT COUNT(*) as c FROM projects').get()?.c || 0;
+            const roomCount = this.nativeDb.prepare('SELECT COUNT(*) as c FROM rooms').get()?.c || 0;
+            const envelopeCount = this.nativeDb.prepare('SELECT COUNT(*) as c FROM envelopes').get()?.c || 0;
+            const taskCount = this.nativeDb.prepare('SELECT COUNT(*) as c FROM tasks').get()?.c || 0;
+            const pendingApprovals = this.nativeDb.prepare("SELECT COUNT(*) as c FROM approvals WHERE status = 'PENDING'").get()?.c || 0;
+            return Promise.resolve({
+              mode: 'NATIVE_SQLITE',
+              dbPath: this.dbPath,
+              dbSizeBytes: dbSize,
+              walMode: true,
+              projectCount,
+              roomCount,
+              envelopeCount,
+              taskCount,
+              approvalCount: pendingApprovals
+            });
           }
           case 'listApprovals': {
             const limit = args.limit || 50;
@@ -716,16 +976,55 @@ class StorageServiceClient extends EventEmitter {
     return this.sendRequest('getRoomEnvelopes', { roomId, limit });
   }
 
-  async getRooms() {
-    return this.sendRequest('getRooms');
+  async getProjects(includeArchived = false) {
+    return this.sendRequest('getProjects', { includeArchived });
   }
 
-  async ensureRoom(roomId, name) {
-    return this.sendRequest('ensureRoom', { roomId, name });
+  async createProject(id, name, description) {
+    return this.sendRequest('createProject', { id, name, description });
   }
 
-  async createRoom(id, name) {
-    return this.sendRequest('createRoom', { id, name });
+  async renameProject(id, newName) {
+    return this.sendRequest('renameProject', { id, newName });
+  }
+
+  async archiveProject(id) {
+    return this.sendRequest('archiveProject', { id });
+  }
+
+  async deleteProject(id) {
+    return this.sendRequest('deleteProject', { id });
+  }
+
+  async getRooms(projectId) {
+    return this.sendRequest('getRooms', { projectId });
+  }
+
+  async ensureRoom(roomId, name, projectId = 'default') {
+    return this.sendRequest('ensureRoom', { roomId, name, projectId });
+  }
+
+  async createRoom(id, name, projectId = 'default') {
+    return this.sendRequest('createRoom', { id, name, projectId });
+  }
+
+  async listTasks(options = {}) {
+    return this.sendRequest('listTasks', options);
+  }
+
+  async createTask(taskOrTitle, options = {}) {
+    const payload = typeof taskOrTitle === 'string'
+      ? { title: taskOrTitle, ...options }
+      : (taskOrTitle || {});
+    return this.sendRequest('createTask', payload);
+  }
+
+  async updateTask(taskId, updates) {
+    return this.sendRequest('updateTask', { taskId, updates });
+  }
+
+  async getStorageDiagnostics() {
+    return this.sendRequest('getStorageDiagnostics');
   }
 
   async listApprovals(limit = 50) {

@@ -134,6 +134,12 @@ describe('Union Bot Phase P3 Gate: Windows Real Electron E2E Suite', () => {
     assert.equal(evidence.results.tokenInList, true);
     assert.equal(evidence.results.tokenRejected, true);
     assert.equal(evidence.results.exportSucceeded, true);
+    assert.equal(evidence.results.pathTraversalBlocked, true);
+    assert.equal(evidence.results.invalidShaBlocked, true);
+    assert.equal(evidence.results.projectCreated, true);
+    assert.equal(evidence.results.projectInList, true);
+    assert.equal(evidence.results.taskCreated, true);
+    assert.equal(evidence.results.taskInList, true);
   });
 
   it('P3-REOPEN-E2E: Real Electron close & reopen verifies SQLite & CAS attachment durability (P3-C03) (PASS)', async () => {
@@ -152,8 +158,11 @@ describe('Union Bot Phase P3 Gate: Windows Real Electron E2E Suite', () => {
 
     assert.equal(code, 0, `Electron process should exit with code 0 on reopen. Stderr: ${stderr}\nStdout: ${stdout}`);
     assert.match(stdout, /\[P3-REOPEN-E2E\] P3-C03 Room survived app restart: true/);
+    assert.match(stdout, /\[P3-REOPEN-E2E\] UB-P3-R01-002 Project survived app restart: true/);
+    assert.match(stdout, /\[P3-REOPEN-E2E\] UB-P3-R01-003 Tasks survived app restart: true/);
     assert.match(stdout, /\[P3-REOPEN-E2E\] P3-C03 Envelopes survived app restart: true/);
     assert.match(stdout, /\[P3-REOPEN-E2E\] P3-C03 Attachments \(PNG & PDF\) survived app restart: true/);
+    assert.match(stdout, /\[P3-REOPEN-E2E\] UB-P3-R01-005 Byte-for-byte CAS fidelity verified: true/);
     assert.match(stdout, /\[P3-REOPEN-E2E\] ALL_P3_REOPEN_CHECKS_PASSED/);
 
     // Clean up test directory after successful assertions

@@ -369,3 +369,33 @@ button:focus-visible, input:focus-visible, textarea:focus-visible {
   background-color: #151b2a !important;
 }
 
+/* Light Theme Variables (UB-P3-R01-007) */
+body.theme-light, .theme-light {
+  --bg-primary: #f8fafc;
+  --bg-secondary: #ffffff;
+  --bg-tertiary: #f1f5f9;
+  --bg-hover: #e2e8f0;
+  --border-color: #cbd5e1;
+  --text-primary: #0f172a;
+  --text-secondary: #334155;
+  --text-muted: #64748b;
+  --accent-blue: #0284c7;
+  --accent-indigo: #4f46e5;
+  --accent-green: #16a34a;
+  --accent-amber: #d97706;
+  --accent-red: #dc2626;
+}
+
+body.theme-light .approval-card:hover {
+  background-color: #f8fafc !important;
+}
+
+/* Keyword Search Highlight (UB-P3-R01-007) */
+mark.search-highlight {
+  background-color: #fde047;
+  color: #000000;
+  padding: 1px 3px;
+  border-radius: 2px;
+  font-weight: 600;
+}
+

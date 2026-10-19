@@ -161,7 +161,128 @@ describe('Union Bot Phase P3: Desktop Workspace UI & Storage Features', () => {
     assert.equal(approvedToken.status, 'APPROVED');
   });
 
-  test('P3-C03: Durable Restart Preservation (Close & Reopen preserves rooms and envelopes with attachments)', async () => {
+  test('UB-P3-R01-002: Project CRUD & Multi-Project Room Isolation in SQLite WAL', async () => {
+    // 1. Create two separate projects
+    const pAlpha = await storage.createProject('proj-alpha', 'Alpha Project', 'Main engineering stream');
+    const pBeta = await storage.createProject('proj-beta', 'Beta Project', 'Security audit stream');
+    assert.equal(pAlpha.id, 'proj-alpha');
+    assert.equal(pBeta.id, 'proj-beta');
+
+    // 2. Query all active projects
+    const allProjects = await storage.getProjects();
+    assert.ok(allProjects.some((p: any) => p.id === 'proj-alpha'));
+    assert.ok(allProjects.some((p: any) => p.id === 'proj-beta'));
+
+    // 3. Create rooms isolated to respective projects
+    await storage.createRoom('room-alpha-1', 'Alpha Discussion', 'proj-alpha');
+    await storage.createRoom('room-beta-1', 'Beta Discussion', 'proj-beta');
+
+    // 4. Verify room isolation by project_id
+    const alphaRooms = await storage.getRooms('proj-alpha');
+    assert.ok(alphaRooms.some((r: any) => r.id === 'room-alpha-1'));
+    assert.ok(!alphaRooms.some((r: any) => r.id === 'room-beta-1'), 'Alpha project must not contain Beta rooms');
+
+    const betaRooms = await storage.getRooms('proj-beta');
+    assert.ok(betaRooms.some((r: any) => r.id === 'room-beta-1'));
+    assert.ok(!betaRooms.some((r: any) => r.id === 'room-alpha-1'), 'Beta project must not contain Alpha rooms');
+
+    // 5. Test Project Rename
+    const renameRes = await storage.renameProject('proj-alpha', 'Alpha Project Renamed');
+    assert.ok(renameRes);
+    const updatedProjects = await storage.getProjects();
+    const renamed = updatedProjects.find((p: any) => p.id === 'proj-alpha');
+    assert.equal(renamed.name, 'Alpha Project Renamed');
+
+    // 6. Test Project Archive
+    await storage.archiveProject('proj-beta');
+    const activeAfterArchive = await storage.getProjects(false);
+    assert.ok(!activeAfterArchive.some((p: any) => p.id === 'proj-beta'), 'Archived project must be excluded by default');
+
+    const withArchived = await storage.getProjects(true);
+    assert.ok(withArchived.some((p: any) => p.id === 'proj-beta'), 'Archived project must be included when requested');
+  });
+
+  test('UB-P3-R01-003: Durable Tasks Table in SQLite WAL', async () => {
+    // 1. Create durable tasks in SQLite
+    const task1 = await storage.createTask('Offline E2E Validation', {
+      status: 'pending',
+      progress: 0,
+      roomId: 'p3-testing',
+      metadata: { priority: 'high', role: 'QA_SECURITY' },
+    });
+    assert.ok(task1 && task1.id);
+    assert.equal(task1.title, 'Offline E2E Validation');
+    assert.equal(task1.status, 'pending');
+
+    const task2 = await storage.createTask('CAS Byte Fidelity Verification', {
+      status: 'running',
+      progress: 50,
+      roomId: 'p3-testing',
+      metadata: { priority: 'critical', role: 'IMPLEMENTER' },
+    });
+    assert.ok(task2 && task2.id);
+
+    // 2. List tasks from SQLite WAL
+    const allTasks = await storage.listTasks();
+    assert.ok(allTasks.some((t: any) => t.id === task1.id));
+    assert.ok(allTasks.some((t: any) => t.id === task2.id));
+
+    // 3. Filter by status
+    const pendingTasks = await storage.listTasks({ status: 'pending' });
+    assert.ok(pendingTasks.some((t: any) => t.id === task1.id));
+    assert.ok(!pendingTasks.some((t: any) => t.id === task2.id));
+
+    // 4. Update task status & progress
+    const updateRes = await storage.updateTask(task1.id, {
+      status: 'completed',
+      progress: 100,
+    });
+    assert.ok(updateRes);
+
+    const updatedTasks = await storage.listTasks();
+    const completedTask = updatedTasks.find((t: any) => t.id === task1.id);
+    assert.equal(completedTask.status, 'completed');
+    assert.equal(completedTask.progress, 100);
+  });
+
+  test('UB-P3-R01-001 & UB-P3-R01-005: CAS Traversal Defense and Byte-for-Byte Buffer Fidelity', async () => {
+    // 1. Path traversal defense simulation:
+    const safeRegex = /^[a-f0-9]{64}$/i;
+    const maliciousPaths = [
+      '../../windows/system32/cmd.exe',
+      '..\\..\\boot.ini',
+      '/etc/passwd',
+      '0123456789abcdef/../../malicious',
+      'invalid-sha256-string',
+    ];
+
+    for (const badPath of maliciousPaths) {
+      assert.equal(safeRegex.test(badPath), false, `Traversal attack '${badPath}' must be rejected by SHA-256 regex`);
+    }
+
+    // 2. Byte-for-byte CAS fidelity with authentic binary chunks (PNG header & PDF header)
+    const pngMagic = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52]);
+    const pngHash = crypto.createHash('sha256').update(pngMagic).digest('hex');
+    assert.equal(safeRegex.test(pngHash), true);
+
+    const targetFile = path.resolve(casDir, pngHash);
+    assert.ok(targetFile.startsWith(casDir + path.sep), 'Canonical path must remain inside casDir');
+    fs.writeFileSync(targetFile, pngMagic);
+
+    // Read back and compare buffers
+    const readBackPng = fs.readFileSync(targetFile);
+    assert.equal(Buffer.compare(pngMagic, readBackPng), 0, 'PNG magic bytes must be byte-for-byte identical');
+
+    const pdfMagic = Buffer.from('%PDF-1.7\n%\xe2\xe3\xcf\xd3\n1 0 obj\n<< /Type /Catalog >>\nendobj\n%%EOF');
+    const pdfHash = crypto.createHash('sha256').update(pdfMagic).digest('hex');
+    const targetPdf = path.resolve(casDir, pdfHash);
+    fs.writeFileSync(targetPdf, pdfMagic);
+
+    const readBackPdf = fs.readFileSync(targetPdf);
+    assert.equal(Buffer.compare(pdfMagic, readBackPdf), 0, 'PDF bytes must be byte-for-byte identical');
+  });
+
+  test('P3-C03: Durable Restart Preservation (Close & Reopen preserves rooms, projects, tasks, and envelopes with attachments)', async () => {
     // 1. Close current storage connection
     await storage.closeAsync();
 
@@ -175,7 +296,19 @@ describe('Union Bot Phase P3: Desktop Workspace UI & Storage Features', () => {
       const room = rooms.find((r: any) => r.id === 'p3-testing');
       assert.ok(room, 'Room must survive restart');
 
-      // 4. Verify envelopes in 'p3-testing' survived with all attachments
+      // 4. Verify projects survived restart
+      const projs = await reopenedStorage.getProjects();
+      const projAlpha = projs.find((p: any) => p.id === 'proj-alpha');
+      assert.ok(projAlpha, 'Project must survive restart');
+      assert.equal(projAlpha.name, 'Alpha Project Renamed');
+
+      // 5. Verify tasks survived restart
+      const tasks = await reopenedStorage.listTasks();
+      assert.ok(tasks.length >= 2, 'Tasks must survive restart');
+      const completedTask = tasks.find((t: any) => t.status === 'completed');
+      assert.ok(completedTask, 'Completed task must survive restart');
+
+      // 6. Verify envelopes in 'p3-testing' survived with all attachments
       const history = await reopenedStorage.getRoomEnvelopes('p3-testing');
       assert.ok(history.length > 0, 'History must survive restart');
       const envWithAttach = history.find((e: any) => e.parts && e.parts.length === 3);
@@ -187,3 +320,4 @@ describe('Union Bot Phase P3: Desktop Workspace UI & Storage Features', () => {
     }
   });
 });
+

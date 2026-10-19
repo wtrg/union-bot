@@ -43,16 +43,55 @@ function initDb(dbPath) {
 
   // Run authoritative schema migrations with checksum & parity verification (UB-P2-R04-01, R05-H01..H03)
   runSchemaMigrations(db);
+  ensureP3Schema(db);
 
   // Ensure default rooms
   const now = new Date().toISOString();
   const defaultRooms = ['orchestration', 'agent-dev', 'qa-audit', 'review-briefing'];
-  const insertRoom = db.prepare('INSERT OR IGNORE INTO rooms (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)');
+  const insertRoom = db.prepare('INSERT OR IGNORE INTO rooms (id, name, project_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?)');
   for (const r of defaultRooms) {
-    insertRoom.run(r, r, now, now);
+    insertRoom.run(r, r, 'default', now, now);
   }
 
   return { success: true, dbPath };
+}
+
+function ensureP3Schema(db) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS projects (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      archived INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS idx_projects_archived ON projects (archived);
+
+    CREATE TABLE IF NOT EXISTS tasks (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      status TEXT NOT NULL,
+      progress INTEGER NOT NULL DEFAULT 0,
+      room_id TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      metadata_json TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks (status);
+    CREATE INDEX IF NOT EXISTS idx_tasks_room ON tasks (room_id);
+  `);
+
+  const now = new Date().toISOString();
+  db.prepare(`
+    INSERT OR IGNORE INTO projects (id, name, description, created_at, updated_at, archived)
+    VALUES ('default', 'General Project', 'Default local workspace project', ?, ?, 0)
+  `).run(now, now);
+
+  const roomCols = db.prepare('PRAGMA table_info(rooms)').all();
+  if (!roomCols.some((c) => c.name === 'project_id')) {
+    db.exec("ALTER TABLE rooms ADD COLUMN project_id TEXT DEFAULT 'default';");
+  }
 }
 
 function handleRequest(msg) {
@@ -64,23 +103,160 @@ function handleRequest(msg) {
         process.send({ id, result: res });
         break;
       }
+      case 'getProjects': {
+        const includeArchived = args && args.includeArchived === true;
+        const q = includeArchived
+          ? 'SELECT id, name, description, created_at, updated_at, archived FROM projects ORDER BY created_at ASC'
+          : 'SELECT id, name, description, created_at, updated_at, archived FROM projects WHERE archived = 0 ORDER BY created_at ASC';
+        const rows = db.prepare(q).all();
+        process.send({ id, result: rows });
+        break;
+      }
+      case 'createProject': {
+        const now = new Date().toISOString();
+        db.prepare(`
+          INSERT INTO projects (id, name, description, created_at, updated_at, archived)
+          VALUES (?, ?, ?, ?, ?, 0)
+        `).run(args.id, args.name, args.description || null, now, now);
+        process.send({ id, result: { id: args.id, name: args.name, description: args.description, created_at: now, updated_at: now, archived: 0 } });
+        break;
+      }
+      case 'renameProject': {
+        const now = new Date().toISOString();
+        const res = db.prepare('UPDATE projects SET name = ?, updated_at = ? WHERE id = ?').run(args.newName, now, args.id);
+        process.send({ id, result: { success: res.changes > 0, id: args.id, name: args.newName } });
+        break;
+      }
+      case 'archiveProject': {
+        if (args.id === 'default') {
+          throw new Error('Cannot archive default project');
+        }
+        const now = new Date().toISOString();
+        const res = db.prepare('UPDATE projects SET archived = 1, updated_at = ? WHERE id = ?').run(now, args.id);
+        process.send({ id, result: { success: res.changes > 0, id: args.id } });
+        break;
+      }
+      case 'deleteProject': {
+        if (args.id === 'default') {
+          throw new Error('Cannot delete default project');
+        }
+        db.prepare("UPDATE rooms SET project_id = 'default' WHERE project_id = ?").run(args.id);
+        const res = db.prepare('DELETE FROM projects WHERE id = ?').run(args.id);
+        process.send({ id, result: { success: res.changes > 0, id: args.id } });
+        break;
+      }
       case 'ensureRoom': {
         const now = new Date().toISOString();
-        db.prepare('INSERT OR IGNORE INTO rooms (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)')
-          .run(args.roomId, args.name || args.roomId, now, now);
+        db.prepare('INSERT OR IGNORE INTO rooms (id, name, project_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?)')
+          .run(args.roomId, args.name || args.roomId, args.projectId || 'default', now, now);
         process.send({ id, result: true });
         break;
       }
       case 'getRooms': {
-        const rows = db.prepare('SELECT id, name, created_at, updated_at FROM rooms').all();
+        const q = args && args.projectId
+          ? 'SELECT id, name, project_id, created_at, updated_at FROM rooms WHERE project_id = ? ORDER BY rowid ASC'
+          : 'SELECT id, name, project_id, created_at, updated_at FROM rooms ORDER BY rowid ASC';
+        const rows = args && args.projectId ? db.prepare(q).all(args.projectId) : db.prepare(q).all();
         process.send({ id, result: rows });
         break;
       }
       case 'createRoom': {
         const now = new Date().toISOString();
-        db.prepare('INSERT OR REPLACE INTO rooms (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)')
-          .run(args.id, args.name, now, now);
-        process.send({ id, result: { id: args.id, name: args.name, created_at: now, updated_at: now } });
+        db.prepare('INSERT OR REPLACE INTO rooms (id, name, project_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?)')
+          .run(args.id, args.name, args.projectId || 'default', now, now);
+        process.send({ id, result: { id: args.id, name: args.name, project_id: args.projectId || 'default', created_at: now, updated_at: now } });
+        break;
+      }
+      case 'listTasks': {
+        const limit = (args && args.limit) || 50;
+        let query = 'SELECT * FROM tasks WHERE 1=1';
+        const params = [];
+        if (args && args.status) {
+          query += ' AND status = ?';
+          params.push(args.status);
+        }
+        if (args && args.roomId) {
+          query += ' AND room_id = ?';
+          params.push(args.roomId);
+        }
+        query += ' ORDER BY created_at DESC LIMIT ?';
+        params.push(limit);
+        const rows = db.prepare(query).all(...params);
+        process.send({
+          id,
+          result: rows.map(r => ({
+            id: r.id,
+            title: r.title,
+            status: r.status,
+            progress: r.progress,
+            roomId: r.room_id || undefined,
+            createdAt: r.created_at,
+            updatedAt: r.updated_at,
+            metadata: r.metadata_json ? JSON.parse(r.metadata_json) : undefined
+          }))
+        });
+        break;
+      }
+      case 'createTask': {
+        const idVal = (args && args.id) || `task_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+        const now = new Date().toISOString();
+        const title = (args && (args.title || args.name)) || 'Untitled Task';
+        const status = (args && args.status) || 'pending';
+        const progress = typeof (args && args.progress) === 'number' ? args.progress : 0;
+        const roomId = (args && (args.roomId || args.room_id)) || null;
+        const metadataJson = (args && args.metadata) ? JSON.stringify(args.metadata) : null;
+        db.prepare(`
+          INSERT INTO tasks (id, title, status, progress, room_id, created_at, updated_at, metadata_json)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(idVal, title, status, progress, roomId, now, now, metadataJson);
+        process.send({ id, result: { id: idVal, title, status, progress, roomId, createdAt: now, updatedAt: now, metadata: args ? args.metadata : undefined } });
+        break;
+      }
+      case 'updateTask': {
+        const now = new Date().toISOString();
+        const existing = db.prepare('SELECT * FROM tasks WHERE id = ?').get(args.taskId);
+        if (!existing) {
+          process.send({ id, result: { success: false, error: 'Task not found' } });
+          break;
+        }
+        const newStatus = args.updates && args.updates.status !== undefined ? args.updates.status : existing.status;
+        const newProgress = args.updates && args.updates.progress !== undefined ? args.updates.progress : existing.progress;
+        const newMetadata = args.updates && args.updates.metadata !== undefined ? JSON.stringify(args.updates.metadata) : existing.metadata_json;
+        const res = db.prepare(`
+          UPDATE tasks
+          SET status = ?, progress = ?, metadata_json = ?, updated_at = ?
+          WHERE id = ?
+        `).run(newStatus, newProgress, newMetadata, now, args.taskId);
+        process.send({ id, result: { success: res.changes > 0, taskId: args.taskId } });
+        break;
+      }
+      case 'getStorageDiagnostics': {
+        let dbSize = 0;
+        try {
+          const fsMod = require('node:fs');
+          if (dbPath !== ':memory:' && fsMod.existsSync(dbPath)) {
+            dbSize = fsMod.statSync(dbPath).size;
+          }
+        } catch {}
+        const projectCount = db.prepare('SELECT COUNT(*) as c FROM projects').get()?.c || 0;
+        const roomCount = db.prepare('SELECT COUNT(*) as c FROM rooms').get()?.c || 0;
+        const envelopeCount = db.prepare('SELECT COUNT(*) as c FROM envelopes').get()?.c || 0;
+        const taskCount = db.prepare('SELECT COUNT(*) as c FROM tasks').get()?.c || 0;
+        const pendingApprovals = db.prepare("SELECT COUNT(*) as c FROM approvals WHERE status = 'PENDING'").get()?.c || 0;
+        process.send({
+          id,
+          result: {
+            mode: 'DEDICATED_WORKER',
+            dbPath,
+            dbSizeBytes: dbSize,
+            walMode: true,
+            projectCount,
+            roomCount,
+            envelopeCount,
+            taskCount,
+            approvalCount: pendingApprovals
+          }
+        });
         break;
       }
       case 'listApprovals': {
