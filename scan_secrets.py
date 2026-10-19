@@ -139,6 +139,14 @@ BENIGN_FIXTURE_ALLOWLIST = [
             "7b15b57dc77e666d18dc97ee7a52750c0b42764232c6f74925fd3bef97a4b8d7"
         ],
         "reason": "Phase P4 workspace UI AuthStatus type definition"
+    },
+    {
+        "path_suffix": "packages/agent-antigravity/src/antigravity-discovery.ts",
+        "rule_id": "SEC-001",
+        "expected_match_sha256": [
+            "a9c81fde910d08552b292ad7d7c8f118af0302387e287732567cca6cd89f10e7"
+        ],
+        "reason": "Phase P7 Antigravity discovery authStatus FREE_LOCAL enum value"
     }
 ]
 

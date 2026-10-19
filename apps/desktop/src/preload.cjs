@@ -230,6 +230,36 @@ const api = {
       ipcRenderer.removeListener('union-bot:codex-turn-completed', subscription);
     };
   },
+
+  // Phase P7: Native Antigravity Agent API
+  antigravityDiscover: async () => {
+    return ipcRenderer.invoke('union-bot:antigravity-discover');
+  },
+  antigravityExecute: async (payload) => {
+    return ipcRenderer.invoke('union-bot:antigravity-execute', payload);
+  },
+  antigravityCancel: async () => {
+    return ipcRenderer.invoke('union-bot:antigravity-cancel');
+  },
+  antigravityVerifyBoundary: async (targetPath) => {
+    return ipcRenderer.invoke('union-bot:antigravity-verify-boundary', targetPath);
+  },
+  onAntigravityDelta: (callback) => {
+    if (typeof callback !== 'function') return () => {};
+    const subscription = (_event, data) => callback(data);
+    ipcRenderer.on('union-bot:antigravity-delta', subscription);
+    return () => {
+      ipcRenderer.removeListener('union-bot:antigravity-delta', subscription);
+    };
+  },
+  onAntigravityTurnCompleted: (callback) => {
+    if (typeof callback !== 'function') return () => {};
+    const subscription = (_event, data) => callback(data);
+    ipcRenderer.on('union-bot:antigravity-turn-completed', subscription);
+    return () => {
+      ipcRenderer.removeListener('union-bot:antigravity-turn-completed', subscription);
+    };
+  },
 };
 
 // UB-P2-R06-003 / R07-A03: Strictly isolate test mutation channels.
@@ -271,6 +301,9 @@ if (process.env.UNION_BOT_E2E_HARNESS === '1' && process.env.NODE_ENV === 'test'
   };
   api.testSetCodexMock = async (options) => {
     return ipcRenderer.invoke('union-bot:test-set-codex-mock', options);
+  };
+  api.testSetAntigravityMock = async (messages) => {
+    return ipcRenderer.invoke('union-bot:test-set-antigravity-mock', messages);
   };
 }
 

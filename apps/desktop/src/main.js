@@ -26,6 +26,7 @@ const { ArtifactStore, detectMimeType, sanitizeSvg } = require('../../../package
 const { ToolHost } = require('./tool-host.cjs');
 const { MCPService } = require('./mcp-service.cjs');
 const { CodexService } = require('./codex-service.cjs');
+const { AntigravityService } = require('./antigravity-service.cjs');
 
 // Custom test userData override for isolated multi-process E2E testing
 const customUserDataArg = process.argv.find((a) => a.startsWith('--test-user-data=') || a.startsWith('--user-data-dir='));
@@ -79,6 +80,20 @@ codexService.on('delta', (delta, params) => {
 codexService.on('turnCompleted', (turn, params) => {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('union-bot:codex-turn-completed', { turn, params });
+  }
+});
+
+const antigravityService = new AntigravityService(path.resolve(__dirname, '../../..'), artifactStore, costGuard);
+
+antigravityService.on('delta', (delta) => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('union-bot:antigravity-delta', { delta });
+  }
+});
+
+antigravityService.on('turn_completed', (result) => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('union-bot:antigravity-turn-completed', { result });
   }
 });
 
@@ -162,6 +177,9 @@ function createWindow() {
     }
     if (codexService) {
       codexService.close();
+    }
+    if (antigravityService) {
+      antigravityService.close();
     }
     mainWindow = null;
   });
@@ -2891,6 +2909,172 @@ function createWindow() {
     return;
   }
 
+  // Phase P7: Real Windows Electron P7 Verification (Native Antigravity Agent Integration)
+  if (process.argv.includes('--p7-e2e')) {
+    mainWindow.webContents.once('did-finish-load', async () => {
+      try {
+        console.log('[P7-E2E] Running Real Windows Electron P7 Verification (Native Antigravity Agent Integration)...');
+
+        const p7Result = await mainWindow.webContents.executeJavaScript(`
+          (async () => {
+            const results = {};
+
+            // 1. P7-001: Discover local Antigravity CLI binary and version
+            const discRes = await window.unionBotAPI.antigravityDiscover();
+            results.antigravityDiscoverSuccess = Boolean(discRes?.success);
+            results.antigravityAvailable = Boolean(discRes?.discovery?.available);
+            results.antigravityVersion = discRes?.discovery?.version;
+            results.antigravityExecutablePath = discRes?.discovery?.executablePath;
+            results.antigravityVersionMatches = (discRes?.discovery?.version === '1.4.2');
+
+            // 2. P7-004: Canonical workspace boundary enforcement
+            const validBoundary = await window.unionBotAPI.antigravityVerifyBoundary('package.json');
+            results.validBoundaryAllowed = Boolean(validBoundary?.success && validBoundary?.resolved);
+
+            const invalidBoundary = await window.unionBotAPI.antigravityVerifyBoundary('../../Windows/System32/cmd.exe');
+            results.invalidBoundaryDenied = Boolean(
+              invalidBoundary?.success === false &&
+              invalidBoundary?.error?.includes('ERR_PATH_TRAVERSAL')
+            );
+
+            // 3. P7-004: Explicit denial of forbidden flags (--dangerously-skip-permissions)
+            const forbiddenFlagRes = await window.unionBotAPI.antigravityExecute({
+              prompt: 'test prompt',
+              options: {
+                forbiddenFlags: ['--dangerously-skip-permissions']
+              }
+            });
+            results.forbiddenFlagDenied = Boolean(
+              forbiddenFlagRes?.success === false &&
+              forbiddenFlagRes?.error?.includes('ERR_FORBIDDEN_FLAG')
+            );
+
+            // 4. P7-002, P7-003, P7-004: Execution & Real-Time Event Streaming via Mock Transport
+            const mockEvents = [
+              JSON.stringify({
+                event: 'init',
+                conversation_id: 'test-session-p7-e2e',
+                init: { cwd: 'D:\\\\WORK-TEAM', tools: ['view_file', 'run_command'], permission_mode: 'request-review' }
+              }),
+              JSON.stringify({
+                event: 'step_update',
+                step_update: { conversation_id: 'test-session-p7-e2e', step_index: 0, state: 'DONE', step_type: 'user_input' }
+              }),
+              JSON.stringify({
+                event: 'step_update',
+                step_update: { conversation_id: 'test-session-p7-e2e', step_index: 1, state: 'ACTIVE', step_type: 'agent_response', text_delta: 'Hello from ' }
+              }),
+              JSON.stringify({
+                event: 'step_update',
+                step_update: { conversation_id: 'test-session-p7-e2e', step_index: 1, state: 'ACTIVE', step_type: 'agent_response', text_delta: 'native Antigravity agent in Windows Electron!' }
+              }),
+              JSON.stringify({
+                event: 'result',
+                result: {
+                  conversation_id: 'test-session-p7-e2e',
+                  status: 'SUCCESS',
+                  response: 'Hello from native Antigravity agent in Windows Electron!',
+                  duration_seconds: 1.25,
+                  num_turns: 1,
+                  usage: { input_tokens: 1200, output_tokens: 30, thinking_tokens: 15, total_tokens: 1245 }
+                }
+              })
+            ];
+
+            await window.unionBotAPI.testSetAntigravityMock(mockEvents);
+
+            const deltas = [];
+            let turnCompletedPayload = null;
+
+            const unsubDelta = window.unionBotAPI.onAntigravityDelta((d) => {
+              if (d && d.delta) deltas.push(d.delta);
+            });
+            const unsubTurn = window.unionBotAPI.onAntigravityTurnCompleted((t) => {
+              turnCompletedPayload = t;
+            });
+
+            const execRes = await window.unionBotAPI.antigravityExecute({
+              prompt: 'Generate system overview for Union Bot P7 verification'
+            });
+
+            // Cleanup listeners
+            unsubDelta();
+            unsubTurn();
+
+            results.executeSuccess = Boolean(execRes?.success);
+            results.providerIsAntigravity = (execRes?.result?.provider === 'antigravity');
+            results.deltasReceived = Boolean(deltas.length >= 2);
+            results.fullTextMatch = (execRes?.result?.response === 'Hello from native Antigravity agent in Windows Electron!');
+            results.artifactCreated = Boolean(execRes?.result?.artifact && execRes?.result?.artifact?.sha256);
+
+            // 5. P7-008: Strict Zero-Cost Enforcement ($0.00 / 0đ)
+            results.costIsZero = (execRes?.result?.cost === 0);
+
+            // 6. P7-006: Cancellation check
+            const cancelRes = await window.unionBotAPI.antigravityCancel();
+            results.cancelSucceeded = Boolean(cancelRes?.success);
+
+            // Restore transport
+            await window.unionBotAPI.testSetAntigravityMock(false);
+
+            return results;
+          })()
+        `);
+
+        console.log('[P7-E2E] Results:', JSON.stringify(p7Result, null, 2));
+
+        const requiredChecks = [
+          'antigravityDiscoverSuccess',
+          'antigravityAvailable',
+          'antigravityVersionMatches',
+          'validBoundaryAllowed',
+          'invalidBoundaryDenied',
+          'forbiddenFlagDenied',
+          'executeSuccess',
+          'providerIsAntigravity',
+          'deltasReceived',
+          'fullTextMatch',
+          'artifactCreated',
+          'costIsZero',
+          'cancelSucceeded',
+        ];
+
+        let allPassed = true;
+        for (const check of requiredChecks) {
+          const pass = Boolean(p7Result[check]);
+          console.log(`[P7-E2E] Check ${check}: ${pass}`);
+          if (!pass) allPassed = false;
+        }
+
+        const reportDir = path.resolve(__dirname, '../../../reports/capability-evidence');
+        if (!fs.existsSync(reportDir)) fs.mkdirSync(reportDir, { recursive: true });
+        const evidencePath = path.resolve(reportDir, 'ELECTRON_P7_E2E_EVIDENCE.json');
+        fs.writeFileSync(evidencePath, JSON.stringify({
+          timestamp: new Date().toISOString(),
+          environment: 'Real Windows Electron (Phase P7 Native Antigravity Agent Integration)',
+          nodeEnv: process.env.NODE_ENV,
+          results: p7Result,
+          allPassed,
+        }, null, 2));
+
+        if (!allPassed) {
+          console.error('[P7-E2E] One or more P7 checks failed.');
+          app.quit();
+          process.exit(1);
+        }
+
+        console.log('[P7-E2E] ALL_P7_E2E_CHECKS_PASSED');
+        app.quit();
+        process.exit(0);
+      } catch (err) {
+        console.error('[P7-E2E] Exception:', err);
+        app.quit();
+        process.exit(1);
+      }
+    });
+    return;
+  }
+
   // 7. Handle Standard GUI Smoke Test Mode
   if (isSmoke) {
     console.log('[SmokeTest] Running Union Bot Automated GUI Smoke Test...');
@@ -4188,6 +4372,59 @@ ipcMain.handle('union-bot:codex-verify-boundary', async (event, targetPath) => {
   }
 });
 
+// Phase P7: Native Antigravity Agent IPC Handlers
+ipcMain.handle('union-bot:antigravity-discover', async (event) => {
+  if (!checkSenderAuthorized(event)) {
+    return { success: false, error: 'Unauthorized IPC sender origin' };
+  }
+  try {
+    const discovery = await antigravityService.discover();
+    return { success: true, discovery };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('union-bot:antigravity-execute', async (event, payload) => {
+  if (!checkSenderAuthorized(event)) {
+    return { success: false, error: 'Unauthorized IPC sender origin' };
+  }
+  try {
+    const { prompt, options } = payload || {};
+    const result = await antigravityService.executePrompt(prompt, options);
+    if (result && result.success === false) {
+      return { success: false, error: result.error, result };
+    }
+    return { success: true, result };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('union-bot:antigravity-cancel', async (event) => {
+  if (!checkSenderAuthorized(event)) {
+    return { success: false, error: 'Unauthorized IPC sender origin' };
+  }
+  try {
+    await antigravityService.cancelTurn();
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('union-bot:antigravity-verify-boundary', async (event, targetPath) => {
+  if (!checkSenderAuthorized(event)) {
+    return { success: false, error: 'Unauthorized IPC sender origin' };
+  }
+  try {
+    const resolved = await antigravityService.verifyWorkspaceBoundary(targetPath);
+    return { success: true, resolved };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
 if (isDedicatedTestHarness) {
   ipcMain.handle('union-bot:test-set-codex-mock', async (event, options) => {
     if (!checkSenderAuthorized(event)) {
@@ -4198,6 +4435,23 @@ if (isDedicatedTestHarness) {
         codexService.disableMockTransport();
       } else {
         await codexService.enableMockTransport(typeof options === 'object' ? options : {});
+      }
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('union-bot:test-set-antigravity-mock', async (event, messages) => {
+    if (!checkSenderAuthorized(event)) {
+      return { success: false, error: 'Unauthorized IPC sender origin' };
+    }
+    try {
+      if (messages === false || (messages && messages.enabled === false)) {
+        antigravityService.disableMockTransport();
+      } else {
+        const msgArray = Array.isArray(messages) ? messages : (messages?.messages || []);
+        await antigravityService.enableMockTransport(msgArray);
       }
       return { success: true };
     } catch (err) {

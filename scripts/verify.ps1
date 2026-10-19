@@ -39,7 +39,7 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 
-# 5. Run Real Windows Electron E2E Tests (R04, R05, R06, R07, P3, P4, P5, and P6)
+# 5. Run Real Windows Electron E2E Tests (R04, R05, R06, R07, P3, P4, P5, P6, and P7)
 Write-Host "`n--- 5. Running Real Windows Electron E2E Tests ---" -ForegroundColor Yellow
 pnpm test:e2e
 if ($LASTEXITCODE -ne 0) {
@@ -64,6 +64,6 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Write-Host "`n========================================================" -ForegroundColor Green
-Write-Host "ALL VERIFICATION CHECKS PASSED (Typecheck + Build + TS + Py + Real Electron E2E [P0-P6] + GUI Smoke + Strict Secret Scan)" -ForegroundColor Green
+Write-Host "ALL VERIFICATION CHECKS PASSED (Typecheck + Build + TS + Py + Real Electron E2E [P0-P7] + GUI Smoke + Strict Secret Scan)" -ForegroundColor Green
 Write-Host "========================================================`n" -ForegroundColor Green
 exit 0
