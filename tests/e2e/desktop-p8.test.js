@@ -146,6 +146,8 @@ describe('Union Bot Phase P8 Gate: Windows Real Electron E2E Suite', () => {
     assert.equal(evidence.results.invalidBoundaryDenied, true, 'P8-007: Directory traversal must be denied');
     assert.equal(evidence.results.junctionEscapeDenied, true, 'P8-007: Windows junction escape must be denied');
     assert.equal(evidence.results.cycleDetectionEnforced, true, 'P8-002: Cycle detection must throw ERR_CYCLE_DETECTED');
+    assert.equal(evidence.results.fakeQaRegistrationDenied, true, 'P8-R03: Renderer privileged QA_SECURITY registration must be denied');
+    assert.equal(evidence.results.preApprovalDenied, true, 'P8-R03: Pre-approval vote before targetDigest exists must be denied');
     assert.equal(evidence.results.forgedVoteDenied, true, 'P8-R02: Forged voter without authorization must be denied');
     assert.equal(evidence.results.authenticVoteAccepted, true, 'P8-R02: Authentic QA_SECURITY vote must be accepted');
     assert.equal(evidence.results.staleDigestVoteDenied, true, 'P8-R02: Vote with mismatched digest must be denied');
@@ -169,6 +171,8 @@ describe('Union Bot Phase P8 Gate: Windows Real Electron E2E Suite', () => {
     assert.match(stdout, /\[P8-E2E\] Check invalidBoundaryDenied: true/);
     assert.match(stdout, /\[P8-E2E\] Check junctionEscapeDenied: true/);
     assert.match(stdout, /\[P8-E2E\] Check cycleDetectionEnforced: true/);
+    assert.match(stdout, /\[P8-E2E\] Check fakeQaRegistrationDenied: true/);
+    assert.match(stdout, /\[P8-E2E\] Check preApprovalDenied: true/);
     assert.match(stdout, /\[P8-E2E\] Check forgedVoteDenied: true/);
     assert.match(stdout, /\[P8-E2E\] Check authenticVoteAccepted: true/);
     assert.match(stdout, /\[P8-E2E\] Check staleDigestVoteDenied: true/);

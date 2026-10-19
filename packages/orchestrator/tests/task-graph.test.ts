@@ -607,4 +607,131 @@ describe('Phase P8: Multi-Agent Task Graph & Consensus Engine', () => {
       }
     );
   });
+
+  // =========================================================================
+  // 7. Mandatory Regression Suite for Round R03 (Technical Leader Audit)
+  // =========================================================================
+
+  it('P8-R03-001: denies vote submission before upstream implementation digest is ready (ERR_REVIEW_TARGET_NOT_READY)', () => {
+    const pipeline = TaskGraphEngine.createStandard5StagePipeline({
+      id: 'graph-pre-approval-denied-test',
+      name: 'Pre-approval Denied Test',
+      workspaceRoot: tempWorkspace,
+      planPrompt: 'Build feature',
+      consensusPolicy: {
+        type: 'majority',
+        authorizedReviewers: [
+          { voterId: 'reviewer-security-1', role: 'QA_SECURITY' },
+        ],
+      },
+    });
+
+    const graph = engine.createGraph(pipeline);
+    const reviewNode = graph.nodes.get('node-review')!;
+
+    // IMPLEMENT has not executed yet, so node.targetDigest is undefined
+    assert.equal(reviewNode.targetDigest, undefined);
+
+    // Attempting to submit vote before code exists must fail fail-closed
+    assert.throws(
+      () => {
+        engine.submitVote(graph.id, reviewNode.id, {
+          voterId: 'reviewer-security-1',
+          decision: 'APPROVE',
+          reviewedDigest: 'sha256-pre-approved-fake-digest',
+          rationale: 'Pre-approving unwritten code',
+          timestamp: Date.now(),
+        } as any);
+      },
+      (err: any) => {
+        assert.equal(err.code, 'ERR_REVIEW_TARGET_NOT_READY');
+        assert.match(err.message, /target code digest is not yet ready or locked/);
+        return true;
+      }
+    );
+  });
+
+  it('P8-R03-002: fail-closed voting when authorizedReviewers registry is empty or undefined (ERR_UNAUTHORIZED_VOTER)', () => {
+    const pipeline = TaskGraphEngine.createStandard5StagePipeline({
+      id: 'graph-empty-registry-test',
+      name: 'Empty Registry Test',
+      workspaceRoot: tempWorkspace,
+      planPrompt: 'Build feature',
+      consensusPolicy: {
+        type: 'majority',
+        authorizedReviewers: [], // Empty registry!
+      },
+    });
+
+    const graph = engine.createGraph(pipeline);
+    const reviewNode = graph.nodes.get('node-review')!;
+    reviewNode.targetDigest = 'locked-target-digest-v1';
+
+    assert.throws(
+      () => {
+        engine.submitVote(graph.id, reviewNode.id, {
+          voterId: 'any-voter',
+          decision: 'APPROVE',
+          reviewedDigest: 'locked-target-digest-v1',
+          rationale: 'Trying to vote on unauthenticated registry',
+          timestamp: Date.now(),
+        } as any);
+      },
+      (err: any) => {
+        assert.equal(err.code, 'ERR_UNAUTHORIZED_VOTER');
+        assert.match(err.message, /No authorized reviewers registered/);
+        return true;
+      }
+    );
+  });
+
+  it('P8-R03-003: derives voterRole authoritatively from registry and rejects caller role spoofing', () => {
+    const pipeline = TaskGraphEngine.createStandard5StagePipeline({
+      id: 'graph-role-derivation-test',
+      name: 'Role Derivation Test',
+      workspaceRoot: tempWorkspace,
+      planPrompt: 'Build feature',
+      consensusPolicy: {
+        type: 'majority',
+        authorizedReviewers: [
+          { voterId: 'qa-sec-auditor', role: 'QA_SECURITY' },
+        ],
+      },
+    });
+
+    const graph = engine.createGraph(pipeline);
+    const reviewNode = graph.nodes.get('node-review')!;
+    reviewNode.targetDigest = 'locked-target-digest-v1';
+
+    // 1. Voter does not pass voterRole: engine derives it from registry
+    const votePayload: any = {
+      voterId: 'qa-sec-auditor',
+      decision: 'APPROVE',
+      reviewedDigest: 'locked-target-digest-v1',
+      rationale: 'Review with derived role',
+      timestamp: Date.now(),
+    };
+
+    engine.submitVote(graph.id, reviewNode.id, votePayload);
+    assert.equal(reviewNode.votes.length, 1);
+    assert.equal(reviewNode.votes[0].voterRole, 'QA_SECURITY', 'Must derive authoritative role from registry');
+
+    // 2. Caller tries to spoof another privileged role like ARCHITECT
+    assert.throws(
+      () => {
+        engine.submitVote(graph.id, reviewNode.id, {
+          voterId: 'qa-sec-auditor',
+          voterRole: 'ARCHITECT', // Spoofed!
+          decision: 'APPROVE',
+          reviewedDigest: 'locked-target-digest-v1',
+          rationale: 'Claiming different role',
+          timestamp: Date.now(),
+        });
+      },
+      (err: any) => {
+        assert.equal(err.code, 'ERR_ROLE_MISMATCH');
+        return true;
+      }
+    );
+  });
 });

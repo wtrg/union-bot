@@ -491,6 +491,7 @@ export const UnionBotErrorCodeSchema = z.enum([
   'ERR_ROLE_MISMATCH',
   'ERR_STALE_VOTE_DIGEST',
   'ERR_NO_VOTES_RECORDED',
+  'ERR_REVIEW_TARGET_NOT_READY',
 ]);
 export type UnionBotErrorCode = z.infer<typeof UnionBotErrorCodeSchema>;
 

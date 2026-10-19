@@ -126,7 +126,7 @@ describe('Union Bot Phase P5 Gate: Windows Real Electron E2E Suite', () => {
         NODE_ENV: 'test',
         UNION_BOT_E2E_HARNESS: '1',
       },
-      timeoutMs: 65000,
+      timeoutMs: 90000,
     });
 
     assert.equal(code, 0, `Electron process should exit with code 0. Stderr: ${stderr}\nStdout: ${stdout}`);

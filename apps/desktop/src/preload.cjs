@@ -280,6 +280,9 @@ const api = {
   taskGraphRegisterReviewer: async (payload) => {
     return ipcRenderer.invoke('union-bot:task-graph-register-reviewer', payload);
   },
+  taskGraphStep: async (payload) => {
+    return ipcRenderer.invoke('union-bot:task-graph-step', payload);
+  },
   taskGraphVerifyBoundary: async (targetPath) => {
     return ipcRenderer.invoke('union-bot:task-graph-verify-boundary', targetPath);
   },

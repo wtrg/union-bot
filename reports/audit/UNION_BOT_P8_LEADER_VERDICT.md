@@ -1,110 +1,55 @@
-# BÁO CÁO THẨM ĐỊNH CỦA TECHNICAL LEADER — PHASE P8 (ROUND R01)
+# Technical Leader Audit Verdict: Phase P8 Round R02
 
-- **Thời gian thẩm định:** 2026-10-20
-- **Trạng thái:** `CHANGES_REQUIRED / GO_P9 BLOCKED`
-- **Phiên làm việc:** ChatGPT Web Session (`https://chatgpt.com/c/6ad64b63-ad44-83ec-90ca-83cacbc26da5`)
-- **Commit được thẩm định:** `2383a634e58f78515d90839c159f4e113ba320b8`
-
----
-
-## 1. Nội dung thẩm định chi tiết từ Technical Leader
-
-> **CHANGES REQUIRED — P8 CHƯA ĐƯỢC PHÊ DUYỆT GO_P9**
->
-> Tôi đã audit trực tiếp commit `2383a634e58f78515d90839c159f4e113ba320b8`, `REVIEW_PACKET_P8.md`, core `task-graph.ts`, CJS Electron service, unit tests và `ELECTRON_P8_E2E_EVIDENCE.json`.
->
-> DAG/cycle detection, canonical boundary và phần lớn schema/IPC implementation là có thật. Tuy nhiên có 3 blocker ở chính Consensus/Orchestration core, nên chưa thể ký `APPROVED — GO_P9`.
-
-### P8-R01-001 — BLOCKER: Consensus có thể tự phê duyệt khi không có vote thật
-Trong `executeNode()`, nếu REVIEW không trả vote:
-```typescript
-if (node.votes.length === 0) {
-  this.submitVote(graph.id, node.id, {
-    voterId: `agent-${node.assignedRole.toLowerCase()}`,
-    voterRole: node.assignedRole,
-    decision: 'APPROVE',
-    rationale: 'Review approved by assigned agent policy',
-  });
-}
-```
-- Điều này đặc biệt nguy hiểm vì standard pipeline gán REVIEW là `QA_SECURITY`.
-- Kết quả: không có QA agent nào thực sự review, engine vẫn tự tạo `QA_SECURITY: APPROVE` và thỏa `requiredRoles`.
-- E2E hiện tại cũng không chứng minh consensus thật. Check `results.consensusVotesRecorded` chỉ kiểm tra có node REVIEW, không kiểm tra vote nào tồn tại.
-- **Yêu cầu:** Tuyệt đối không synthesize APPROVE. Thiếu required vote phải `WAITING_APPROVAL` hoặc fail-closed.
+**Date:** 2026-10-20  
+**Repository:** `https://github.com/wtrg/union-bot.git`  
+**Commit Audited:** `2560282e2aada5fc1a0aff3a1c97477bf4815c4d`  
+**Auditor:** Technical Leader (ChatGPT Web - "Ý tưởng AI Workspace")  
+**Verdict:** **`CHANGES REQUIRED — P8 ROUND R02 CHƯA ĐƯỢC PHÊ DUYỆT GO_P9`**
 
 ---
 
-### P8-R01-002 — BLOCKER: Review REJECT → FIX không chạy được qua runGraph()
-Khi consensus thất bại:
-```typescript
-node.status = 'FAILED';
-...
-candidate FIX.status = 'PENDING';
-```
-Nhưng `node-fix` phụ thuộc `node-review`, và `getRunnableNodes()` chỉ cho dependency: `COMPLETED || SKIPPED`.
-Do REVIEW đang `FAILED`, FIX không runnable.
-Sau đó `runGraph()` gặp:
-```
-runnable.length === 0 + anyFailed === true → graph.status = FAILED
-```
-Vì vậy vòng tự động được mô tả:
-`Review → Reject → Fix → Re-review → Verify`
-thực tế không hoạt động trong graph scheduler.
-Unit test P8-012 che khuất lỗi này vì nó không dùng `runGraph()` để kiểm tra vòng remediation. Test tự gọi:
-```typescript
-executeNode(review)
-executeNode(fix)
-review.status = 'PENDING'
-executeNode(review)
-executeNode(verify)
-```
-tức là test tự điều phối bằng tay và bypass dependency scheduler cần được nghiệm thu.
+## 1. Audit Summary & Acknowledgments
+
+The Technical Leader audited commit `2560282`, TS/CJS sources, `REVIEW_PACKET_P8.md`, and Electron P8 E2E evidence.
+- **Confirmed Positive Progress:**
+  - `runGraph()` remediation state machine is confirmed working properly (`REVIEW` failure transitions to `REMEDIATING`, `FIX` dependencies are satisfied, `FIX` completion resets `REVIEW` to `PENDING`, clears votes, and updates code digest).
+  - Synthetic approval has been completely removed from the execution path.
+- **Identified Blockers (Round R02):**
+  - Two critical trust-boundary blockers remain before Phase P8 can be signed off for `GO_P9`.
 
 ---
 
-### P8-R01-003 — SECURITY BLOCKER: Vote identity/role chưa được xác thực
-IPC expose: `union-bot:task-graph-submit-vote` và `submitVote()` hiện đẩy thẳng:
-```typescript
-node.votes.push({
-  ...vote,
-  timestamp: ...
-});
-```
-Không thấy binding giữa:
-`voterId ↔ authenticated agent/session ↔ assigned reviewer ↔ voterRole`
-cũng không chống một voter gửi nhiều phiếu.
-Do đó caller được IPC cho phép có thể khai báo:
-```json
-{
-  "voterId": "fake-security",
-  "voterRole": "QA_SECURITY",
-  "decision": "APPROVE"
-}
-```
-và góp phần thỏa `requiredRoles`.
-Consensus engine tính toán đúng trên dữ liệu đầu vào, nhưng nguồn gốc phiếu chưa đáng tin cậy.
+## 2. Critical Blockers to Resolve in Round R03
+
+### Blocker P8-R02-001 — CRITICAL: Vote có thể tự thiết lập digest trước khi code tồn tại
+- **Vấn đề:**
+  - `submitVote()` currently allows binding `node.targetDigest = vote.reviewedDigest` if `!node.targetDigest`.
+  - Reviewer should never be allowed to dictate `targetDigest`.
+  - `targetDigest` must only be produced by completed upstream `IMPLEMENT` or `FIX` nodes.
+  - If a `REVIEW` node does not yet have a locked `targetDigest`, any vote submission must be rejected fail-closed (e.g. `ERR_REVIEW_TARGET_NOT_READY`).
+  - No pre-approval of non-existent code.
+
+### Blocker P8-R02-002 — CRITICAL: Authorized reviewer registry vẫn tự cấp quyền qua renderer IPC
+- **Vấn đề:**
+  - `union-bot:task-graph-register-reviewer` allows arbitrary renderer IPC callers to register privileged roles (e.g. `QA_SECURITY`).
+  - Fail-closed registry requirement: If a review node's graph has no authorized reviewers, voting is blocked completely (`ERR_UNAUTHORIZED_VOTER`).
+  - Renderer cannot self-assign privileged roles (`QA_SECURITY`, `LEADER`) via public renderer IPC without trusted orchestration authority.
+  - `submitVote()` should determine voter role directly from the trusted backend registry/session rather than trusting caller input.
+  - Mandatory regression test: Self-registering fake QA via renderer IPC must be DENIED fail-closed.
 
 ---
 
-## 2. Kế hoạch khắc phục Round R02 (Yêu cầu bắt buộc)
-
-1. **No synthetic approval:**
-   - Không có vote ⇒ không consensus.
-   - Required role thiếu ⇒ fail-closed / `WAITING_APPROVAL`.
-2. **Sửa state machine remediation:**
-   - `runGraph()` phải tự chạy thật vòng lặp hoàn chỉnh:
-     `PLAN → IMPLEMENT → REVIEW (reject) → FIX → REVIEW (lại) → VERIFY`.
-   - Không được test bằng cách manually reset state từ bên ngoài.
-   - Dependency scheduler phải hỗ trợ dependency từ node REVIEW khi REVIEW reject và kích hoạt FIX.
-3. **Trusted vote registry & binding:**
-   - Vote phải gắn với voter đã đăng ký trong trusted voter/reviewer registry hoặc session/agent lookup.
-   - Role của voter được xác thực từ registry, không cho phép caller tự khai khống `voterRole`.
-   - Idempotency & deduplication: Một voter chỉ có 1 active vote cho một target version/digest (hoặc replace có kiểm soát).
-   - Vote phải gắn với `reviewedDigest` (hash nội dung/artifact được review). Khi code/artifact thay đổi (`currentDigest !== reviewedDigest`), vote lập tức bị từ chối hoặc vô hiệu hóa (`ERR_STALE_VOTE_DIGEST`).
-4. **Hệ thống kiểm thử hồi quy bắt buộc (Regression Suite):**
-   - Missing-vote fail-closed / waiting.
-   - Forged QA_SECURITY vote denied (`ERR_UNAUTHORIZED_VOTER` hoặc `ERR_ROLE_MISMATCH`).
-   - Duplicate-voter handled deterministically (update vote thay vì duplicate vote).
-   - Stale digest vote denied (`ERR_STALE_VOTE_DIGEST`).
-   - Full automated `runGraph()` rejection → fix → re-review → verify success path không can thiệp thủ công.
-   - Real Electron E2E kiểm tra real votes, authenticated voter identity, reviewed digest, và required-role approval.
+## 3. Remediation Directives for Round R03
+1. Add `ERR_REVIEW_TARGET_NOT_READY` error code to protocol schemas and CJS parity.
+2. In `task-graph.ts` and `task-graph-service.cjs`:
+   - In `submitVote()`: If `!node.targetDigest`, throw `ERR_REVIEW_TARGET_NOT_READY`.
+   - Never allow `submitVote()` to set `node.targetDigest`.
+   - If `authorizedReviewers` is empty or undefined, fail-closed (`ERR_UNAUTHORIZED_VOTER`).
+   - Automatically derive `voterRole` from the trusted registry: `const auth = policy.authorizedReviewers.find(r => r.voterId === vote.voterId); vote.voterRole = auth.role;`
+3. In Electron main IPC (`main.js`):
+   - Protect `union-bot:task-graph-register-reviewer`: deny renderer attempts to register privileged reviewer roles (`QA_SECURITY`, `LEADER`) from untrusted renderer frames (`ERR_UNAUTHORIZED_ACTION`).
+4. Update unit tests in `task-graph.test.ts` and E2E in `desktop-p8.test.js`:
+   - Test `ERR_REVIEW_TARGET_NOT_READY` when voting before `IMPLEMENT` locks `outputDigest`.
+   - Test renderer IPC registration denial for fake `QA_SECURITY`.
+   - Test full real flow: create pipeline -> run IMPLEMENT -> locks digest -> authorized QA_SECURITY votes on real digest -> consensus reached -> FIX skipped -> VERIFY pass -> graph COMPLETED.
+5. Pass all 7 verification gates in `scripts/verify.ps1`, commit, push, and submit Round R03 for final `APPROVED — GO_P9`.

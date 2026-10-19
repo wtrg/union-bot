@@ -506,32 +506,51 @@ class TaskGraphEngineCJS extends EventEmitter {
       throw err;
     }
 
-    // 1. Authorized voter & role binding verification (P8-R01-003)
-    if (graph.consensusPolicy.authorizedReviewers && graph.consensusPolicy.authorizedReviewers.length > 0) {
-      const authorized = graph.consensusPolicy.authorizedReviewers.find(
-        (r) => r.voterId === vote.voterId
-      );
-      if (!authorized) {
-        const err = new Error(`Voter '${vote.voterId}' is not an authorized reviewer for graph '${graphId}'`);
-        err.code = 'ERR_UNAUTHORIZED_VOTER';
-        throw err;
-      }
-      if (vote.voterRole !== authorized.role) {
-        const err = new Error(`Voter '${vote.voterId}' claimed role '${vote.voterRole}', but is registered as '${authorized.role}'`);
-        err.code = 'ERR_ROLE_MISMATCH';
-        throw err;
+    // 1. Authorized voter & role derivation (fail-closed, P8-R02-002)
+    if (!graph.consensusPolicy.authorizedReviewers || graph.consensusPolicy.authorizedReviewers.length === 0) {
+      const err = new Error(`No authorized reviewers registered for graph '${graphId}'. Voting is fail-closed.`);
+      err.code = 'ERR_UNAUTHORIZED_VOTER';
+      throw err;
+    }
+
+    const authorized = graph.consensusPolicy.authorizedReviewers.find(
+      (r) => r.voterId === vote.voterId
+    );
+    if (!authorized) {
+      const err = new Error(`Voter '${vote.voterId}' is not an authorized reviewer for graph '${graphId}'`);
+      err.code = 'ERR_UNAUTHORIZED_VOTER';
+      throw err;
+    }
+    if (vote.voterRole && vote.voterRole !== authorized.role) {
+      const err = new Error(`Voter '${vote.voterId}' claimed role '${vote.voterRole}', but is registered as '${authorized.role}'`);
+      err.code = 'ERR_ROLE_MISMATCH';
+      throw err;
+    }
+
+    // Backend authoritative role enforcement: caller cannot self-grant or spoof role
+    vote.voterRole = authorized.role;
+
+    // 2. Digest check: targetDigest must be locked by upstream implementation before voting (P8-R02-001)
+    if (!node.targetDigest) {
+      for (const depId of node.dependencies) {
+        const dep = graph.nodes.get(depId);
+        if (dep && (dep.stage === 'IMPLEMENT' || dep.stage === 'FIX') && dep.outputDigest) {
+          node.targetDigest = dep.outputDigest;
+          break;
+        }
       }
     }
 
-    // 2. Digest check: vote must be bound to active code/target digest (P8-R01-003)
-    if (node.targetDigest) {
-      if (!vote.reviewedDigest || vote.reviewedDigest !== node.targetDigest) {
-        const err = new Error(`Vote reviewedDigest '${vote.reviewedDigest}' does not match active review targetDigest '${node.targetDigest}'`);
-        err.code = 'ERR_STALE_VOTE_DIGEST';
-        throw err;
-      }
-    } else if (vote.reviewedDigest) {
-      node.targetDigest = vote.reviewedDigest;
+    if (!node.targetDigest) {
+      const err = new Error(`Cannot submit vote on review node '${nodeId}': target code digest is not yet ready or locked by upstream implementation`);
+      err.code = 'ERR_REVIEW_TARGET_NOT_READY';
+      throw err;
+    }
+
+    if (!vote.reviewedDigest || vote.reviewedDigest !== node.targetDigest) {
+      const err = new Error(`Vote reviewedDigest '${vote.reviewedDigest}' does not match active review targetDigest '${node.targetDigest}'`);
+      err.code = 'ERR_STALE_VOTE_DIGEST';
+      throw err;
     }
 
     // 3. Deduplication / Deterministic single-vote replacement per voter (P8-R01-003)
@@ -683,9 +702,6 @@ class TaskGraphEngineCJS extends EventEmitter {
               break;
             }
           }
-          if (!node.targetDigest) {
-            node.targetDigest = crypto.createHash('sha256').update(`${graph.id}:${node.id}:attempt:${node.attempt}`).digest('hex');
-          }
         }
 
         // NO synthetic approvals (Ticket P8-R01-001): evaluate consensus strictly on authentic recorded votes
@@ -741,11 +757,12 @@ class TaskGraphEngineCJS extends EventEmitter {
         node.completedAt = Date.now();
         node.outputDigest = executionResult.outputDigest || crypto.createHash('sha256').update(JSON.stringify(node.result || `${node.id}-v1`)).digest('hex');
 
-        // Propagate outputDigest to downstream REVIEW nodes as their targetDigest if not already set
+        // Propagate outputDigest to downstream REVIEW nodes as their targetDigest (P8-R02-001)
         for (const candidate of graph.nodes.values()) {
-          if (candidate.stage === 'REVIEW') {
-            if (!candidate.targetDigest) {
+          if (candidate.stage === 'REVIEW' && (candidate.dependencies.includes(node.id) || candidate.dependencies.length === 0)) {
+            if (candidate.targetDigest !== node.outputDigest) {
               candidate.targetDigest = node.outputDigest;
+              candidate.votes = []; // Invalidate stale votes if digest changed
             }
           }
         }
@@ -889,15 +906,14 @@ class TaskGraphEngineCJS extends EventEmitter {
       { voterId: 'agent-implementer', role: 'IMPLEMENTER' },
     ];
 
-    const policy = params.consensusPolicy || {
-      type: 'majority',
-      requiredRoles: ['QA_SECURITY'],
-      authorizedReviewers: defaultAuthorizedReviewers,
+    const policy = {
+      type: (params.consensusPolicy && params.consensusPolicy.type) || 'majority',
+      minThreshold: params.consensusPolicy && params.consensusPolicy.minThreshold,
+      requiredRoles: (params.consensusPolicy && params.consensusPolicy.requiredRoles) || ['QA_SECURITY'],
+      authorizedReviewers: (params.consensusPolicy && params.consensusPolicy.authorizedReviewers !== undefined)
+        ? params.consensusPolicy.authorizedReviewers
+        : defaultAuthorizedReviewers,
     };
-
-    if (!policy.authorizedReviewers || policy.authorizedReviewers.length === 0) {
-      policy.authorizedReviewers = defaultAuthorizedReviewers;
-    }
 
     return {
       id: params.id,

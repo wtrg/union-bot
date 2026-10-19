@@ -1,4 +1,4 @@
-# Union Bot Phase P8 Review Packet: Multi-Agent Task Graph & Consensus Engine (Round R02)
+# Union Bot Phase P8 Review Packet: Multi-Agent Task Graph & Consensus Engine (Round R03)
 **Target Gate:** Phase P8 Formal Sign-off (`APPROVED — GO_P9`)  
 **Previous Gate:** Phase P7 Formal Sign-off (`APPROVED — GO_P8`, commit `4cd7369`)  
 **Repository:** `https://github.com/wtrg/union-bot.git` (Branch: `main`)  
@@ -9,27 +9,19 @@
 
 ---
 
-## 1. Executive Summary & Round R02 Architectural Delivery
+## 1. Executive Summary & Round R03 Architectural Delivery
 
-In Phase P8 Round R01 review, the Technical Leader issued an audit verdict (`CHANGES REQUIRED / GO_P9 BLOCKED`) identifying three critical blockers:
-1. **`P8-R01-001` (Fail-Closed Consensus vs. Synthetic Default Approval):** Zero votes submitted previously fell back to a synthetic `APPROVE` vote. This violated fail-closed zero-trust principles.
-2. **`P8-R01-002` (Automated Remediation Loop in `runGraph()`):** A rejected review could not be remediated by `runGraph()` without manual test runner intervention because `FIX` node dependencies were strictly blocked by review failure.
-3. **`P8-R01-003` (Voter Identity, Role & Digest Verification):** Voters were not verified against an authorized reviewer registry, caller roles were not checked against voter claims, votes were not bound to target code digests, and votes were not deduplicated per voter.
-
-**Round R02 Resolution & Complete Hardening:**
-- **Zero-Vote Fail-Closed (`P8-R01-001`):** Completely removed all synthetic vote synthesis. When zero votes are recorded for a review node, consensus evaluation immediately fails closed with `ERR_NO_VOTES_RECORDED` and returns `REJECT`.
-- **Autonomous Remediation Loop (`P8-R01-002`):** `getRunnableNodes()` now explicitly recognizes upstream review nodes in `REMEDIATING` or `FAILED` as eligible prerequisites for `FIX` nodes. When the `FIX` node executes and completes, it computes the newly mutated code digest, resets the review node state (`status = 'PENDING'`, `attempt++`, `votes = []`, updates `targetDigest`), allowing `runGraph()` to autonomously trigger re-review and seamlessly proceed to `VERIFY` upon consensus without any manual coordination.
-- **Trusted Voter Security Defense (`P8-R01-003`):**
-  - Schema extended with `AuthorizedReviewerSchema` and `authorizedReviewers` registry on `ConsensusPolicySchema`.
-  - Added `reviewedDigest` to `ConsensusVoteSchema`.
-  - `submitVote()` enforces authorized reviewer lookup (`ERR_UNAUTHORIZED_VOTER`), role match verification (`ERR_ROLE_MISMATCH`), and cryptographic digest match against the node's `targetDigest` (`ERR_STALE_VOTE_DIGEST`).
-  - Strict deduplication: subsequent votes from the same voter update their existing vote in place rather than appending duplicate ballots.
-- **100% CJS Desktop Parity:** All schemas, security validations, and remediation loop logic were mirrored 1:1 into `apps/desktop/src/task-graph-service.cjs` and `apps/desktop/src/orchestrator.cjs`.
-- **Electron IPC & Preload Wiring:** Registered `union-bot:task-graph-register-reviewer`, exposed `taskGraphRegisterReviewer` in preload bridge, and verified full end-to-end voting security against a live Electron 33 Chromium subprocess.
+In Phase P8 Round R02 audit, the Technical Leader issued a thorough audit verdict (`CHANGES REQUIRED / GO_P9 BLOCKED`) identifying two critical trust-boundary blockers:
+1. **`P8-R02-001` (CRITICAL - Pre-Approval & Review Target State Bypass):**
+   - *Vulnerability:* `submitVote()` permitted a reviewer to supply an arbitrary `reviewedDigest` and set `node.targetDigest` directly before upstream implementation completed (`node.targetDigest = vote.reviewedDigest`). This created a dangerous pre-approval hole where code could be stamped approved before it existed.
+   - *Round R03 Resolution:* Enforced strict anti-pre-approval fail-closed defense (`ERR_REVIEW_TARGET_NOT_READY`). Review nodes cannot accept votes unless their `targetDigest` has been cryptographically produced and locked by upstream `IMPLEMENT` or `FIX` execution. A reviewer can *never* set or mutate `targetDigest`. Votes must match the locked `node.targetDigest` (`ERR_STALE_VOTE_DIGEST`).
+2. **`P8-R02-002` (CRITICAL - Renderer IPC Privilege Escalation):**
+   - *Vulnerability:* The renderer IPC channel `union-bot:task-graph-register-reviewer` allowed any renderer script to register arbitrary identities with privileged roles like `QA_SECURITY` or `LEADER`.
+   - *Round R03 Resolution:* Enforced strict fail-closed boundary controls. Renderer IPC is strictly forbidden from self-registering privileged roles (`QA_SECURITY`, `LEADER`, `ORCHESTRATOR`), immediately returning `ERR_UNAUTHORIZED_ACTION`. Privileged reviewers must be pre-configured in trusted backend policies. In `submitVote()`, `vote.voterRole` is authoritatively derived from the trusted registry (`authorized.role`), completely ignoring and rejecting forged voter claims (`ERR_ROLE_MISMATCH`).
 
 ---
 
-## 2. Implemented Tickets & Round R02 Regressions (P8-001 through P8-R02-004)
+## 2. Implemented Tickets & Security Regressions Matrix
 
 | Ticket | Component | Description & Architectural Realization | Verification Status |
 | :--- | :--- | :--- | :--- |
@@ -43,21 +35,24 @@ In Phase P8 Round R01 review, the Technical Leader issued an audit verdict (`CHA
 | **P8-008** | `event-sourcing` | Event Sourcing & SQLite Persistence: Real-time event journal (`TASK_GRAPH_CREATED`, `TASK_NODE_STARTED`, `TASK_NODE_COMPLETED`, `CONSENSUS_DECIDED`, `STALE_REVIEW_INVALIDATED`). | PASS (Unit & IPC event streaming) |
 | **P8-009** | `desktop-task-graph-service` | Desktop Main Process Service: `apps/desktop/src/task-graph-service.cjs` with 100% CJS parity for Electron 33 runtime execution. | PASS (CJS parity verified in Electron) |
 | **P8-010** | `ipc-preload-wiring` | Desktop IPC Handlers & Preload API: Registered `union-bot:task-graph-*` IPC channels in `main.js` and exposed safe typed APIs in `preload.cjs`. | PASS (Typecheck & Live renderer IPC) |
-| **P8-011** | `task-graph-unit-tests` | Comprehensive Unit Test Suite: 16/16 unit tests passing in `packages/orchestrator/tests/task-graph.test.ts`. | PASS (16/16 tests pass 100%) |
-| **P8-012** | `real-electron-p8-e2e` | Real Windows Electron E2E Subprocess (`desktop-p8.test.js`): Live subprocess execution with real Windows directory junction test, producing `reports/capability-evidence/ELECTRON_P8_E2E_EVIDENCE.json` (`allPassed: true`). | PASS (21/21 checks pass, code 0) |
+| **P8-011** | `task-graph-unit-tests` | Comprehensive Unit Test Suite: 19/19 unit tests passing in `packages/orchestrator/tests/task-graph.test.ts`. | PASS (19/19 tests pass 100%) |
+| **P8-012** | `real-electron-p8-e2e` | Real Windows Electron E2E Subprocess (`desktop-p8.test.js`): Live subprocess execution with real Windows directory junction test, producing `reports/capability-evidence/ELECTRON_P8_E2E_EVIDENCE.json` (`allPassed: true`). | PASS (23/23 checks pass, code 0) |
 | **P8-R02-001** | `consensus-fail-closed` | Enforces missing-vote fail-closed without synthetic approval; zero votes returns `REJECT` + `ERR_NO_VOTES_RECORDED`. | PASS (Unit P8-R02-001) |
 | **P8-R02-002** | `voter-authorization-check` | Denies forged `QA_SECURITY` votes via authorized voter lookup (`ERR_UNAUTHORIZED_VOTER`) and caller role binding (`ERR_ROLE_MISMATCH`). | PASS (Unit P8-R02-002, E2E check) |
 | **P8-R02-003** | `vote-deduplication` | Deduplicates votes deterministically with single active vote per voter; updates in place. | PASS (Unit P8-R02-003, E2E check) |
 | **P8-R02-004** | `stale-digest-rejection` | Denies vote on stale or mismatched digest (`ERR_STALE_VOTE_DIGEST`); binds review vote to exact code state. | PASS (Unit P8-R02-004, E2E check) |
+| **P8-R03-001** | `anti-pre-approval` | Rejects vote submission with `ERR_REVIEW_TARGET_NOT_READY` if upstream `IMPLEMENT`/`FIX` has not completed and locked `targetDigest`. Reviewer cannot set `targetDigest`. | PASS (Unit P8-R03-001, E2E check) |
+| **P8-R03-002** | `privilege-escalation-defense`| Renderer IPC strictly rejects self-registration of privileged roles (`QA_SECURITY`, `LEADER`, `ORCHESTRATOR`) with `ERR_UNAUTHORIZED_ACTION`. | PASS (Unit P8-R03-002, E2E check) |
+| **P8-R03-003** | `authoritative-role-derivation`| `submitVote()` derives voter role authoritatively from backend registry, ignoring voter role claims. | PASS (Unit P8-R03-003, E2E check) |
 
 ---
 
-## 3. Real Windows Electron E2E Evidence
+## 3. Real Windows Electron E2E Evidence (23/23 Checks)
 
 From `reports/capability-evidence/ELECTRON_P8_E2E_EVIDENCE.json`:
 ```json
 {
-  "timestamp": "2026-10-19T19:56:49.966Z",
+  "timestamp": "2026-10-19T20:35:42.673Z",
   "environment": "Real Windows Electron (Phase P8 Multi-Agent Task Graph & Consensus Engine)",
   "nodeEnv": "test",
   "results": {
@@ -72,9 +67,11 @@ From `reports/capability-evidence/ELECTRON_P8_E2E_EVIDENCE.json`:
     "invalidBoundaryDenied": true,
     "junctionEscapeDenied": true,
     "cycleDetectionEnforced": true,
+    "fakeQaRegistrationDenied": true,
+    "preApprovalDenied": true,
     "forgedVoteDenied": true,
-    "authenticVoteAccepted": true,
     "staleDigestVoteDenied": true,
+    "authenticVoteAccepted": true,
     "duplicateVoteDeduplicated": true,
     "runGraphSuccess": true,
     "graphStatusCompleted": true,
@@ -93,24 +90,28 @@ From `reports/capability-evidence/ELECTRON_P8_E2E_EVIDENCE.json`:
 
 ```text
 ========================================================================================
-UNION BOT COMPREHENSIVE VERIFICATION SUITE — PHASE P8 GATE (ROUND R02)
+UNION BOT COMPREHENSIVE VERIFICATION SUITE — PHASE P8 GATE (ROUND R03)
 ========================================================================================
 1. Monorepo TypeScript & Project Typecheck : PASS (0 errors across all workspaces)
 2. Workspace UI Production Bundle (Vite)   : PASS (dist/index.html, 0.72 kB gzip: 0.44 kB)
-3. Monorepo Unit & Integration Test Suites : PASS (219 TS tests + 16 Python tests)
-   - packages/orchestrator/tests           : PASS (28/28 tests: 12 orchestrator + 16 task-graph)
+3. Monorepo Unit & Integration Test Suites : PASS (222 TS tests + 16 Python tests)
+   - packages/orchestrator/tests           : PASS (31/31 tests: 12 orchestrator + 19 task-graph)
    - packages/agent-codex tests            : PASS (9/9 tests pass)
    - packages/agent-antigravity tests      : PASS (9/9 tests pass)
    - tests/cross_compatibility.test.ts     : PASS (4/4 tests: 100% CJS/TS Schema Parity)
 4. Windows Real Electron Subprocess E2E    : PASS (16 suites / tests pass, 0 failed):
-   - P3 Gate Live Dynamic Room & CAS       : PASS
-   - P4 Gate Browser & Multi-session       : PASS
-   - P5 Gate Artifacts & MCP ToolHost      : PASS
-   - P6 Gate Native Codex Agent            : PASS
-   - P7 Gate Native Antigravity Agent      : PASS
-   - P8 Gate Task Graph & Consensus Engine : PASS (2.29s live subprocess, 21/21 checks)
+   - R04 Gate Recovery & Frame Boundary    : PASS (3/3 tests)
+   - R05 Gate Hard Kill & Replay Recovery  : PASS (3/3 tests)
+   - R06 Gate Human Confirmation & Workers : PASS (1/1 test)
+   - R07 Gate Atomic Consumption & Prod Mode: PASS (2/2 tests)
+   - P3 Gate Live Dynamic Room & CAS       : PASS (2/2 tests)
+   - P4 Gate Browser & Multi-session       : PASS (1/1 test)
+   - P5 Gate Artifacts & MCP ToolHost      : PASS (1/1 test)
+   - P6 Gate Native Codex Agent            : PASS (1/1 test)
+   - P7 Gate Native Antigravity Agent      : PASS (1/1 test)
+   - P8 Gate Task Graph & Consensus Engine : PASS (3.03s live subprocess, 23/23 checks)
 5. Automated GUI Smoke Test Mode (--smoke) : PASS
-6. Strict Secret Scanner Audit             : PASS (849 files scanned, 0 leaks, 0 unresolved)
+6. Strict Secret Scanner Audit             : PASS (855 files scanned, 0 leaks, 0 unresolved)
 ========================================================================================
 OVERALL STATUS: ALL 7 GATES PASS (Exit Code 0)
 ========================================================================================
@@ -120,8 +121,10 @@ OVERALL STATUS: ALL 7 GATES PASS (Exit Code 0)
 
 ## 5. Formal Request for Gate Sign-off
 
-With all 3 audit blockers from Round R01 thoroughly resolved, all 16 unit tests passing, all 7 gates passing with exit code 0, and zero security/cost violations, we respectfully request the Technical Leader's formal sign-off:
+With both trust-boundary audit blockers from Round R02 (`P8-R02-001` anti-pre-approval, `P8-R02-002` renderer privileged registration denial) completely resolved, 19/19 orchestrator task-graph unit tests passing, all 7 gates passing with exit code 0, and zero security or cost violations:
+
+We respectfully submit this packet to the Technical Leader and request formal sign-off:
 
 **`APPROVED — GO_P9`**
 
-to authorize immediate commencement of **Phase P9: Web Provider Extensions & 6-AI Collaboration Integration** (ChatGPT, Gemini, Claude, DeepSeek web extensions, multi-account session management, and continuous live capabilities).
+to authorize immediate commencement of **Phase P9: Web Provider Extensions & 6-AI Collaboration Integration** (ChatGPT, Gemini, Claude, DeepSeek web provider extensions, multi-account session management, and live collaboration orchestration).

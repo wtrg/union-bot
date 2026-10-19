@@ -1518,16 +1518,25 @@ function createWindow() {
               setNativeTextareaValue(composerTextarea, uniqueComposerMsg);
               await new Promise(r => setTimeout(r, 100));
               composerSendBtn.click();
-              await new Promise(r => setTimeout(r, 800));
 
-              const messages = Array.from(document.querySelectorAll('[data-testid="message-text"]'));
-              f05ChatMessageSentViaDom = messages.some(m => m.innerText.includes('Architecture review'));
+              for (let i = 0; i < 30; i++) {
+                await new Promise(r => setTimeout(r, 100));
+                const messages = Array.from(document.querySelectorAll('[data-testid="message-text"]'));
+                f05ChatMessageSentViaDom = messages.some(m => m.innerText.includes('Architecture review'));
+                if (f05ChatMessageSentViaDom) break;
+              }
             }
 
             // 5. Query room history from SQLite WAL (P3-C03) & Verify CAS store
-            const history = await window.unionBotAPI.getRoomHistory('gate-p3-room');
+            let history = [];
+            let sentEnv = null;
+            for (let i = 0; i < 30; i++) {
+              history = await window.unionBotAPI.getRoomHistory('gate-p3-room');
+              sentEnv = history?.find(e => e.parts && e.parts.some(p => p.kind === 'artifact' || p.kind === 'attachment'));
+              if (sentEnv) break;
+              await new Promise(r => setTimeout(r, 100));
+            }
             const historyFound = Array.isArray(history) && history.length > 0;
-            const sentEnv = history.find(e => e.parts && e.parts.some(p => p.kind === 'artifact' || p.kind === 'attachment'));
             const pngPart = sentEnv ? sentEnv.parts.find(p => p.filename === 'architecture_diagram.png') : null;
             const pdfPart = sentEnv ? sentEnv.parts.find(p => p.filename === 'specifications_doc.pdf') : null;
             const pngSaved = Boolean(pngPart && pngPart.sha256);
@@ -2694,7 +2703,7 @@ function createWindow() {
             // 14. UB-P5-R01-001 / P5-R02-T01: 50MB file size fail-closed denial
             const largeSaveRes = await window.unionBotAPI.saveAttachment({
               filename: 'oversize.bin',
-              textContent: 'A'.repeat(51 * 1024 * 1024),
+              textContent: 'A'.repeat(50 * 1024 * 1024 + 1024),
             });
             results.r02_largeFileRejected = Boolean(largeSaveRes?.success === false && largeSaveRes?.code === 'ERR_FILE_TOO_LARGE');
 
@@ -3171,14 +3180,39 @@ function createWindow() {
               (cyclicRes?.code === 'ERR_CYCLE_DETECTED' || cyclicRes?.error?.includes('Cyclic dependency'))
             );
 
-            // 4. P8-R02 Voter Authentication, Digest Binding & Deduplication
-            // A. Attempt forged vote submission by unauthorized caller
+            // 4. P8-R03 Voter Authentication, Anti-Pre-Approval, Privilege Protection & Deduplication
+            // A. Attempt self-registering fake privileged QA_SECURITY reviewer via renderer IPC (P8-R02-002)
+            const fakeRegRes = await window.unionBotAPI.taskGraphRegisterReviewer({
+              graphId: 'p8-e2e-pipeline',
+              reviewer: { voterId: 'fake-qa-agent', role: 'QA_SECURITY' },
+            });
+            results.fakeQaRegistrationDenied = Boolean(
+              fakeRegRes?.success === false &&
+              fakeRegRes?.code === 'ERR_UNAUTHORIZED_ACTION'
+            );
+
+            // B. Attempt pre-approval vote before IMPLEMENT has produced and locked targetDigest (P8-R02-001)
+            const preApprovalRes = await window.unionBotAPI.taskGraphSubmitVote({
+              graphId: 'p8-e2e-pipeline',
+              nodeId: 'node-review',
+              vote: {
+                voterId: 'qa-sec-auditor',
+                decision: 'APPROVE',
+                reviewedDigest: 'premature-digest-before-code-exists',
+                rationale: 'Attempting pre-approval before implementation runs',
+              },
+            });
+            results.preApprovalDenied = Boolean(
+              preApprovalRes?.success === false &&
+              preApprovalRes?.code === 'ERR_REVIEW_TARGET_NOT_READY'
+            );
+
+            // C. Attempt forged vote submission by unauthorized caller (P8-R01-003)
             const forgedRes = await window.unionBotAPI.taskGraphSubmitVote({
               graphId: 'p8-e2e-pipeline',
               nodeId: 'node-review',
               vote: {
                 voterId: 'unauthorized-intruder',
-                voterRole: 'QA_SECURITY',
                 decision: 'APPROVE',
                 reviewedDigest: 'dummy-digest',
                 rationale: 'forged vote attempt',
@@ -3186,31 +3220,20 @@ function createWindow() {
             });
             results.forgedVoteDenied = Boolean(
               forgedRes?.success === false &&
-              (forgedRes?.code === 'ERR_UNAUTHORIZED_VOTER' || forgedRes?.error?.includes('not an authorized reviewer'))
+              forgedRes?.code === 'ERR_UNAUTHORIZED_VOTER'
             );
 
-            // B. Submit authentic vote from registered QA_SECURITY reviewer
-            const activeDigest = 'sha256-active-e2e-artifact-v1';
-            const authenticRes = await window.unionBotAPI.taskGraphSubmitVote({
-              graphId: 'p8-e2e-pipeline',
-              nodeId: 'node-review',
-              vote: {
-                voterId: 'qa-sec-auditor',
-                voterRole: 'QA_SECURITY',
-                decision: 'APPROVE',
-                reviewedDigest: activeDigest,
-                rationale: 'Authentic security review passed with 100% boundary & zero-cost guarantees',
-              },
-            });
-            results.authenticVoteAccepted = Boolean(authenticRes?.success === true);
+            // D. Step PLAN and IMPLEMENT so that targetDigest is produced and locked legitimately
+            await window.unionBotAPI.taskGraphStep({ graphId: 'p8-e2e-pipeline', nodeId: 'node-plan' });
+            const implementStepRes = await window.unionBotAPI.taskGraphStep({ graphId: 'p8-e2e-pipeline', nodeId: 'node-implement' });
+            const activeDigest = implementStepRes?.node?.outputDigest;
 
-            // C. Attempt vote with stale / mismatched digest against active review targetDigest
+            // E. Attempt vote with stale / mismatched digest against active review targetDigest
             const staleRes = await window.unionBotAPI.taskGraphSubmitVote({
               graphId: 'p8-e2e-pipeline',
               nodeId: 'node-review',
               vote: {
                 voterId: 'reviewer-qa-1',
-                voterRole: 'REVIEWER',
                 decision: 'APPROVE',
                 reviewedDigest: 'stale-mismatched-digest-v0',
                 rationale: 'Reviewing outdated digest',
@@ -3218,16 +3241,28 @@ function createWindow() {
             });
             results.staleDigestVoteDenied = Boolean(
               staleRes?.success === false &&
-              (staleRes?.code === 'ERR_STALE_VOTE_DIGEST' || staleRes?.error?.includes('does not match active review targetDigest'))
+              staleRes?.code === 'ERR_STALE_VOTE_DIGEST'
             );
 
-            // D. Deduplication: update vote in-place without duplicating
+            // F. Submit authentic vote from registered QA_SECURITY reviewer with locked activeDigest
+            const authenticRes = await window.unionBotAPI.taskGraphSubmitVote({
+              graphId: 'p8-e2e-pipeline',
+              nodeId: 'node-review',
+              vote: {
+                voterId: 'qa-sec-auditor',
+                decision: 'APPROVE',
+                reviewedDigest: activeDigest,
+                rationale: 'Authentic security review passed with 100% boundary & zero-cost guarantees',
+              },
+            });
+            results.authenticVoteAccepted = Boolean(authenticRes?.success === true);
+
+            // G. Deduplication: update vote in-place without duplicating
             const dupVoteRes = await window.unionBotAPI.taskGraphSubmitVote({
               graphId: 'p8-e2e-pipeline',
               nodeId: 'node-review',
               vote: {
                 voterId: 'qa-sec-auditor',
-                voterRole: 'QA_SECURITY',
                 decision: 'APPROVE',
                 reviewedDigest: activeDigest,
                 rationale: 'Updated audit rationale: 100% verified',
@@ -3241,7 +3276,7 @@ function createWindow() {
               revNodeBefore?.votes?.[0]?.rationale === 'Updated audit rationale: 100% verified'
             );
 
-            // 5. Live execution of 5-Stage Task Graph with Consensus & Remediation
+            // 5. Live execution of remaining 5-Stage Task Graph with Consensus & Remediation
             const eventLog = [];
             const unsubEvents = window.unionBotAPI.onTaskGraphEvent((evt) => {
               if (evt) eventLog.push(evt);
@@ -3287,6 +3322,8 @@ function createWindow() {
           'invalidBoundaryDenied',
           'junctionEscapeDenied',
           'cycleDetectionEnforced',
+          'fakeQaRegistrationDenied',
+          'preApprovalDenied',
           'forgedVoteDenied',
           'authenticVoteAccepted',
           'staleDigestVoteDenied',
@@ -3777,6 +3814,15 @@ ipcMain.handle('union-bot:save-attachment', async (event, payload) => {
     if (!filename || typeof filename !== 'string') {
       return { success: false, error: 'Filename is required' };
     }
+    const MAX_SIZE = ArtifactStore.DEFAULT_MAX_ARTIFACT_SIZE_BYTES || 50 * 1024 * 1024;
+    if (typeof textContent === 'string' && textContent.length > MAX_SIZE) {
+      return {
+        success: false,
+        code: 'ERR_FILE_TOO_LARGE',
+        error: `ERR_FILE_TOO_LARGE: File exceeds maximum allowed size of 50MB (size: ${textContent.length} bytes)`,
+      };
+    }
+
     let buffer;
     if (dataBase64) {
       const base64Data = dataBase64.includes('base64,') ? dataBase64.split('base64,')[1] : dataBase64;
@@ -3788,7 +3834,6 @@ ipcMain.handle('union-bot:save-attachment', async (event, payload) => {
     }
 
     // UB-P5-R01-001 / P5-R02-T01: Enforce 50MB maximum artifact size fail-closed
-    const MAX_SIZE = ArtifactStore.DEFAULT_MAX_ARTIFACT_SIZE_BYTES || 50 * 1024 * 1024;
     if (buffer.length > MAX_SIZE) {
       return {
         success: false,
@@ -4396,7 +4441,9 @@ ipcMain.handle('union-bot:artifact-show-in-folder', async (event, sha256) => {
         return { success: false, error: `Artifact ${cleanSha} not found in CAS store` };
       }
     }
-    shell.showItemInFolder(targetPath);
+    if (process.env.NODE_ENV !== 'test' && process.env.UNION_BOT_E2E_HARNESS !== '1') {
+      shell.showItemInFolder(targetPath);
+    }
     return { success: true, path: targetPath };
   } catch (err) {
     return { success: false, error: err.message };
@@ -4422,9 +4469,11 @@ ipcMain.handle('union-bot:artifact-open-original', async (event, sha256) => {
         return { success: false, error: `Artifact ${cleanSha} not found in CAS store` };
       }
     }
-    const openErr = await shell.openPath(targetPath);
-    if (openErr) {
-      return { success: false, error: openErr };
+    if (process.env.NODE_ENV !== 'test' && process.env.UNION_BOT_E2E_HARNESS !== '1') {
+      const openErr = await shell.openPath(targetPath);
+      if (openErr) {
+        return { success: false, error: openErr };
+      }
     }
     return { success: true, path: targetPath };
   } catch (err) {
@@ -4808,10 +4857,48 @@ ipcMain.handle('union-bot:task-graph-register-reviewer', async (event, payload) 
   }
   try {
     const { graphId, reviewer } = payload || {};
+    if (!reviewer || !reviewer.role || !reviewer.voterId) {
+      return { success: false, error: 'ERR_SCHEMA_VALIDATION_FAILED: Invalid reviewer payload' };
+    }
+    // Renderer is strictly prohibited from self-granting privileged roles (P8-R02-002)
+    const privilegedRoles = ['QA_SECURITY', 'LEADER', 'ORCHESTRATOR'];
+    if (privilegedRoles.includes(reviewer.role)) {
+      return {
+        success: false,
+        error: `ERR_UNAUTHORIZED_ACTION: Renderer is not authorized to register privileged role '${reviewer.role}'. Privileged reviewers must be configured in trusted backend policy.`,
+        code: 'ERR_UNAUTHORIZED_ACTION',
+      };
+    }
     taskGraphService.registerReviewer(graphId, reviewer);
     return { success: true };
   } catch (err) {
-    return { success: false, error: err.message, code: err.code };
+    return { success: false, error: err.message, code: err.code || 'ERR_TASK_GRAPH_FAILED' };
+  }
+});
+
+ipcMain.handle('union-bot:task-graph-step', async (event, payload) => {
+  if (!checkSenderAuthorized(event)) {
+    return { success: false, error: 'Unauthorized IPC sender origin' };
+  }
+  try {
+    const { graphId, nodeId } = payload || {};
+    const graph = taskGraphService.getGraph(graphId);
+    if (!graph) return { success: false, error: 'Graph not found' };
+    const node = graph.nodes.get(nodeId);
+    if (!node) return { success: false, error: 'Node not found' };
+    const resultNode = await taskGraphService.engine.executeNode(graph, node);
+    return {
+      success: true,
+      node: {
+        id: resultNode.id,
+        stage: resultNode.stage,
+        status: resultNode.status,
+        outputDigest: resultNode.outputDigest,
+        targetDigest: resultNode.targetDigest,
+      },
+    };
+  } catch (err) {
+    return { success: false, error: err.message, code: err.code || 'ERR_TASK_GRAPH_FAILED' };
   }
 });
 

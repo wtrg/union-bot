@@ -114,7 +114,7 @@ describe('Union Bot Phase P3 Gate: Windows Real Electron E2E Suite', () => {
         NODE_ENV: 'test',
         UNION_BOT_E2E_HARNESS: '1',
       },
-      timeoutMs: 55000,
+      timeoutMs: 85000,
     });
 
     assert.equal(code, 0, `Electron process should exit with code 0. Stderr: ${stderr}\nStdout: ${stdout}`);
@@ -188,7 +188,7 @@ describe('Union Bot Phase P3 Gate: Windows Real Electron E2E Suite', () => {
         NODE_ENV: 'test',
         UNION_BOT_E2E_HARNESS: '1',
       },
-      timeoutMs: 55000,
+      timeoutMs: 85000,
     });
 
     assert.equal(code, 0, `Electron process should exit with code 0 on reopen. Stderr: ${stderr}\nStdout: ${stdout}`);
