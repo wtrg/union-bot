@@ -9,7 +9,7 @@
 const { DatabaseSync } = require('node:sqlite');
 const fs = require('node:fs');
 const path = require('node:path');
-const { computeEnvelopeDigest, canonicalizeJson } = require('./canonical-json.cjs');
+const { computeEnvelopeDigest, canonicalizeJson, computeCanonicalDigest } = require('./canonical-json.cjs');
 const { runSchemaMigrations } = require('./schema-definition.cjs');
 
 function maybeInjectFault(checkpoint, args) {
@@ -458,10 +458,33 @@ function handleRequest(msg) {
         const token = args.token;
         const now = new Date().toISOString();
         const expiresAt = token.expiresAt || new Date(Date.now() + 3600000).toISOString();
+        let payloadObj = token.payload;
         let payloadJson = token.payloadJson || token.payload_json || null;
-        if (!payloadJson && token.payload) {
-          payloadJson = canonicalizeJson(token.payload);
+
+        // P3-R04-F01: Backend rejects token creation when payload does not match supplied digest
+        if (payloadObj !== undefined && payloadObj !== null) {
+          const computedDigest = computeCanonicalDigest(payloadObj, token.canonicalizationVersion || 1);
+          const suppliedDigest = token.payloadDigest || token.payload_digest;
+          if (suppliedDigest && suppliedDigest !== computedDigest) {
+            throw new Error(`ERR_PAYLOAD_MISMATCH: Payload does not match supplied payloadDigest: computed ${computedDigest} vs supplied ${suppliedDigest} (P3-R04-F01)`);
+          }
+          if (!token.payloadDigest) token.payloadDigest = computedDigest;
+          if (!payloadJson) payloadJson = canonicalizeJson(payloadObj);
+        } else if (payloadJson) {
+          try {
+            const parsed = JSON.parse(payloadJson);
+            const computedDigest = computeCanonicalDigest(parsed, token.canonicalizationVersion || 1);
+            const suppliedDigest = token.payloadDigest || token.payload_digest;
+            if (suppliedDigest && suppliedDigest !== computedDigest) {
+              throw new Error(`ERR_PAYLOAD_MISMATCH: Payload does not match supplied payloadDigest: computed ${computedDigest} vs supplied ${suppliedDigest} (P3-R04-F01)`);
+            }
+            if (!token.payloadDigest) token.payloadDigest = computedDigest;
+            payloadObj = parsed;
+          } catch (err) {
+            if (err.message && err.message.includes('ERR_PAYLOAD_MISMATCH')) throw err;
+          }
         }
+
         db.prepare(`
           INSERT INTO approvals (
             token_id, action_type, payload_digest, canonicalization_version, origin,
@@ -489,7 +512,7 @@ function handleRequest(msg) {
           createdAt: now,
           expiresAt,
           payload_json: payloadJson,
-          payload: token.payload || (payloadJson ? JSON.parse(payloadJson) : null),
+          payload: payloadObj || (payloadJson ? JSON.parse(payloadJson) : null),
         } });
         break;
       }
@@ -513,9 +536,22 @@ function handleRequest(msg) {
         if (!approver.role || !allowedRoles.includes(approver.role)) {
           throw new Error(`ERR_UNTRUSTED_SENDER: Role '${approver.role}' is not authorized to approve tokens (UB-P2-R03-02)`);
         }
-        const row = db.prepare('SELECT status, expires_at FROM approvals WHERE token_id = ?').get(tokenId);
+        const row = db.prepare('SELECT status, expires_at, payload_json, payload_digest, canonicalization_version FROM approvals WHERE token_id = ?').get(tokenId);
         if (!row) {
           throw new Error(`ERR_UNTRUSTED_ACTION: Approval token not found: ${tokenId}`);
+        }
+        // P3-R04-F02: Recompute canonical digest from stored payload_json and reject if mismatched
+        if (row.payload_json) {
+          try {
+            const parsed = JSON.parse(row.payload_json);
+            const computed = computeCanonicalDigest(parsed, row.canonicalization_version || 1);
+            if (row.payload_digest && computed !== row.payload_digest) {
+              throw new Error(`ERR_PAYLOAD_MISMATCH: Stored payload_json does not match stored payload_digest for token ${tokenId} (P3-R04-F02)`);
+            }
+          } catch (parseErr) {
+            if (parseErr.message && parseErr.message.includes('ERR_PAYLOAD_MISMATCH')) throw parseErr;
+            throw new Error(`ERR_PAYLOAD_MISMATCH: Failed to parse stored payload_json: ${parseErr.message}`);
+          }
         }
         if (new Date(row.expires_at).getTime() < Date.now()) {
           db.prepare("UPDATE approvals SET status = 'EXPIRED' WHERE token_id = ?").run(tokenId);
@@ -609,6 +645,15 @@ function handleRequest(msg) {
           throw new Error(`ERR_APPROVAL_ALREADY_CONSUMED: Token ${tokenId} was consumed concurrently or payload digest mismatch`);
         }
         process.send({ id, result: { success: true, tokenId, consumedAt: nowIso } });
+        break;
+      }
+      case 'testTamperApprovalPayload': {
+        const tamperedJson = typeof args.tamperedPayload === 'string'
+          ? args.tamperedPayload
+          : JSON.stringify(args.tamperedPayload);
+        db.prepare('UPDATE approvals SET payload_json = ? WHERE token_id = ?')
+          .run(tamperedJson, args.tokenId);
+        process.send({ id, result: { success: true } });
         break;
       }
       case 'close': {

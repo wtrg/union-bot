@@ -1,7 +1,23 @@
 {
-  "timestamp": "2026-10-19T10:54:21.191Z",
-  "environment": "Real Windows Electron Chromium E2E (Phase P3 Gate R02)",
+  "timestamp": "2026-10-19T11:19:32.013Z",
+  "environment": "Real Windows Electron Chromium E2E (Phase P3 Gate R04)",
   "nodeEnv": "test",
+  "regressionVectors": {
+    "P3-R04-F01": {
+      "creationMismatchBlocked": true
+    },
+    "P3-R04-F02": {
+      "approveTamperBlocked": true
+    },
+    "P3-R04-F03": {
+      "approveBtnDisabledOnMismatch": true
+    },
+    "P3-R04-F05": {
+      "projectFormCreatedInDom": true,
+      "chatMessageSentViaDom": true,
+      "exportTriggeredViaDom": true
+    }
+  },
   "results": {
     "roomCreated": true,
     "roomInList": true,
@@ -9,23 +25,29 @@
     "pdfSaved": true,
     "envelopeDispatched": true,
     "historyFound": true,
+    "f01CreationMismatchBlocked": true,
     "tokenCreated": true,
     "tokenInList": true,
     "actionIntentPreserved": true,
-    "tokenRejected": true,
-    "exportSucceeded": true,
-    "pathTraversalBlocked": true,
-    "invalidShaBlocked": true,
-    "projectCreated": true,
-    "projectInList": true,
-    "taskCreated": true,
-    "taskInList": true,
+    "f02ApproveTamperBlocked": true,
     "hasApprovalCards": true,
     "hasVerifiedBadge": true,
     "hasMismatchBadge": true,
-    "tamperedApprovalBlocked": true,
-    "hasTasksRendered": true,
+    "f03ApproveBtnDisabledOnMismatch": true,
+    "tokenRejected": true,
+    "pathTraversalBlocked": true,
+    "invalidShaBlocked": true,
+    "f05ProjectFormCreatedInDom": true,
+    "projectCreated": true,
+    "projectInList": true,
+    "f05ChatMessageSentViaDom": true,
     "hasChatRendered": true,
+    "tamperedApprovalBlocked": true,
+    "taskCreated": true,
+    "taskInList": true,
+    "hasTasksRendered": true,
+    "f05ExportTriggeredViaDom": true,
+    "exportSucceeded": true,
     "pngSha256": "6b7fa434f92a8b80aab02d9bf1a12e49ffcae424e4013a1c4f68b67e3d2bbcd0",
     "pdfSha256": "9ce0d7fd8b15d3de88f1acfb49e0b61540a6be10a62f519c243d9cd4fd9db4e1"
   },

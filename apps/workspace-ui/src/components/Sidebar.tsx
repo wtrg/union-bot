@@ -89,6 +89,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           {onOpenCreateProject && (
             <button
               onClick={onOpenCreateProject}
+              data-testid="open-create-project-btn"
               title="Create New Project (UB-P3-R01-002)"
               style={{
                 background: 'transparent',
@@ -107,6 +108,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
         <div
           onClick={() => setIsProjectDropdownOpen(!isProjectDropdownOpen)}
+          data-testid="project-dropdown-trigger"
           style={{
             display: 'flex',
             alignItems: 'center',
@@ -287,6 +289,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <span className="section-label" style={{ padding: 0 }}>Rooms</span>
           <button
             onClick={onOpenCreateRoom}
+            data-testid="add-room-btn"
             title="Create Room (P3-003)"
             style={{
               background: 'transparent',
@@ -348,6 +351,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       <div style={{ padding: '10px 12px', borderTop: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <button
           onClick={onOpenPreferences}
+          data-testid="open-preferences-btn"
           style={{
             background: 'transparent',
             border: 'none',

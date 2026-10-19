@@ -147,6 +147,9 @@ if (process.env.UNION_BOT_E2E_HARNESS === '1' && process.env.NODE_ENV === 'test'
   api.testSetConfirmationMode = async (mode) => {
     return ipcRenderer.invoke('union-bot:test-set-confirmation-mode', mode);
   };
+  api.testTamperApprovalPayload = async (payload) => {
+    return ipcRenderer.invoke('union-bot:test-tamper-approval-payload', payload);
+  };
 }
 
 contextBridge.exposeInMainWorld('unionBotAPI', api);

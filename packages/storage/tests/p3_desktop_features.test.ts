@@ -8,6 +8,9 @@ import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
 const { StorageServiceClient } = require('../../../apps/desktop/src/storage-service.cjs');
+const { computeCanonicalDigest } = require('../../../apps/desktop/src/canonical-json.cjs');
+const { DatabaseSync } = require('node:sqlite');
+const { runMigrations, rollbackMigration, CANONICAL_MIGRATION_2_CHECKSUM } = require('../src/migrations.ts');
 
 describe('Union Bot Phase P3: Desktop Workspace UI & Storage Features', () => {
   const testDir = path.join(os.tmpdir(), `union_bot_p3_test_${Date.now()}`);
@@ -105,7 +108,7 @@ describe('Union Bot Phase P3: Desktop Workspace UI & Storage Features', () => {
   test('P3-007 & P3-C01: Approval Inbox Token Lifecycle (Inspect, Reject, Approve)', async () => {
     const rawPayloadObj = { action: 'format_disk_simulated', path: '/var/data', riskLevel: 'HIGH', reversible: false };
     const rawPayload = JSON.stringify(rawPayloadObj);
-    const payloadDigest = crypto.createHash('sha256').update(rawPayload).digest('hex');
+    const payloadDigest = computeCanonicalDigest(rawPayloadObj);
 
     // 1. Create a pending token with real ActionIntent payload (UB-P3-R02-001)
     const tokenData = {
@@ -338,8 +341,125 @@ describe('Union Bot Phase P3: Desktop Workspace UI & Storage Features', () => {
       assert.ok(reloadedToken, 'Approval token must survive restart');
       assert.ok(reloadedToken.payload_json, 'payload_json must survive restart');
       assert.equal(reloadedToken.payload?.path, '/var/data', 'ActionIntent parameters must survive restart');
-    } finally {
+      // Keep storage active for subsequent tests
+      storage = reopenedStorage;
+    } catch (err) {
       await reopenedStorage.closeAsync();
+      throw err;
+    }
+  });
+
+  test('P3-R04-F01: Backend rejects token creation when payload does not match supplied payloadDigest', async () => {
+    const payloadA = { action: 'write_file', path: 'a.txt', content: 'original' };
+    const payloadB = { action: 'write_file', path: 'b.txt', content: 'tampered' };
+    const digestA = computeCanonicalDigest(payloadA);
+
+    // Attempt to create token with payload B but digest A -> MUST REJECT
+    await assert.rejects(
+      async () => {
+        await storage.createApprovalToken({
+          tokenId: `tok_mismatch_${Date.now()}`,
+          actionType: 'write_file',
+          payload: payloadB,
+          payloadDigest: digestA, // deliberately mismatched!
+          origin: 'Test Runner',
+          workspaceId: 'ws-p3',
+          roomId: 'p3-testing',
+        });
+      },
+      (err: any) => {
+        assert.ok(err.message.includes('ERR_PAYLOAD_MISMATCH'), `Expected ERR_PAYLOAD_MISMATCH, got: ${err.message}`);
+        return true;
+      }
+    );
+  });
+
+  test('P3-R04-F02: Direct approveToken rejects when stored payload_json does not match stored payload_digest', async () => {
+    // 1. Create a legitimate token
+    const legitimatePayload = { action: 'delete_file', path: 'delete_me.txt' };
+    const legitimateDigest = computeCanonicalDigest(legitimatePayload);
+    const tokenId = `tok_tamper_db_${Date.now()}`;
+    await storage.createApprovalToken({
+      tokenId,
+      actionType: 'delete_file',
+      payload: legitimatePayload,
+      payloadDigest: legitimateDigest,
+      origin: 'Test Runner',
+      workspaceId: 'ws-p3',
+      roomId: 'p3-testing',
+    });
+
+    // 2. Directly tamper with the SQLite database row (simulate malicious DB injection or corrupted disk)
+    const directDb = new DatabaseSync(dbPath);
+    try {
+      directDb.prepare("UPDATE approvals SET payload_json = ? WHERE token_id = ?")
+        .run(JSON.stringify({ action: 'delete_file', path: 'CRITICAL_SYSTEM_FILE.SYS' }), tokenId);
+    } finally {
+      directDb.close();
+    }
+
+    // 3. Attempt to approve this tampered token directly -> MUST REJECT fail-closed
+    await assert.rejects(
+      async () => {
+        await storage.approveToken(tokenId, {
+          id: 'admin-operator',
+          role: 'OPERATOR',
+          isTrustedContext: true,
+        });
+      },
+      (err: any) => {
+        assert.ok(err.message.includes('ERR_PAYLOAD_MISMATCH'), `Expected ERR_PAYLOAD_MISMATCH, got: ${err.message}`);
+        return true;
+      }
+    );
+  });
+
+  test('P3-R04-F04: Migration 2 atomic rollback and re-apply cleans up columns and preserves DB integrity', async () => {
+    const migDbPath = path.join(testDir, `mig_rollback_test_${Date.now()}.db`);
+    const migDb = new DatabaseSync(migDbPath);
+    try {
+      // 1. Run migrations up to v2
+      const upRes = runMigrations(migDb);
+      assert.equal(upRes.currentVersion, 2, 'Migration must reach version 2');
+      
+      // Verify v2 tables and columns exist
+      const tablesV2 = migDb.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all().map((r: any) => r.name);
+      assert.ok(tablesV2.includes('projects'), 'projects table must exist in v2');
+      assert.ok(tablesV2.includes('tasks'), 'tasks table must exist in v2');
+      const roomColsV2 = migDb.prepare('PRAGMA table_info(rooms)').all().map((c: any) => c.name);
+      assert.ok(roomColsV2.includes('project_id'), 'rooms.project_id must exist in v2');
+      const approvalColsV2 = migDb.prepare('PRAGMA table_info(approvals)').all().map((c: any) => c.name);
+      assert.ok(approvalColsV2.includes('payload_json'), 'approvals.payload_json must exist in v2');
+
+      // 2. Execute atomic rollback of Migration 2
+      const rollbackRes = rollbackMigration(migDb);
+      assert.equal(rollbackRes.rolledBackVersion, 2, 'Migration 2 must be rolled back');
+
+      // Verify tracker recorded max version 1
+      const versionAfter = migDb.prepare('SELECT MAX(version) as v FROM schema_migrations').get() as { v: number };
+      assert.equal(versionAfter.v, 1, 'Version must be rolled back to 1');
+
+      // Verify v2 tables and added columns are cleanly dropped
+      const tablesAfter = migDb.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all().map((r: any) => r.name);
+      assert.ok(!tablesAfter.includes('projects'), 'projects table must be dropped');
+      assert.ok(!tablesAfter.includes('tasks'), 'tasks table must be dropped');
+
+      const roomColsAfter = migDb.prepare('PRAGMA table_info(rooms)').all().map((c: any) => c.name);
+      assert.ok(!roomColsAfter.includes('project_id'), 'rooms.project_id must be dropped on rollback');
+
+      const approvalColsAfter = migDb.prepare('PRAGMA table_info(approvals)').all().map((c: any) => c.name);
+      assert.ok(!approvalColsAfter.includes('payload_json'), 'approvals.payload_json must be dropped on rollback');
+
+      // 3. Re-apply migration 2 cleanly to version 2
+      const reUpRes = runMigrations(migDb);
+      assert.equal(reUpRes.currentVersion, 2, 'Migration must cleanly re-apply to version 2');
+      assert.equal(reUpRes.appliedCount, 1, 'Exactly 1 migration should be applied');
+
+      const rowsMig = migDb.prepare('SELECT version, checksum FROM schema_migrations ORDER BY version ASC').all() as any[];
+      assert.equal(rowsMig[1].version, 2);
+      assert.equal(rowsMig[1].checksum, CANONICAL_MIGRATION_2_CHECKSUM, 'Checksum must match canonical migration 2');
+    } finally {
+      migDb.close();
     }
   });
 });

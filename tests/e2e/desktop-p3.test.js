@@ -148,6 +148,14 @@ describe('Union Bot Phase P3 Gate: Windows Real Electron E2E Suite', () => {
     assert.equal(evidence.results.hasTasksRendered, true);
     assert.equal(evidence.results.hasChatRendered, true);
 
+    // Phase P3 R04 Regression Vectors
+    assert.equal(evidence.regressionVectors['P3-R04-F01'].creationMismatchBlocked, true);
+    assert.equal(evidence.regressionVectors['P3-R04-F02'].approveTamperBlocked, true);
+    assert.equal(evidence.regressionVectors['P3-R04-F03'].approveBtnDisabledOnMismatch, true);
+    assert.equal(evidence.regressionVectors['P3-R04-F05'].projectFormCreatedInDom, true);
+    assert.equal(evidence.regressionVectors['P3-R04-F05'].chatMessageSentViaDom, true);
+    assert.equal(evidence.regressionVectors['P3-R04-F05'].exportTriggeredViaDom, true);
+
     assert.match(stdout, /\[P3-E2E\] UB-P3-R02-001 Live Web Crypto SHA-256 Verified Match rendered in DOM: true/);
     assert.match(stdout, /\[P3-E2E\] UB-P3-R02-001 Live Web Crypto SHA-256 Tamper Mismatch detected in DOM: true/);
     assert.match(stdout, /\[P3-E2E\] UB-P3-R02-001 Tampered Approval Blocked fail-closed in UI: true/);

@@ -218,6 +218,7 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ roomName, envelopes, onSendM
         <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>🔍</span>
         <input
           type="text"
+          data-testid="chat-search-input"
           placeholder="Filter messages or artifacts in this room (highlight matches)..."
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
@@ -283,7 +284,7 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ roomName, envelopes, onSendM
           </div>
         ) : (
           filteredEnvelopes.map((env) => (
-            <div key={env.id} className="envelope-card">
+            <div key={env.id} className="envelope-card" data-testid="envelope-card">
               <div className="envelope-meta">
                 <div className="sender-tag">
                   <span className="sender-name">
@@ -321,7 +322,7 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ roomName, envelopes, onSendM
                 switch (part.kind) {
                   case 'text':
                     return (
-                      <div key={idx} className="part-text" style={{ whiteSpace: 'pre-wrap' }}>
+                      <div key={idx} className="part-text" data-testid="message-text" style={{ whiteSpace: 'pre-wrap' }}>
                         <HighlightedText text={part.text} query={searchQuery} />
                       </div>
                     );
@@ -502,6 +503,7 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ roomName, envelopes, onSendM
 
         <button
           type="button"
+          data-testid="chat-composer-attach-btn"
           onClick={handleAttachClick}
           title="Attach file (PNG, PDF, etc.)"
           style={{
@@ -522,6 +524,7 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ roomName, envelopes, onSendM
 
         <textarea
           className="chat-input"
+          data-testid="chat-composer-textarea"
           placeholder="Type message (Shift+Enter for newline, Enter to send)..."
           value={inputText}
           onChange={(e) => setInputText(e.target.value)}
@@ -544,6 +547,7 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ roomName, envelopes, onSendM
         <button
           type="submit"
           className="send-button"
+          data-testid="chat-composer-send-btn"
           disabled={isSubmitting || (!inputText.trim() && pendingAttachments.length === 0)}
           style={{
             padding: '8px 16px',

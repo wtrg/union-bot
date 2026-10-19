@@ -217,6 +217,7 @@ export const PreferencesModal: React.FC<PreferencesModalProps> = ({
             </p>
             <div style={{ display: 'flex', gap: 10 }}>
               <button
+                data-testid="export-json-btn"
                 onClick={handleExportJson}
                 disabled={isExporting}
                 style={{
@@ -236,6 +237,7 @@ export const PreferencesModal: React.FC<PreferencesModalProps> = ({
                 📥 Export JSON (.json)
               </button>
               <button
+                data-testid="export-markdown-btn"
                 onClick={handleExportMarkdown}
                 disabled={isExporting}
                 style={{
@@ -309,6 +311,7 @@ export const PreferencesModal: React.FC<PreferencesModalProps> = ({
 
         <div style={{ padding: '12px 20px', borderTop: '1px solid var(--border-color)', display: 'flex', justifyContent: 'flex-end' }}>
           <button
+            data-testid="close-preferences-btn"
             onClick={onClose}
             style={{
               padding: '6px 16px',

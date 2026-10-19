@@ -187,6 +187,7 @@ const ApprovalCard: React.FC<ApprovalCardProps> = ({
     };
   }, [token.payload, token.payload_json, token.payload_digest, token.canonicalization_version]);
 
+  const isMatch = digestVerification.status === 'MATCH';
   const isTampered = digestVerification.status === 'MISMATCH';
 
   return (
@@ -309,18 +310,26 @@ const ApprovalCard: React.FC<ApprovalCardProps> = ({
               <button
                 onClick={() => onApprove(token)}
                 data-testid="approval-approve-btn"
-                disabled={isTampered}
-                title={isTampered ? 'Approval blocked: Payload digest tamper detected by client-side Web Crypto verification!' : 'Approve & Authorize action'}
+                disabled={!isMatch}
+                title={
+                  digestVerification.status === 'MISMATCH'
+                    ? 'Approval blocked: Payload digest tamper detected by client-side Web Crypto verification!'
+                    : digestVerification.status === 'CHECKING'
+                    ? 'Approval blocked: Calculating and verifying SHA-256 digest...'
+                    : digestVerification.status === 'NO_PAYLOAD'
+                    ? 'Approval blocked: No canonical payload available for cryptographic verification.'
+                    : 'Approve & Authorize action'
+                }
                 style={{
                   padding: '6px 14px',
                   borderRadius: 4,
                   border: 'none',
-                  background: isTampered ? 'var(--bg-tertiary)' : 'var(--accent-green)',
-                  color: isTampered ? 'var(--text-muted)' : '#000',
+                  background: isMatch ? 'var(--accent-green)' : 'var(--bg-tertiary)',
+                  color: isMatch ? '#000' : 'var(--text-muted)',
                   fontSize: 12,
                   fontWeight: 700,
-                  cursor: isTampered ? 'not-allowed' : 'pointer',
-                  opacity: isTampered ? 0.6 : 1,
+                  cursor: isMatch ? 'pointer' : 'not-allowed',
+                  opacity: isMatch ? 1 : 0.6,
                 }}
               >
                 Approve & Authorize

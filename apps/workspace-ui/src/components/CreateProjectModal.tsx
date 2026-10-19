@@ -148,6 +148,7 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
             </label>
             <input
               type="text"
+              data-testid="project-name-input"
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="e.g. Union Core, Marketing Reels, QA Alpha"
@@ -180,6 +181,7 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
                 Description (Optional)
               </label>
               <textarea
+                data-testid="project-desc-input"
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
                 placeholder="Workspace scope, goals, and team isolation boundary"
@@ -203,6 +205,7 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
             <button
               type="button"
+              data-testid="project-cancel-btn"
               onClick={onClose}
               disabled={isSubmitting}
               style={{
@@ -219,6 +222,7 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
             </button>
             <button
               type="submit"
+              data-testid="project-submit-btn"
               disabled={isSubmitting || !name.trim()}
               style={{
                 padding: '8px 16px',

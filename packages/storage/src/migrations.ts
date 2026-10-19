@@ -23,6 +23,7 @@ const {
   MIGRATION_2_SQL,
   CANONICAL_MIGRATION_2_CHECKSUM,
   LEGACY_R04_EMPTY_CHECKSUM,
+  LEGACY_MIGRATION_2_CHECKSUM,
   computeChecksum: schemaComputeChecksum,
   runSchemaMigrations,
 } = schemaDefinition;
@@ -33,6 +34,7 @@ export {
   MIGRATION_2_SQL,
   CANONICAL_MIGRATION_2_CHECKSUM,
   LEGACY_R04_EMPTY_CHECKSUM,
+  LEGACY_MIGRATION_2_CHECKSUM,
 };
 
 export interface Migration {

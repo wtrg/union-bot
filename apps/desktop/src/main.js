@@ -1307,14 +1307,28 @@ function createWindow() {
     return;
   }
 
-  // 7k. P3-E2E: Full Windows Electron Verification for Phase P3 Desktop Workspace UI
+  // 7k. P3-E2E: Full Windows Electron Verification for Phase P3 Desktop Workspace UI (R04 Gates)
   if (process.argv.includes('--p3-e2e')) {
     mainWindow.webContents.once('did-finish-load', async () => {
       try {
-        console.log('[P3-E2E] Running Real Windows Electron P3 Verification...');
+        console.log('[P3-E2E] Running Real Windows Electron P3 Verification (R04 Form Interaction & Security Vectors)...');
 
         const p3Result = await mainWindow.webContents.executeJavaScript(`
           (async () => {
+            // Helper functions to dispatch React input and textarea events
+            const setNativeInputValue = (el, val) => {
+              const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+              setter.call(el, val);
+              el.dispatchEvent(new Event('input', { bubbles: true }));
+              el.dispatchEvent(new Event('change', { bubbles: true }));
+            };
+            const setNativeTextareaValue = (el, val) => {
+              const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
+              setter.call(el, val);
+              el.dispatchEvent(new Event('input', { bubbles: true }));
+              el.dispatchEvent(new Event('change', { bubbles: true }));
+            };
+
             // 1. Create a dynamic room (P3-003)
             const roomRes = await window.unionBotAPI.createRoom({
               id: 'gate-p3-room',
@@ -1366,7 +1380,26 @@ function createWindow() {
             const history = await window.unionBotAPI.getRoomHistory('gate-p3-room');
             const historyFound = Array.isArray(history) && history.some(e => e.id === envelopeId && e.parts && e.parts.length === 3);
 
-            // 6. Test Approval Inbox inspection (P3-007, P3-C01)
+            // 6. Vector P3-R04-F01: Token creation rejects mismatched digest fail-closed
+            let f01CreationMismatchBlocked = false;
+            try {
+              const f01Res = await window.unionBotAPI.createApprovalToken({
+                tokenId: 'tok_f01_bad_digest_' + Date.now(),
+                actionType: 'format_disk_simulated',
+                payload: { action: 'format_disk_simulated', path: '/genuine/data' },
+                payloadDigest: 'bad_digest_f01_'.padEnd(64, '0'),
+                origin: 'F01 Test Runner',
+                roomId: 'gate-p3-room',
+                workspaceId: 'gate-p3-ws',
+              });
+              if (!f01Res || !f01Res.success) {
+                f01CreationMismatchBlocked = String(f01Res?.error).includes('ERR_PAYLOAD_MISMATCH');
+              }
+            } catch (f01Err) {
+              f01CreationMismatchBlocked = String(f01Err.message).includes('ERR_PAYLOAD_MISMATCH');
+            }
+
+            // 6b. Create valid Approval Token (P3-007, P3-C01)
             const tokenPayload = { action: 'format_disk_simulated', path: '/local/test', destructive: true, riskLevel: 'HIGH', reversible: false };
             const digestRes = await window.unionBotAPI.computeActionDigest(tokenPayload);
             const tokenId = 'tok_p3_e2e_' + Date.now();
@@ -1385,13 +1418,51 @@ function createWindow() {
             });
             const tokenCreated = createTokenRes && createTokenRes.success === true;
 
-            // 6b. Create a TAMPERED Approval Token to prove client-side Web Crypto detects mismatches! (UB-P3-R02-001, UB-P3-R02-004)
+            // 6c. Vector P3-R04-F02: Create token, tamper DB row, assert approveToken rejects with ERR_PAYLOAD_MISMATCH
+            const genuinePayloadF02 = { action: 'format_disk_simulated', path: '/safe/data' };
+            const genuineDigestF02 = await window.unionBotAPI.computeActionDigest(genuinePayloadF02);
+            const f02TokenId = 'tok_f02_tamper_' + Date.now();
+            await window.unionBotAPI.createApprovalToken({
+              tokenId: f02TokenId,
+              actionType: 'format_disk_simulated',
+              payload: genuinePayloadF02,
+              payloadDigest: genuineDigestF02.digest,
+              origin: 'F02 Test Runner',
+              roomId: 'gate-p3-room',
+              workspaceId: 'gate-p3-ws',
+              status: 'PENDING',
+              expiresInMs: 60000,
+            });
+
+            if (window.unionBotAPI.testTamperApprovalPayload) {
+              await window.unionBotAPI.testTamperApprovalPayload({
+                tokenId: f02TokenId,
+                tamperedPayload: { action: 'format_disk_simulated', path: '/MALICIOUS_TAMPERED/data' },
+              });
+            }
+
+            if (window.unionBotAPI.testSetConfirmationMode) {
+              await window.unionBotAPI.testSetConfirmationMode('auto-approve');
+            }
+
+            let f02ApproveTamperBlocked = false;
+            try {
+              const f02ApproveRes = await window.unionBotAPI.approveToken(f02TokenId, { confirmedByUser: true });
+              if (!f02ApproveRes || !f02ApproveRes.success) {
+                f02ApproveTamperBlocked = String(f02ApproveRes?.error).includes('ERR_PAYLOAD_MISMATCH');
+              }
+            } catch (f02Err) {
+              f02ApproveTamperBlocked = String(f02Err.message).includes('ERR_PAYLOAD_MISMATCH');
+            }
+
+            // 6d. Create a TAMPERED Approval Token for UI verification (UB-P3-R02-001, UB-P3-R02-004)
+            // Here we supply mismatched raw payload vs digest in DB or payload
             const tamperedTokenId = 'tok_tampered_' + Date.now();
             await window.unionBotAPI.createApprovalToken({
               tokenId: tamperedTokenId,
               actionType: 'format_disk_simulated',
-              payload: { action: 'format_disk_simulated', path: '/tampered/exploit', destructive: true },
-              payloadDigest: digestRes.digest, // deliberately mismatched: digest is for /local/test, not /tampered/exploit!
+              payload: tokenPayload,
+              payloadDigest: digestRes.digest,
               origin: 'Tamper Test Runner',
               workspaceId: 'gate-p3-ws',
               roomId: 'gate-p3-room',
@@ -1400,13 +1471,21 @@ function createWindow() {
               status: 'PENDING',
               expiresInMs: 60000,
             });
+            // Now tamper its stored payload
+            if (window.unionBotAPI.testTamperApprovalPayload) {
+              await window.unionBotAPI.testTamperApprovalPayload({
+                tokenId: tamperedTokenId,
+                tamperedPayload: { action: 'format_disk_simulated', path: '/tampered/exploit', destructive: true },
+              });
+            }
 
             const approvals = await window.unionBotAPI.listApprovals({ limit: 20 });
             const tokenInList = Array.isArray(approvals) && approvals.some(t => t.token_id === tokenId && t.payload_digest === digestRes.digest);
             const actionIntentPreserved = Array.isArray(approvals) && approvals.some(t => t.token_id === tokenId && t.payload && t.payload.path === '/local/test');
 
-            // 6c. Real UI DOM Verification of Approval Inbox with Client-Side Web Crypto SHA-256 (UB-P3-R02-001, UB-P3-R02-004)
-            const approvalsNavBtn = Array.from(document.querySelectorAll('button')).find(b => b.innerText.includes('Approval Inbox'));
+            // 6e. Vector P3-R04-F03: Real UI DOM Verification of Approval Inbox with Client-Side Web Crypto SHA-256
+            const approvalsNavBtn = document.querySelector('[data-testid="nav-approvals-btn"]') ||
+              Array.from(document.querySelectorAll('button')).find(b => b.innerText.includes('Approval Inbox'));
             if (approvalsNavBtn) approvalsNavBtn.click();
             await new Promise(r => setTimeout(r, 800));
 
@@ -1416,9 +1495,10 @@ function createWindow() {
             const hasVerifiedBadge = Boolean(verifiedBadge && verifiedBadge.innerText.includes('Verified Match'));
             const mismatchBadge = document.querySelector('[data-testid="sha-mismatch-badge"]');
             const hasMismatchBadge = Boolean(mismatchBadge && mismatchBadge.innerText.includes('TAMPER DETECTED'));
+
             const tamperedCard = document.querySelector('[data-token-id="' + tamperedTokenId + '"]');
             const tamperedApproveBtn = tamperedCard ? tamperedCard.querySelector('[data-testid="approval-approve-btn"]') : null;
-            const tamperedApprovalBlocked = Boolean(tamperedApproveBtn && tamperedApproveBtn.disabled === true);
+            const f03ApproveBtnDisabledOnMismatch = Boolean(tamperedApproveBtn && tamperedApproveBtn.disabled === true);
 
             // 7. Test Rejection from Approval Inbox (P3-007)
             const rejectRes = await window.unionBotAPI.rejectApproval(tokenId, 'Operator rejected from Approval Inbox');
@@ -1431,13 +1511,55 @@ function createWindow() {
             const badShaRes = await window.unionBotAPI.readAttachment('invalid_sha_format_123');
             const invalidShaBlocked = badShaRes && badShaRes.success === false && (badShaRes.code === 'ERR_INVALID_SHA256' || (badShaRes.error && badShaRes.error.includes('ERR_INVALID_SHA256')));
 
-            // 9. UB-P3-R01-002: Project CRUD
-            const projRes = await window.unionBotAPI.createProject({ id: 'proj-gate-p3', name: 'Gate P3 Project', description: 'Audit scope' });
-            const projectCreated = projRes && projRes.success === true;
-            const projs = await window.unionBotAPI.getProjects();
-            const projectInList = Array.isArray(projs) && projs.some(p => p.id === 'proj-gate-p3');
+            // 9. Vector P3-R04-F05 (Form 1): Create Project via Real DOM Form Inputs & Submit Button
+            const openProjectBtn = document.querySelector('[data-testid="open-create-project-btn"]');
+            if (openProjectBtn) openProjectBtn.click();
+            await new Promise(r => setTimeout(r, 400));
 
-            // 10. UB-P3-R01-003: Durable Tasks in SQLite WAL
+            const projNameInput = document.querySelector('[data-testid="project-name-input"]');
+            const projDescInput = document.querySelector('[data-testid="project-desc-input"]');
+            const projSubmitBtn = document.querySelector('[data-testid="project-submit-btn"]');
+            let f05ProjectFormCreatedInDom = false;
+
+            if (projNameInput && projSubmitBtn) {
+              setNativeInputValue(projNameInput, 'Gate P3 GUI Form Project');
+              if (projDescInput) {
+                setNativeTextareaValue(projDescInput, 'Created through real DOM inputs');
+              }
+              await new Promise(r => setTimeout(r, 100));
+              projSubmitBtn.click();
+              await new Promise(r => setTimeout(r, 600));
+
+              const projTrigger = document.querySelector('[data-testid="project-dropdown-trigger"]');
+              f05ProjectFormCreatedInDom = Boolean(projTrigger && projTrigger.innerText.includes('Gate P3 GUI Form Project'));
+            }
+
+            // Verify project exists in API as well
+            const projs = await window.unionBotAPI.getProjects();
+            const projectInList = Array.isArray(projs) && projs.some(p => p.name === 'Gate P3 GUI Form Project');
+
+            // 10. Vector P3-R04-F05 (Form 2): Chat Composer via Real DOM Textarea and Send Button
+            const chatNavBtn = document.querySelector('[data-testid="nav-chat-btn"]') ||
+              Array.from(document.querySelectorAll('button')).find(b => b.innerText.includes('Collaboration Rooms'));
+            if (chatNavBtn) chatNavBtn.click();
+            await new Promise(r => setTimeout(r, 400));
+
+            const composerTextarea = document.querySelector('[data-testid="chat-composer-textarea"]');
+            const composerSendBtn = document.querySelector('[data-testid="chat-composer-send-btn"]');
+            let f05ChatMessageSentViaDom = false;
+            const uniqueDomMsg = 'GUI DOM Composer Message ' + Date.now();
+
+            if (composerTextarea && composerSendBtn) {
+              setNativeTextareaValue(composerTextarea, uniqueDomMsg);
+              await new Promise(r => setTimeout(r, 100));
+              composerSendBtn.click();
+              await new Promise(r => setTimeout(r, 800));
+
+              const messages = Array.from(document.querySelectorAll('[data-testid="message-text"]'));
+              f05ChatMessageSentViaDom = messages.some(m => m.innerText.includes(uniqueDomMsg));
+            }
+
+            // 10b. UB-P3-R01-003: Durable Tasks in SQLite WAL & UI DOM Verification
             const taskRes = await window.unionBotAPI.createTask({
               title: 'CAS Byte Fidelity Verification Task',
               status: 'pending',
@@ -1449,20 +1571,34 @@ function createWindow() {
             const tasks = await window.unionBotAPI.listTasks();
             const taskInList = Array.isArray(tasks) && tasks.some(t => t.title === 'CAS Byte Fidelity Verification Task');
 
-            // 10b. Real UI DOM Verification of Tasks & Chat Views
             const tasksNavBtn = document.querySelector('[data-testid="nav-tasks-btn"]') ||
               Array.from(document.querySelectorAll('button')).find(b => b.innerText.includes('Tasks'));
             if (tasksNavBtn) tasksNavBtn.click();
             await new Promise(r => setTimeout(r, 500));
             const hasTasksRendered = Boolean(document.querySelector('.inbox-container') || document.querySelector('.task-item'));
 
-            const chatNavBtn = document.querySelector('[data-testid="nav-chat-btn"]') ||
-              Array.from(document.querySelectorAll('button')).find(b => b.innerText.includes('Collaboration Rooms'));
-            if (chatNavBtn) chatNavBtn.click();
+            // 11. Vector P3-R04-F05 (Form 3): Workspace Export via Real DOM Preferences Modal
+            const prefBtn = document.querySelector('[data-testid="open-preferences-btn"]');
+            if (prefBtn) prefBtn.click();
             await new Promise(r => setTimeout(r, 500));
-            const hasChatRendered = Boolean(document.querySelector('.chat-room') || document.querySelector('[data-testid="chat-room"]'));
 
-            // 11. UB-P3-R01-006: Workspace Export with Uncapped Projects and Tasks
+            const exportJsonBtn = document.querySelector('[data-testid="export-json-btn"]');
+            const exportMdBtn = document.querySelector('[data-testid="export-markdown-btn"]');
+            let f05ExportTriggeredViaDom = false;
+
+            if (exportJsonBtn && exportMdBtn) {
+              exportJsonBtn.click();
+              await new Promise(r => setTimeout(r, 300));
+              exportMdBtn.click();
+              await new Promise(r => setTimeout(r, 300));
+              f05ExportTriggeredViaDom = true;
+            }
+
+            const closePrefBtn = document.querySelector('[data-testid="close-preferences-btn"]');
+            if (closePrefBtn) closePrefBtn.click();
+            await new Promise(r => setTimeout(r, 300));
+
+            // Verify exportWorkspace API directly as well
             const exportRes = await window.unionBotAPI.exportWorkspace();
             const exportSucceeded = exportRes && exportRes.success === true &&
               typeof exportRes.exportMarkdown === 'string' &&
@@ -1478,23 +1614,29 @@ function createWindow() {
               pdfSaved,
               envelopeDispatched,
               historyFound,
+              f01CreationMismatchBlocked,
               tokenCreated,
               tokenInList,
               actionIntentPreserved,
-              tokenRejected,
-              exportSucceeded,
-              pathTraversalBlocked,
-              invalidShaBlocked,
-              projectCreated,
-              projectInList,
-              taskCreated,
-              taskInList,
+              f02ApproveTamperBlocked,
               hasApprovalCards,
               hasVerifiedBadge,
               hasMismatchBadge,
-              tamperedApprovalBlocked,
+              f03ApproveBtnDisabledOnMismatch,
+              tokenRejected,
+              pathTraversalBlocked,
+              invalidShaBlocked,
+              f05ProjectFormCreatedInDom,
+              projectCreated: f05ProjectFormCreatedInDom,
+              projectInList,
+              f05ChatMessageSentViaDom,
+              hasChatRendered: f05ChatMessageSentViaDom,
+              tamperedApprovalBlocked: f03ApproveBtnDisabledOnMismatch,
+              taskCreated,
+              taskInList,
               hasTasksRendered,
-              hasChatRendered,
+              f05ExportTriggeredViaDom,
+              exportSucceeded,
               pngSha256: savePng.attachment.sha256,
               pdfSha256: savePdf.attachment.sha256,
             };
@@ -1507,21 +1649,27 @@ function createWindow() {
         console.log('[P3-E2E] P3-004 PDF attachment saved in CAS store:', p3Result.pdfSaved);
         console.log('[P3-E2E] P3-004 Multi-line envelope dispatched:', p3Result.envelopeDispatched);
         console.log('[P3-E2E] P3-005 Room history with attachments retrieved from SQLite:', p3Result.historyFound);
+        console.log('[P3-E2E] P3-R04-F01 Token creation mismatched digest rejected fail-closed:', p3Result.f01CreationMismatchBlocked);
         console.log('[P3-E2E] P3-007 Approval token created:', p3Result.tokenCreated);
         console.log('[P3-E2E] P3-C01 Approval inbox displays full parameters & digest:', p3Result.tokenInList);
         console.log('[P3-E2E] UB-P3-R02-001 ActionIntent payload preserved:', p3Result.actionIntentPreserved);
+        console.log('[P3-E2E] P3-R04-F02 approveToken rejects tampered DB row fail-closed:', p3Result.f02ApproveTamperBlocked);
         console.log('[P3-E2E] UB-P3-R02-001 Live Web Crypto SHA-256 Verified Match rendered in DOM:', p3Result.hasVerifiedBadge);
         console.log('[P3-E2E] UB-P3-R02-001 Live Web Crypto SHA-256 Tamper Mismatch detected in DOM:', p3Result.hasMismatchBadge);
         console.log('[P3-E2E] UB-P3-R02-001 Tampered Approval Blocked fail-closed in UI:', p3Result.tamperedApprovalBlocked);
-        console.log('[P3-E2E] UB-P3-R02-004 Real UI DOM Tasks View rendered:', p3Result.hasTasksRendered);
-        console.log('[P3-E2E] UB-P3-R02-004 Real UI DOM Chat View rendered:', p3Result.hasChatRendered);
+        console.log('[P3-E2E] P3-R04-F03 UI Approve button strictly disabled on mismatch/tamper:', p3Result.f03ApproveBtnDisabledOnMismatch);
         console.log('[P3-E2E] P3-007 Approval token rejected via inbox:', p3Result.tokenRejected);
         console.log('[P3-E2E] UB-P3-R01-001 Path traversal defense active:', p3Result.pathTraversalBlocked);
         console.log('[P3-E2E] UB-P3-R01-001 Invalid SHA format defense active:', p3Result.invalidShaBlocked);
         console.log('[P3-E2E] UB-P3-R01-002 Project created:', p3Result.projectCreated);
+        console.log('[P3-E2E] P3-R04-F05 Form 1: Project created via real DOM form input:', p3Result.f05ProjectFormCreatedInDom);
         console.log('[P3-E2E] UB-P3-R01-002 Project present in list:', p3Result.projectInList);
+        console.log('[P3-E2E] UB-P3-R02-004 Real UI DOM Chat View rendered:', p3Result.hasChatRendered);
+        console.log('[P3-E2E] P3-R04-F05 Form 2: Chat message sent via real DOM textarea & button:', p3Result.f05ChatMessageSentViaDom);
         console.log('[P3-E2E] UB-P3-R01-003 Durable task created:', p3Result.taskCreated);
         console.log('[P3-E2E] UB-P3-R01-003 Durable task present in list:', p3Result.taskInList);
+        console.log('[P3-E2E] UB-P3-R02-004 Real UI DOM Tasks View rendered:', p3Result.hasTasksRendered);
+        console.log('[P3-E2E] P3-R04-F05 Form 3: Workspace export triggered via Preferences modal DOM:', p3Result.f05ExportTriggeredViaDom);
         console.log('[P3-E2E] Gate P3 Workspace exported to Markdown & JSON:', p3Result.exportSucceeded);
 
         const allPassed =
@@ -1531,26 +1679,29 @@ function createWindow() {
           p3Result.pdfSaved &&
           p3Result.envelopeDispatched &&
           p3Result.historyFound &&
+          p3Result.f01CreationMismatchBlocked &&
           p3Result.tokenCreated &&
           p3Result.tokenInList &&
           p3Result.actionIntentPreserved &&
+          p3Result.f02ApproveTamperBlocked &&
           p3Result.hasApprovalCards &&
           p3Result.hasVerifiedBadge &&
           p3Result.hasMismatchBadge &&
-          p3Result.tamperedApprovalBlocked &&
-          p3Result.hasTasksRendered &&
-          p3Result.hasChatRendered &&
+          p3Result.f03ApproveBtnDisabledOnMismatch &&
           p3Result.tokenRejected &&
-          p3Result.exportSucceeded &&
           p3Result.pathTraversalBlocked &&
           p3Result.invalidShaBlocked &&
-          p3Result.projectCreated &&
+          p3Result.f05ProjectFormCreatedInDom &&
           p3Result.projectInList &&
+          p3Result.f05ChatMessageSentViaDom &&
           p3Result.taskCreated &&
-          p3Result.taskInList;
+          p3Result.taskInList &&
+          p3Result.hasTasksRendered &&
+          p3Result.f05ExportTriggeredViaDom &&
+          p3Result.exportSucceeded;
 
         if (!allPassed) {
-          console.error('[P3-E2E] FAILED: Some P3 checks did not pass');
+          console.error('[P3-E2E] FAILED: One or more P3 R04 checks did not pass');
           app.quit();
           process.exit(1);
         }
@@ -1559,8 +1710,18 @@ function createWindow() {
         fs.mkdirSync(path.dirname(evidencePath), { recursive: true });
         fs.writeFileSync(evidencePath, JSON.stringify({
           timestamp: new Date().toISOString(),
-          environment: 'Real Windows Electron Chromium E2E (Phase P3 Gate R02)',
+          environment: 'Real Windows Electron Chromium E2E (Phase P3 Gate R04)',
           nodeEnv: process.env.NODE_ENV,
+          regressionVectors: {
+            'P3-R04-F01': { creationMismatchBlocked: p3Result.f01CreationMismatchBlocked },
+            'P3-R04-F02': { approveTamperBlocked: p3Result.f02ApproveTamperBlocked },
+            'P3-R04-F03': { approveBtnDisabledOnMismatch: p3Result.f03ApproveBtnDisabledOnMismatch },
+            'P3-R04-F05': {
+              projectFormCreatedInDom: p3Result.f05ProjectFormCreatedInDom,
+              chatMessageSentViaDom: p3Result.f05ChatMessageSentViaDom,
+              exportTriggeredViaDom: p3Result.f05ExportTriggeredViaDom,
+            },
+          },
           results: p3Result,
           allPassed: true,
         }, null, 2));
@@ -1574,7 +1735,6 @@ function createWindow() {
         process.exit(1);
       }
     });
-    return;
   }
 
   // 7l. P3-REOPEN-E2E: Reopen App and verify SQLite & CAS Durability (P3-C03, UB-P3-R01-005)
@@ -1589,7 +1749,7 @@ function createWindow() {
             const roomFound = Array.isArray(rooms) && rooms.some(r => r.id === 'gate-p3-room');
 
             const projs = await window.unionBotAPI.getProjects();
-            const projectFound = Array.isArray(projs) && projs.some(p => p.id === 'proj-gate-p3');
+            const projectFound = Array.isArray(projs) && projs.some(p => p.name === 'Gate P3 GUI Form Project' || p.id === 'proj-gate-p3');
 
             const tasks = await window.unionBotAPI.listTasks();
             const taskFound = Array.isArray(tasks) && tasks.some(t => t.title === 'CAS Byte Fidelity Verification Task');
@@ -2471,6 +2631,39 @@ ipcMain.handle('union-bot:approve-token', async (event, payload) => {
     };
   }
 
+  // P3-R04-F02: Re-compute computeCanonicalDigest(payload) from stored payload_json during approveToken
+  let rawPayload = tokenRecord.payload !== undefined && tokenRecord.payload !== null
+    ? tokenRecord.payload
+    : null;
+  if (rawPayload === null && tokenRecord.payload_json) {
+    try {
+      rawPayload = JSON.parse(tokenRecord.payload_json);
+    } catch (parseErr) {
+      return {
+        success: false,
+        error: `ERR_PAYLOAD_MISMATCH: Malformed stored payload_json: ${parseErr.message} (P3-R04-F02)`,
+      };
+    }
+  }
+
+  if (rawPayload !== null && rawPayload !== undefined) {
+    try {
+      const version = tokenRecord.canonicalization_version || tokenRecord.canonicalizationVersion || 1;
+      const recomputedDigest = computeCanonicalDigest(rawPayload, version);
+      if (storedDigest && recomputedDigest !== storedDigest) {
+        return {
+          success: false,
+          error: `ERR_PAYLOAD_MISMATCH: Stored payload_json does not match stored payload_digest: computed ${recomputedDigest} vs stored ${storedDigest} (P3-R04-F02)`,
+        };
+      }
+    } catch (digestErr) {
+      return {
+        success: false,
+        error: `ERR_PAYLOAD_MISMATCH: Failed to recompute canonical digest from stored payload_json: ${digestErr.message} (P3-R04-F02)`,
+      };
+    }
+  }
+
   // 4. Authentic Native Human Confirmation (UB-P2-R06-001, R07-A01)
   // Renderer-supplied boolean is strictly untrusted and IGNORED as authorization proof.
   const ownerWindow = BrowserWindow.fromWebContents(event.sender);
@@ -2547,9 +2740,30 @@ if (isDedicatedTestHarness) {
     }
     return { success: true, mode };
   });
+
+  ipcMain.handle('union-bot:test-tamper-approval-payload', async (event, payload) => {
+    if (!checkSenderAuthorized(event)) {
+      return { success: false, error: 'Unauthorized IPC sender origin (UB-P2-R01-008)' };
+    }
+    const { tokenId, tamperedPayload } = payload || {};
+    if (!tokenId) return { success: false, error: 'tokenId required' };
+    try {
+      await storage.testTamperApprovalPayload(tokenId, tamperedPayload);
+      return { success: true };
+    } catch (e) {
+      return { success: false, error: e.message };
+    }
+  });
 } else {
   // Production / non-harness mode: fail-closed rejection
   ipcMain.handle('union-bot:test-kill-worker', async () => {
+    return {
+      success: false,
+      error: 'ERR_TEST_IPC_DISABLED: Test IPC channels are strictly disabled in production mode (UB-P2-R06-003)',
+    };
+  });
+
+  ipcMain.handle('union-bot:test-tamper-approval-payload', async () => {
     return {
       success: false,
       error: 'ERR_TEST_IPC_DISABLED: Test IPC channels are strictly disabled in production mode (UB-P2-R06-003)',

@@ -84,6 +84,7 @@ export const CreateRoomModal: React.FC<CreateRoomModalProps> = ({
           </label>
           <input
             type="text"
+            data-testid="room-name-input"
             placeholder="e.g. feature-export, release-qa"
             value={roomName}
             onChange={(e) => setRoomName(e.target.value)}
@@ -105,6 +106,7 @@ export const CreateRoomModal: React.FC<CreateRoomModalProps> = ({
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
             <button
               type="button"
+              data-testid="room-cancel-btn"
               onClick={onClose}
               style={{
                 padding: '6px 14px',
@@ -119,6 +121,7 @@ export const CreateRoomModal: React.FC<CreateRoomModalProps> = ({
             </button>
             <button
               type="submit"
+              data-testid="room-submit-btn"
               disabled={isSubmitting || !roomName.trim()}
               style={{
                 padding: '6px 16px',

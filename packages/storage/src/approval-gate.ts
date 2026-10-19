@@ -21,6 +21,8 @@ export interface CreateTokenParams {
   actionType: string;
   payload: unknown;
   origin: string;
+  tokenId?: string;
+  payloadDigest?: string;
   ttlMs?: number;
   workspaceId?: string;
   roomId?: string;
@@ -64,8 +66,15 @@ export class ApprovalGateManager {
    * Generates a new Approval Token bound to canonical payload digest in status PENDING.
    */
   public createToken(params: CreateTokenParams): ApprovalToken {
-    const tokenId = `appr_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+    const tokenId = params.tokenId || `appr_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
     const payloadDigest = ApprovalGateManager.computePayloadDigest(params.payload);
+    if (params.payloadDigest && params.payloadDigest !== payloadDigest) {
+      throw new UnionBotError({
+        code: 'ERR_PAYLOAD_MISMATCH',
+        message: `Payload does not match supplied payloadDigest: computed ${payloadDigest} vs supplied ${params.payloadDigest}`,
+        details: { expected: payloadDigest, supplied: params.payloadDigest },
+      });
+    }
     const canonicalPayloadJson = canonicalizeJson(params.payload);
     const now = new Date();
     const expiresAt = new Date(now.getTime() + (params.ttlMs || 300000)).toISOString(); // default 5 min
@@ -160,7 +169,7 @@ export class ApprovalGateManager {
     }
 
     const row = this.db
-      .prepare('SELECT token_id, status, expires_at FROM approvals WHERE token_id = ?')
+      .prepare('SELECT token_id, status, expires_at, payload_json, payload_digest, canonicalization_version FROM approvals WHERE token_id = ?')
       .get(tokenId) as any;
 
     if (!row) {
@@ -168,6 +177,37 @@ export class ApprovalGateManager {
         code: 'ERR_UNTRUSTED_ACTION',
         message: `Approval token not found: ${tokenId}`,
         details: { tokenId },
+      });
+    }
+
+    // P3-R04-F02: Re-compute computeCanonicalDigest(payload) from stored payload_json during approveToken
+    if (row.payload_json) {
+      try {
+        const parsed = JSON.parse(row.payload_json);
+        const canonVersion = row.canonicalization_version || CANONICALIZATION_VERSION;
+        const recomputedDigest = ApprovalGateManager.computePayloadDigest(parsed, canonVersion);
+        if (row.payload_digest && recomputedDigest !== row.payload_digest) {
+          throw new UnionBotError({
+            code: 'ERR_PAYLOAD_MISMATCH',
+            message: `Stored payload_json does not match stored payload_digest for token ${tokenId}. Tampered database record detected (P3-R04-F02).`,
+            details: { tokenId, storedDigest: row.payload_digest, recomputedDigest },
+          });
+        }
+      } catch (err: any) {
+        if (err instanceof UnionBotError) throw err;
+        throw new UnionBotError({
+          code: 'ERR_PAYLOAD_MISMATCH',
+          message: `Failed to verify stored payload_json for token ${tokenId}: ${err.message}`,
+        });
+      }
+    }
+
+    const expectedDigest = decisionContext?.expectedDigest as string | undefined;
+    if (expectedDigest && row.payload_digest && expectedDigest !== row.payload_digest) {
+      throw new UnionBotError({
+        code: 'ERR_PAYLOAD_MISMATCH',
+        message: `Expected digest mismatch for token ${tokenId}: expected ${expectedDigest} vs stored ${row.payload_digest}`,
+        details: { expected: expectedDigest, stored: row.payload_digest },
       });
     }
 

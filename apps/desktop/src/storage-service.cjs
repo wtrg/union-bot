@@ -9,7 +9,7 @@ const cp = require('node:child_process');
 const path = require('node:path');
 const fs = require('node:fs');
 const { EventEmitter } = require('node:events');
-const { computeEnvelopeDigest, canonicalizeJson } = require('./canonical-json.cjs');
+const { computeEnvelopeDigest, canonicalizeJson, computeCanonicalDigest } = require('./canonical-json.cjs');
 const { runSchemaMigrations } = require('./schema-definition.cjs');
 
 function findSystemNode() {
@@ -367,6 +367,14 @@ class StorageServiceClient extends EventEmitter {
         }
         return Promise.resolve({ success: false, tokenId: args.tokenId });
       }
+      case 'testTamperApprovalPayload': {
+        const token = this.fallbackApprovals.get(args.tokenId);
+        if (token) {
+          token.payload = args.tamperedPayload;
+          token.payload_json = JSON.stringify(args.tamperedPayload);
+        }
+        return Promise.resolve({ success: true });
+      }
       case 'getIdempotencyRecord': {
         return Promise.resolve(null);
       }
@@ -384,15 +392,35 @@ class StorageServiceClient extends EventEmitter {
       }
       case 'createApprovalToken': {
         const token = args.token;
+        let payloadObj = token.payload;
         let payloadJson = token.payloadJson || token.payload_json || null;
-        if (!payloadJson && token.payload) {
-          payloadJson = canonicalizeJson(token.payload);
+        if (payloadObj !== undefined && payloadObj !== null) {
+          const computedDigest = computeCanonicalDigest(payloadObj, token.canonicalizationVersion || 1);
+          const suppliedDigest = token.payloadDigest || token.payload_digest;
+          if (suppliedDigest && suppliedDigest !== computedDigest) {
+            return Promise.reject(new Error(`ERR_PAYLOAD_MISMATCH: Payload does not match supplied payloadDigest (P3-R04-F01)`));
+          }
+          if (!token.payloadDigest) token.payloadDigest = computedDigest;
+          if (!payloadJson) payloadJson = canonicalizeJson(payloadObj);
+        } else if (payloadJson) {
+          try {
+            const parsed = JSON.parse(payloadJson);
+            const computedDigest = computeCanonicalDigest(parsed, token.canonicalizationVersion || 1);
+            const suppliedDigest = token.payloadDigest || token.payload_digest;
+            if (suppliedDigest && suppliedDigest !== computedDigest) {
+              return Promise.reject(new Error(`ERR_PAYLOAD_MISMATCH: Payload does not match supplied payloadDigest (P3-R04-F01)`));
+            }
+            if (!token.payloadDigest) token.payloadDigest = computedDigest;
+            payloadObj = parsed;
+          } catch (err) {
+            if (err.message && err.message.includes('ERR_PAYLOAD_MISMATCH')) return Promise.reject(err);
+          }
         }
         const record = {
           ...token,
           status: 'PENDING',
           payload_json: payloadJson,
-          payload: token.payload || (payloadJson ? JSON.parse(payloadJson) : null),
+          payload: payloadObj || (payloadJson ? JSON.parse(payloadJson) : null),
         };
         this.fallbackApprovals.set(token.tokenId, record);
         return Promise.resolve(record);
@@ -407,6 +435,18 @@ class StorageServiceClient extends EventEmitter {
       case 'approveToken': {
         const t = this.fallbackApprovals.get(args.tokenId);
         if (!t) return Promise.reject(new Error(`ERR_UNTRUSTED_ACTION: Approval token not found: ${args.tokenId}`));
+        if (t.payload_json) {
+          try {
+            const parsed = JSON.parse(t.payload_json);
+            const computed = computeCanonicalDigest(parsed, t.canonicalizationVersion || 1);
+            const stored = t.payloadDigest || t.payload_digest;
+            if (stored && computed !== stored) {
+              return Promise.reject(new Error(`ERR_PAYLOAD_MISMATCH: Stored payload_json does not match stored payload_digest (P3-R04-F02)`));
+            }
+          } catch (err) {
+            if (err.message && err.message.includes('ERR_PAYLOAD_MISMATCH')) return Promise.reject(err);
+          }
+        }
         t.status = 'APPROVED';
         return Promise.resolve({ success: true, tokenId: args.tokenId });
       }
@@ -579,6 +619,14 @@ class StorageServiceClient extends EventEmitter {
               WHERE token_id = ? AND status = 'PENDING'
             `).run(nowIso, reason || 'User rejected', tokenId);
             return Promise.resolve({ success: res.changes > 0, tokenId, rejectedAt: nowIso });
+          }
+          case 'testTamperApprovalPayload': {
+            const tamperedJson = typeof args.tamperedPayload === 'string'
+              ? args.tamperedPayload
+              : JSON.stringify(args.tamperedPayload);
+            this.nativeDb.prepare('UPDATE approvals SET payload_json = ? WHERE token_id = ?')
+              .run(tamperedJson, args.tokenId);
+            return Promise.resolve({ success: true });
           }
           case 'getIdempotencyRecord': {
             const row = this.nativeDb.prepare('SELECT key, target_id, status, payload_digest, response_json, dispatch_prepared, created_at, expires_at FROM idempotency_keys WHERE key = ?').get(args.key);
@@ -772,10 +820,33 @@ class StorageServiceClient extends EventEmitter {
             const token = args.token;
             const now = new Date().toISOString();
             const expiresAt = token.expiresAt || new Date(Date.now() + 3600000).toISOString();
+            let payloadObj = token.payload;
             let payloadJson = token.payloadJson || token.payload_json || null;
-            if (!payloadJson && token.payload) {
-              payloadJson = canonicalizeJson(token.payload);
+
+            // P3-R04-F01: Backend rejects token creation when payload does not match supplied digest
+            if (payloadObj !== undefined && payloadObj !== null) {
+              const computedDigest = computeCanonicalDigest(payloadObj, token.canonicalizationVersion || 1);
+              const suppliedDigest = token.payloadDigest || token.payload_digest;
+              if (suppliedDigest && suppliedDigest !== computedDigest) {
+                return Promise.reject(new Error(`ERR_PAYLOAD_MISMATCH: Payload does not match supplied payloadDigest: computed ${computedDigest} vs supplied ${suppliedDigest} (P3-R04-F01)`));
+              }
+              if (!token.payloadDigest) token.payloadDigest = computedDigest;
+              if (!payloadJson) payloadJson = canonicalizeJson(payloadObj);
+            } else if (payloadJson) {
+              try {
+                const parsed = JSON.parse(payloadJson);
+                const computedDigest = computeCanonicalDigest(parsed, token.canonicalizationVersion || 1);
+                const suppliedDigest = token.payloadDigest || token.payload_digest;
+                if (suppliedDigest && suppliedDigest !== computedDigest) {
+                  return Promise.reject(new Error(`ERR_PAYLOAD_MISMATCH: Payload does not match supplied payloadDigest: computed ${computedDigest} vs supplied ${suppliedDigest} (P3-R04-F01)`));
+                }
+                if (!token.payloadDigest) token.payloadDigest = computedDigest;
+                payloadObj = parsed;
+              } catch (err) {
+                if (err.message && err.message.includes('ERR_PAYLOAD_MISMATCH')) return Promise.reject(err);
+              }
             }
+
             this.nativeDb.prepare(`
               INSERT INTO approvals (
                 token_id, action_type, payload_digest, canonicalization_version, origin,
@@ -803,7 +874,7 @@ class StorageServiceClient extends EventEmitter {
               createdAt: now,
               expiresAt,
               payload_json: payloadJson,
-              payload: token.payload || (payloadJson ? JSON.parse(payloadJson) : null),
+              payload: payloadObj || (payloadJson ? JSON.parse(payloadJson) : null),
             });
           }
           case 'getApprovalToken': {
@@ -825,9 +896,22 @@ class StorageServiceClient extends EventEmitter {
             if (!approver.role || !allowedRoles.includes(approver.role)) {
               return Promise.reject(new Error(`ERR_UNTRUSTED_SENDER: Role '${approver.role}' is not authorized to approve tokens (UB-P2-R03-02)`));
             }
-            const row = this.nativeDb.prepare('SELECT status, expires_at FROM approvals WHERE token_id = ?').get(tokenId);
+            const row = this.nativeDb.prepare('SELECT status, expires_at, payload_json, payload_digest, canonicalization_version FROM approvals WHERE token_id = ?').get(tokenId);
             if (!row) {
               return Promise.reject(new Error(`ERR_UNTRUSTED_ACTION: Approval token not found: ${tokenId}`));
+            }
+            // P3-R04-F02: Recompute canonical digest from stored payload_json and reject if mismatched
+            if (row.payload_json) {
+              try {
+                const parsed = JSON.parse(row.payload_json);
+                const computed = computeCanonicalDigest(parsed, row.canonicalization_version || 1);
+                if (row.payload_digest && computed !== row.payload_digest) {
+                  return Promise.reject(new Error(`ERR_PAYLOAD_MISMATCH: Stored payload_json does not match stored payload_digest for token ${tokenId} (P3-R04-F02)`));
+                }
+              } catch (parseErr) {
+                if (parseErr.message && parseErr.message.includes('ERR_PAYLOAD_MISMATCH')) return Promise.reject(parseErr);
+                return Promise.reject(new Error(`ERR_PAYLOAD_MISMATCH: Failed to parse stored payload_json: ${parseErr.message}`));
+              }
             }
             if (new Date(row.expires_at).getTime() < Date.now()) {
               this.nativeDb.prepare("UPDATE approvals SET status = 'EXPIRED' WHERE token_id = ?").run(tokenId);
@@ -1052,6 +1136,10 @@ class StorageServiceClient extends EventEmitter {
 
   async validateAndConsumeApproval(tokenId, actionType, payloadDigest, options) {
     return this.sendRequest('validateAndConsumeApproval', { tokenId, actionType, payloadDigest, options });
+  }
+
+  async testTamperApprovalPayload(tokenId, tamperedPayload) {
+    return this.sendRequest('testTamperApprovalPayload', { tokenId, tamperedPayload });
   }
 
   async closeAsync() {
