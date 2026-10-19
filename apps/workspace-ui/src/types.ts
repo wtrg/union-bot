@@ -69,6 +69,7 @@ export interface ApprovalTokenRecord {
   payload_json?: string;
   payload?: any;
   origin: string;
+  canonicalization_version?: number;
   workspace_id?: string;
   room_id?: string;
   actor_id?: string;

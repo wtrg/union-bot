@@ -211,6 +211,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       {/* Navigation Sections (P3-006, P3-007) */}
       <div style={{ padding: '8px 12px', display: 'flex', flexDirection: 'column', gap: 4, borderBottom: '1px solid var(--border-color)' }}>
         <button
+          data-testid="nav-chat-btn"
           onClick={() => onSelectView('chat')}
           style={{
             display: 'flex',
@@ -231,6 +232,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </button>
 
         <button
+          data-testid="nav-approvals-btn"
           onClick={() => onSelectView('approvals')}
           style={{
             display: 'flex',
@@ -258,6 +260,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </button>
 
         <button
+          data-testid="nav-tasks-btn"
           onClick={() => onSelectView('tasks')}
           style={{
             display: 'flex',

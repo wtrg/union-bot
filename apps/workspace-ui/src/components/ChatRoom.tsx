@@ -197,6 +197,8 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ roomName, envelopes, onSendM
 
   return (
     <div
+      className="chat-room"
+      data-testid="chat-room"
       style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}

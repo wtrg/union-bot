@@ -1385,9 +1385,40 @@ function createWindow() {
             });
             const tokenCreated = createTokenRes && createTokenRes.success === true;
 
+            // 6b. Create a TAMPERED Approval Token to prove client-side Web Crypto detects mismatches! (UB-P3-R02-001, UB-P3-R02-004)
+            const tamperedTokenId = 'tok_tampered_' + Date.now();
+            await window.unionBotAPI.createApprovalToken({
+              tokenId: tamperedTokenId,
+              actionType: 'format_disk_simulated',
+              payload: { action: 'format_disk_simulated', path: '/tampered/exploit', destructive: true },
+              payloadDigest: digestRes.digest, // deliberately mismatched: digest is for /local/test, not /tampered/exploit!
+              origin: 'Tamper Test Runner',
+              workspaceId: 'gate-p3-ws',
+              roomId: 'gate-p3-room',
+              actorId: 'evaluator',
+              recipient: 'local-storage',
+              status: 'PENDING',
+              expiresInMs: 60000,
+            });
+
             const approvals = await window.unionBotAPI.listApprovals({ limit: 20 });
             const tokenInList = Array.isArray(approvals) && approvals.some(t => t.token_id === tokenId && t.payload_digest === digestRes.digest);
             const actionIntentPreserved = Array.isArray(approvals) && approvals.some(t => t.token_id === tokenId && t.payload && t.payload.path === '/local/test');
+
+            // 6c. Real UI DOM Verification of Approval Inbox with Client-Side Web Crypto SHA-256 (UB-P3-R02-001, UB-P3-R02-004)
+            const approvalsNavBtn = Array.from(document.querySelectorAll('button')).find(b => b.innerText.includes('Approval Inbox'));
+            if (approvalsNavBtn) approvalsNavBtn.click();
+            await new Promise(r => setTimeout(r, 800));
+
+            const approvalCards = document.querySelectorAll('[data-testid="approval-card"]');
+            const hasApprovalCards = approvalCards.length >= 2;
+            const verifiedBadge = document.querySelector('[data-testid="sha-verified-badge"]');
+            const hasVerifiedBadge = Boolean(verifiedBadge && verifiedBadge.innerText.includes('Verified Match'));
+            const mismatchBadge = document.querySelector('[data-testid="sha-mismatch-badge"]');
+            const hasMismatchBadge = Boolean(mismatchBadge && mismatchBadge.innerText.includes('TAMPER DETECTED'));
+            const tamperedCard = document.querySelector('[data-token-id="' + tamperedTokenId + '"]');
+            const tamperedApproveBtn = tamperedCard ? tamperedCard.querySelector('[data-testid="approval-approve-btn"]') : null;
+            const tamperedApprovalBlocked = Boolean(tamperedApproveBtn && tamperedApproveBtn.disabled === true);
 
             // 7. Test Rejection from Approval Inbox (P3-007)
             const rejectRes = await window.unionBotAPI.rejectApproval(tokenId, 'Operator rejected from Approval Inbox');
@@ -1418,6 +1449,19 @@ function createWindow() {
             const tasks = await window.unionBotAPI.listTasks();
             const taskInList = Array.isArray(tasks) && tasks.some(t => t.title === 'CAS Byte Fidelity Verification Task');
 
+            // 10b. Real UI DOM Verification of Tasks & Chat Views
+            const tasksNavBtn = document.querySelector('[data-testid="nav-tasks-btn"]') ||
+              Array.from(document.querySelectorAll('button')).find(b => b.innerText.includes('Tasks'));
+            if (tasksNavBtn) tasksNavBtn.click();
+            await new Promise(r => setTimeout(r, 500));
+            const hasTasksRendered = Boolean(document.querySelector('.inbox-container') || document.querySelector('.task-item'));
+
+            const chatNavBtn = document.querySelector('[data-testid="nav-chat-btn"]') ||
+              Array.from(document.querySelectorAll('button')).find(b => b.innerText.includes('Collaboration Rooms'));
+            if (chatNavBtn) chatNavBtn.click();
+            await new Promise(r => setTimeout(r, 500));
+            const hasChatRendered = Boolean(document.querySelector('.chat-room') || document.querySelector('[data-testid="chat-room"]'));
+
             // 11. UB-P3-R01-006: Workspace Export with Uncapped Projects and Tasks
             const exportRes = await window.unionBotAPI.exportWorkspace();
             const exportSucceeded = exportRes && exportRes.success === true &&
@@ -1445,6 +1489,12 @@ function createWindow() {
               projectInList,
               taskCreated,
               taskInList,
+              hasApprovalCards,
+              hasVerifiedBadge,
+              hasMismatchBadge,
+              tamperedApprovalBlocked,
+              hasTasksRendered,
+              hasChatRendered,
               pngSha256: savePng.attachment.sha256,
               pdfSha256: savePdf.attachment.sha256,
             };
@@ -1460,6 +1510,11 @@ function createWindow() {
         console.log('[P3-E2E] P3-007 Approval token created:', p3Result.tokenCreated);
         console.log('[P3-E2E] P3-C01 Approval inbox displays full parameters & digest:', p3Result.tokenInList);
         console.log('[P3-E2E] UB-P3-R02-001 ActionIntent payload preserved:', p3Result.actionIntentPreserved);
+        console.log('[P3-E2E] UB-P3-R02-001 Live Web Crypto SHA-256 Verified Match rendered in DOM:', p3Result.hasVerifiedBadge);
+        console.log('[P3-E2E] UB-P3-R02-001 Live Web Crypto SHA-256 Tamper Mismatch detected in DOM:', p3Result.hasMismatchBadge);
+        console.log('[P3-E2E] UB-P3-R02-001 Tampered Approval Blocked fail-closed in UI:', p3Result.tamperedApprovalBlocked);
+        console.log('[P3-E2E] UB-P3-R02-004 Real UI DOM Tasks View rendered:', p3Result.hasTasksRendered);
+        console.log('[P3-E2E] UB-P3-R02-004 Real UI DOM Chat View rendered:', p3Result.hasChatRendered);
         console.log('[P3-E2E] P3-007 Approval token rejected via inbox:', p3Result.tokenRejected);
         console.log('[P3-E2E] UB-P3-R01-001 Path traversal defense active:', p3Result.pathTraversalBlocked);
         console.log('[P3-E2E] UB-P3-R01-001 Invalid SHA format defense active:', p3Result.invalidShaBlocked);
@@ -1479,6 +1534,12 @@ function createWindow() {
           p3Result.tokenCreated &&
           p3Result.tokenInList &&
           p3Result.actionIntentPreserved &&
+          p3Result.hasApprovalCards &&
+          p3Result.hasVerifiedBadge &&
+          p3Result.hasMismatchBadge &&
+          p3Result.tamperedApprovalBlocked &&
+          p3Result.hasTasksRendered &&
+          p3Result.hasChatRendered &&
           p3Result.tokenRejected &&
           p3Result.exportSucceeded &&
           p3Result.pathTraversalBlocked &&
@@ -1555,10 +1616,25 @@ function createWindow() {
             const approvals = await window.unionBotAPI.listApprovals({ limit: 20 });
             const tokenSurvived = Array.isArray(approvals) && approvals.some(t => t.action_type === 'format_disk_simulated');
             const actionIntentSurvived = Array.isArray(approvals) && approvals.some(t => t.payload && t.payload.path === '/local/test');
-
-            // UB-P3-R02-004: Verify real UI elements rendered in DOM
+            // UB-P3-R02-004: Verify real UI elements rendered in DOM across restart
             const rootRendered = Boolean(document.querySelector('#root'));
-            const uiOperational = rootRendered;
+            const sidebarRendered = Boolean(document.querySelector('.sidebar'));
+            const chatRendered = Boolean(document.querySelector('.chat-room') || document.querySelector('[data-testid="chat-room"]'));
+
+            // Switch to Approval Inbox to verify live Web Crypto verification survives restart
+            const reopenApprovalsBtn = document.querySelector('[data-testid="nav-approvals-btn"]') ||
+              Array.from(document.querySelectorAll('button')).find(b => b.innerText.includes('Approval Inbox'));
+            if (reopenApprovalsBtn) reopenApprovalsBtn.click();
+            await new Promise(r => setTimeout(r, 800));
+            const reopenApprovalCards = document.querySelectorAll('[data-testid="approval-card"]').length > 0;
+            const reopenVerifiedBadge = Boolean(document.querySelector('[data-testid="sha-verified-badge"]'));
+
+            // Switch back to chat to verify navigation operates smoothly
+            const reopenChatBtn = document.querySelector('[data-testid="nav-chat-btn"]');
+            if (reopenChatBtn) reopenChatBtn.click();
+            await new Promise(r => setTimeout(r, 400));
+
+            const uiOperational = rootRendered && sidebarRendered && chatRendered && reopenApprovalCards && reopenVerifiedBadge;
 
             return {
               roomFound,

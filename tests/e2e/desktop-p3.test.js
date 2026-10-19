@@ -114,7 +114,7 @@ describe('Union Bot Phase P3 Gate: Windows Real Electron E2E Suite', () => {
         NODE_ENV: 'test',
         UNION_BOT_E2E_HARNESS: '1',
       },
-      timeoutMs: 20000,
+      timeoutMs: 35000,
     });
 
     assert.equal(code, 0, `Electron process should exit with code 0. Stderr: ${stderr}\nStdout: ${stdout}`);
@@ -141,6 +141,18 @@ describe('Union Bot Phase P3 Gate: Windows Real Electron E2E Suite', () => {
     assert.equal(evidence.results.taskCreated, true);
     assert.equal(evidence.results.taskInList, true);
     assert.equal(evidence.results.actionIntentPreserved, true);
+    assert.equal(evidence.results.hasApprovalCards, true);
+    assert.equal(evidence.results.hasVerifiedBadge, true);
+    assert.equal(evidence.results.hasMismatchBadge, true);
+    assert.equal(evidence.results.tamperedApprovalBlocked, true);
+    assert.equal(evidence.results.hasTasksRendered, true);
+    assert.equal(evidence.results.hasChatRendered, true);
+
+    assert.match(stdout, /\[P3-E2E\] UB-P3-R02-001 Live Web Crypto SHA-256 Verified Match rendered in DOM: true/);
+    assert.match(stdout, /\[P3-E2E\] UB-P3-R02-001 Live Web Crypto SHA-256 Tamper Mismatch detected in DOM: true/);
+    assert.match(stdout, /\[P3-E2E\] UB-P3-R02-001 Tampered Approval Blocked fail-closed in UI: true/);
+    assert.match(stdout, /\[P3-E2E\] UB-P3-R02-004 Real UI DOM Tasks View rendered: true/);
+    assert.match(stdout, /\[P3-E2E\] UB-P3-R02-004 Real UI DOM Chat View rendered: true/);
   });
 
   it('P3-REOPEN-E2E: Real Electron close & reopen verifies SQLite & CAS attachment durability (P3-C03) (PASS)', async () => {
@@ -154,7 +166,7 @@ describe('Union Bot Phase P3 Gate: Windows Real Electron E2E Suite', () => {
         NODE_ENV: 'test',
         UNION_BOT_E2E_HARNESS: '1',
       },
-      timeoutMs: 20000,
+      timeoutMs: 35000,
     });
 
     assert.equal(code, 0, `Electron process should exit with code 0 on reopen. Stderr: ${stderr}\nStdout: ${stdout}`);

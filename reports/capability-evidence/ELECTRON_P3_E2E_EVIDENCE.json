@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-10-19T10:35:00.868Z",
+  "timestamp": "2026-10-19T10:54:21.191Z",
   "environment": "Real Windows Electron Chromium E2E (Phase P3 Gate R02)",
   "nodeEnv": "test",
   "results": {
@@ -20,6 +20,12 @@
     "projectInList": true,
     "taskCreated": true,
     "taskInList": true,
+    "hasApprovalCards": true,
+    "hasVerifiedBadge": true,
+    "hasMismatchBadge": true,
+    "tamperedApprovalBlocked": true,
+    "hasTasksRendered": true,
+    "hasChatRendered": true,
     "pngSha256": "6b7fa434f92a8b80aab02d9bf1a12e49ffcae424e4013a1c4f68b67e3d2bbcd0",
     "pdfSha256": "9ce0d7fd8b15d3de88f1acfb49e0b61540a6be10a62f519c243d9cd4fd9db4e1"
   },
