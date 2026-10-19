@@ -173,6 +173,8 @@ ALL VERIFICATION CHECKS PASSED (Typecheck + Build + 171 Tests [146 TS + 16 Py + 
 
 ## 5. Artifact Links & Commit Reference
 
+- **Git Commit SHA:** `8110cbac41ad4b249e06b650406d82fffca17f7c`
+- **GitHub Branch:** `main` (pushed to `https://github.com/wtrg/union-bot`)
 - `packages/storage/tests/r07_security_hardening.test.ts`: [r07_security_hardening.test.ts](file:///d:/WORK-TEAM/packages/storage/tests/r07_security_hardening.test.ts)
 - `tests/e2e/desktop-r07.test.js`: [desktop-r07.test.js](file:///d:/WORK-TEAM/tests/e2e/desktop-r07.test.js)
 - `reports/capability-evidence/ELECTRON_R07_E2E_EVIDENCE.json`: [ELECTRON_R07_E2E_EVIDENCE.json](file:///d:/WORK-TEAM/reports/capability-evidence/ELECTRON_R07_E2E_EVIDENCE.json)
