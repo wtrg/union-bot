@@ -1,15 +1,15 @@
 {
-  "timestamp": "2026-10-19T13:47:23.504Z",
+  "timestamp": "2026-10-19T14:11:41.388Z",
   "environment": "Real Windows Electron Chromium E2E (Phase P4 Embedded AI Browser)",
   "nodeEnv": "test",
   "costGuardEgressBlocked": true,
   "regressionVectors": {
+    "P4-R03-A01": true,
+    "P4-R03-A02": true,
+    "P4-R03-A03": true,
+    "P4-R03-A04": true,
     "P4-R02-T01": true,
-    "P4-R02-T02": true,
-    "P4-R02-T03": true,
-    "P4-R02-T04": true,
-    "P4-R02-T05": true,
-    "P4-R02-T06": true
+    "P4-R02-T05": true
   },
   "results": {
     "tabsInitialized": true,
@@ -27,7 +27,9 @@
     "t01CreateTabMaliciousDenied": true,
     "t01CreateTabPrivateDenied": true,
     "t03LoopbackPrivateBlocked": true,
+    "a01OAuthControlledAndHttpDenied": true,
     "t04ProviderAuthAllowed": true,
+    "a04CrossBoundaryPartitionUnpolluted": true,
     "searchQueryResolved": true,
     "selectGeminiTab": true,
     "activeTabSwitched": true,
@@ -44,10 +46,12 @@
     "shareSenderIsUserManual": true,
     "sharePersistedInHistory": true,
     "t05BackgroundShareProvenanceCorrect": true,
+    "a02StorageFaultInjectedFailClosed": true,
     "t06FailClosedStorageHandled": true,
     "domPanelContainerRendered": true,
     "domTabStripRendered": true,
     "domProviderTabsRendered": true,
+    "a03AddTabCreatedSearchTab": true,
     "domToolbarAndMountRendered": true
   },
   "allPassed": true

@@ -204,6 +204,9 @@ if (process.env.UNION_BOT_E2E_HARNESS === '1' && process.env.NODE_ENV === 'test'
   api.testTriggerTabCrash = async (tabId) => {
     return ipcRenderer.invoke('union-bot:test-trigger-tab-crash', tabId);
   };
+  api.testSetStorageShareMode = async (mode) => {
+    return ipcRenderer.invoke('union-bot:test-set-storage-share-mode', mode);
+  };
 }
 
 contextBridge.exposeInMainWorld('unionBotAPI', api);

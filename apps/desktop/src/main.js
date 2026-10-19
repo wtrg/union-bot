@@ -2126,12 +2126,42 @@ function createWindow() {
               metadataNav?.success === false
             );
 
-            // UB-P4-R01-002 / P4-R02-T04: Provider auth origin allowed
-            const geminiAuthNav = await window.unionBotAPI.browserNavigate({
+            // UB-P4-R02-001 / P4-R03-A01: Provider auth HTTPS allowed, insecure HTTP strictly DENIED
+            const geminiAuthHttpNav = await window.unionBotAPI.browserNavigate({
+              tabId: geminiTab?.id,
+              url: 'http://accounts.google.com/signin',
+            });
+            const geminiAuthHttpsNav = await window.unionBotAPI.browserNavigate({
               tabId: geminiTab?.id,
               url: 'https://accounts.google.com/signin',
             });
-            results.t04ProviderAuthAllowed = Boolean(geminiAuthNav && geminiAuthNav.success === true);
+            results.a01OAuthControlledAndHttpDenied = Boolean(
+              geminiAuthHttpNav && geminiAuthHttpNav.success === false &&
+              geminiAuthHttpsNav && geminiAuthHttpsNav.success === true
+            );
+            results.t04ProviderAuthAllowed = results.a01OAuthControlledAndHttpDenied;
+
+            // UB-P4-R02-001 / P4-R03-A04: Cross-boundary navigation routes to search partition, leaving provider tab unpolluted
+            const initialChatgptTabState = (await window.unionBotAPI.browserGetState()).tabs.find(t => t.id === chatgptTab?.id);
+            const crossNavRes = await window.unionBotAPI.browserNavigate({
+              tabId: chatgptTab?.id,
+              url: 'https://news.ycombinator.com/',
+            });
+            const stateAfterCrossNav = await window.unionBotAPI.browserGetState();
+            const postNavChatgptTab = stateAfterCrossNav.tabs.find(t => t.id === chatgptTab?.id);
+            const routedSearchTab = stateAfterCrossNav.tabs.find(t => t.id === stateAfterCrossNav.activeTabId);
+            results.a04CrossBoundaryPartitionUnpolluted = Boolean(
+              crossNavRes &&
+              crossNavRes.success === true &&
+              crossNavRes.routedToSearchTab === true &&
+              postNavChatgptTab &&
+              postNavChatgptTab.url === initialChatgptTabState?.url &&
+              postNavChatgptTab.partition === 'persist:mcb-web-chatgpt' &&
+              routedSearchTab &&
+              routedSearchTab.providerId === 'search' &&
+              routedSearchTab.partition === 'persist:mcb-web-search' &&
+              routedSearchTab.url.includes('news.ycombinator.com')
+            );
 
             const validSearchNav = await window.unionBotAPI.browserNavigate({
               tabId: chatgptTab?.id,
@@ -2218,13 +2248,51 @@ function createWindow() {
               bgShareRes.envelope?.sender?.provider === 'chatgpt'
             );
 
-            // UB-P4-R01-003 / P4-R02-T06: Fail-closed on missing/invalid tab
-            const badShareRes = await window.unionBotAPI.browserShareSelection({
-              tabId: 'invalid_tab_does_not_exist_9999',
-              selectedText: 'Should fail closed',
+            // UB-P4-R02-002 / P4-R03-A02: Strict SQLite storage write fault injection (throw and return_false)
+            // Test Case 1: Storage throws exception
+            await window.unionBotAPI.testSetStorageShareMode('throw');
+            const throwShareRes = await window.unionBotAPI.browserShareSelection({
+              tabId: chatgptTab?.id,
+              selectedText: 'Fault injection test: Throw exception',
               roomId: 'p4-verification-room',
             });
-            results.t06FailClosedStorageHandled = Boolean(badShareRes && badShareRes.success === false);
+            const throwFailedClosed = Boolean(
+              throwShareRes &&
+              throwShareRes.success === false &&
+              throwShareRes.error &&
+              throwShareRes.error.includes('STORAGE_WRITE_FAILED')
+            );
+
+            // Test Case 2: Storage returns { success: false }
+            await window.unionBotAPI.testSetStorageShareMode('return_false');
+            const returnFalseShareRes = await window.unionBotAPI.browserShareSelection({
+              tabId: chatgptTab?.id,
+              selectedText: 'Fault injection test: Return false',
+              roomId: 'p4-verification-room',
+            });
+            const returnFalseFailedClosed = Boolean(
+              returnFalseShareRes &&
+              returnFalseShareRes.success === false &&
+              returnFalseShareRes.error &&
+              returnFalseShareRes.error.includes('STORAGE_WRITE_FAILED')
+            );
+
+            // Reset back to normal storage mode
+            await window.unionBotAPI.testSetStorageShareMode('normal');
+
+            // Verify neither fault-injected snippet leaked into room history or caused phantom envelopes
+            await new Promise(r => setTimeout(r, 200));
+            const historyAfterFaults = await window.unionBotAPI.getRoomHistory('p4-verification-room');
+            const noPhantomThrow = !historyAfterFaults.some(e => e.parts?.some(p => p.text?.includes('Throw exception')));
+            const noPhantomReturnFalse = !historyAfterFaults.some(e => e.parts?.some(p => p.text?.includes('Return false')));
+
+            results.a02StorageFaultInjectedFailClosed = Boolean(
+              throwFailedClosed &&
+              returnFalseFailedClosed &&
+              noPhantomThrow &&
+              noPhantomReturnFalse
+            );
+            results.t06FailClosedStorageHandled = results.a02StorageFaultInjectedFailClosed;
 
             // 8. DOM Controls Verification (P4-011)
             const toggleDockBtn = document.querySelector('[data-testid="toggle-browser-btn"]');
@@ -2245,6 +2313,22 @@ function createWindow() {
             const chatgptTabDom = document.querySelector('[data-testid="browser-tab-chatgpt"]');
             const geminiTabDom = document.querySelector('[data-testid="browser-tab-gemini"]');
             results.domProviderTabsRendered = Boolean(chatgptTabDom && geminiTabDom);
+
+            // UB-P4-R02-003 / P4-R03-A03: Click "+ Add Tab" DOM button -> Creates Search tab with default DuckDuckGo URL
+            const addTabBtn = document.querySelector('[data-testid="browser-add-tab-btn"]');
+            let addTabSuccess = false;
+            if (addTabBtn) {
+              addTabBtn.click();
+              await new Promise(r => setTimeout(r, 400));
+              const stateAfterAdd = await window.unionBotAPI.browserGetState();
+              const addedSearchTab = stateAfterAdd.tabs.find(t => t.providerId === 'search' && t.url === 'https://duckduckgo.com/');
+              addTabSuccess = Boolean(
+                addedSearchTab &&
+                addedSearchTab.partition === 'persist:mcb-web-search' &&
+                addedSearchTab.url === 'https://duckduckgo.com/'
+              );
+            }
+            results.a03AddTabCreatedSearchTab = addTabSuccess;
 
             const addressInput = document.querySelector('[data-testid="browser-address-input"]');
             const shareBtnDom = document.querySelector('[data-testid="browser-share-btn"]');
@@ -2285,9 +2369,11 @@ function createWindow() {
         console.log('[P4-E2E] P4-004 Valid query resolved to DuckDuckGo search:', p4Result.searchQueryResolved);
         console.log('[P4-E2E] P4-R02-T01 CreateTab malicious/private denied fail-closed:', p4Result.t01CreateTabMaliciousDenied && p4Result.t01CreateTabPrivateDenied);
         console.log('[P4-E2E] P4-R02-T03 Comprehensive loopback/metadata blocked:', p4Result.t03LoopbackPrivateBlocked);
-        console.log('[P4-E2E] P4-R02-T04 Provider auth origin allowed in-session:', p4Result.t04ProviderAuthAllowed);
+        console.log('[P4-E2E] P4-R03-A01 OAuth popup & HTTPS controlled, HTTP denied:', p4Result.a01OAuthControlledAndHttpDenied);
+        console.log('[P4-E2E] P4-R03-A02 SQLite storage fault injection (throw & return_false) fail-closed:', p4Result.a02StorageFaultInjectedFailClosed);
+        console.log('[P4-E2E] P4-R03-A03 DOM Add Tab created default search tab:', p4Result.a03AddTabCreatedSearchTab);
+        console.log('[P4-E2E] P4-R03-A04 Cross-boundary navigation leaves provider partition clean:', p4Result.a04CrossBoundaryPartitionUnpolluted);
         console.log('[P4-E2E] P4-R02-T05 Inactive tab share preserves exact provenance:', p4Result.t05BackgroundShareProvenanceCorrect);
-        console.log('[P4-E2E] P4-R02-T06 Missing/invalid tab share fails closed:', p4Result.t06FailClosedStorageHandled);
         console.log('[P4-E2E] P4-006 Cost Guard blocks paid APIs on browser session:', costGuardEgressBlocked);
         console.log('[P4-E2E] P4-007 Tab switching to Gemini succeeded:', p4Result.selectGeminiTab && p4Result.activeTabSwitched);
         console.log('[P4-E2E] P4-007 Zoom controls applied (zoom-in / zoom-reset):', p4Result.zoomInApplied && p4Result.zoomResetApplied);
@@ -2315,9 +2401,11 @@ function createWindow() {
           p4Result.t01CreateTabMaliciousDenied &&
           p4Result.t01CreateTabPrivateDenied &&
           p4Result.t03LoopbackPrivateBlocked &&
-          p4Result.t04ProviderAuthAllowed &&
+          p4Result.a01OAuthControlledAndHttpDenied &&
+          p4Result.a02StorageFaultInjectedFailClosed &&
+          p4Result.a03AddTabCreatedSearchTab &&
+          p4Result.a04CrossBoundaryPartitionUnpolluted &&
           p4Result.t05BackgroundShareProvenanceCorrect &&
-          p4Result.t06FailClosedStorageHandled &&
           costGuardEgressBlocked &&
           p4Result.selectGeminiTab &&
           p4Result.activeTabSwitched &&
@@ -2343,12 +2431,12 @@ function createWindow() {
         }
 
         const regressionVectors = {
+          'P4-R03-A01': Boolean(p4Result.a01OAuthControlledAndHttpDenied),
+          'P4-R03-A02': Boolean(p4Result.a02StorageFaultInjectedFailClosed),
+          'P4-R03-A03': Boolean(p4Result.a03AddTabCreatedSearchTab),
+          'P4-R03-A04': Boolean(p4Result.a04CrossBoundaryPartitionUnpolluted),
           'P4-R02-T01': Boolean(p4Result.t01CreateTabMaliciousDenied && p4Result.t01CreateTabPrivateDenied),
-          'P4-R02-T02': Boolean(p4Result.searchQueryResolved),
-          'P4-R02-T03': Boolean(p4Result.t03LoopbackPrivateBlocked),
-          'P4-R02-T04': Boolean(p4Result.t04ProviderAuthAllowed),
           'P4-R02-T05': Boolean(p4Result.t05BackgroundShareProvenanceCorrect),
-          'P4-R02-T06': Boolean(p4Result.t06FailClosedStorageHandled),
         };
 
         const evidencePath = path.resolve(__dirname, '../../../reports/capability-evidence/ELECTRON_P4_E2E_EVIDENCE.json');
@@ -3492,8 +3580,24 @@ if (isDedicatedTestHarness) {
     }
   });
 
+  ipcMain.handle('union-bot:test-set-storage-share-mode', async (event, mode) => {
+    if (!checkSenderAuthorized(event)) {
+      return { success: false, error: 'Unauthorized IPC sender origin (UB-P2-R01-008)' };
+    }
+    if (!browserService) return { success: false, error: 'No browserService' };
+    browserService._testStorageFaultMode = mode;
+    return { success: true };
+  });
+
 } else {
   // Production / non-harness mode: fail-closed rejection
+  ipcMain.handle('union-bot:test-set-storage-share-mode', async () => {
+    return {
+      success: false,
+      error: 'ERR_TEST_IPC_DISABLED: Test IPC channels are strictly disabled in production mode (UB-P2-R06-003)',
+    };
+  });
+
   ipcMain.handle('union-bot:test-kill-worker', async () => {
     return {
       success: false,

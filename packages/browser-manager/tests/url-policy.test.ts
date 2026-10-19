@@ -109,6 +109,11 @@ describe('Browser URL Policy & Navigation Safety (P4-002 / P4-005)', () => {
     // Search allows any valid public web page
     assert.equal(isAllowedForProvider('search', 'https://wikipedia.org/wiki/Main_Page'), true);
     assert.equal(isAllowedForProvider('search', 'http://127.0.0.1/'), false); // blocked by loopback
+
+    // UB-P4-R02-001 / P4-R03-A01: Rejection of insecure HTTP on auth origins
+    assert.equal(isAllowedForProvider('chatgpt', 'http://accounts.google.com/signin'), false);
+    assert.equal(isAllowedForProvider('gemini', 'http://accounts.google.com/'), false);
+    assert.equal(isAllowedForProvider('claude', 'http://appleid.apple.com/'), false);
   });
 
 

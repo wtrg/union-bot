@@ -161,13 +161,13 @@ describe('Union Bot Phase P4 Gate: Windows Real Electron E2E Suite', () => {
     assert.equal(evidence.results.domProviderTabsRendered, true);
     assert.equal(evidence.results.domToolbarAndMountRendered, true);
 
-    // Assert Round R02 regression vectors (UB-P4-R01-001, UB-P4-R01-002, UB-P4-R01-003)
+    // Assert Round R03 regression vectors (P4-R03-A01 .. A04)
+    assert.equal(evidence.regressionVectors['P4-R03-A01'], true, 'P4-R03-A01: OAuth HTTPS allowed, HTTP denied');
+    assert.equal(evidence.regressionVectors['P4-R03-A02'], true, 'P4-R03-A02: SQLite fault injection fail closed');
+    assert.equal(evidence.regressionVectors['P4-R03-A03'], true, 'P4-R03-A03: Add Tab created search tab with default URL');
+    assert.equal(evidence.regressionVectors['P4-R03-A04'], true, 'P4-R03-A04: Cross-boundary navigation leaves provider partition unpolluted');
     assert.equal(evidence.regressionVectors['P4-R02-T01'], true, 'P4-R02-T01: Malicious/private createTab must be denied');
-    assert.equal(evidence.regressionVectors['P4-R02-T02'], true, 'P4-R02-T02: Search navigation must preserve provider boundary');
-    assert.equal(evidence.regressionVectors['P4-R02-T03'], true, 'P4-R02-T03: Loopback/metadata must be blocked');
-    assert.equal(evidence.regressionVectors['P4-R02-T04'], true, 'P4-R02-T04: Provider auth origin must be allowed');
     assert.equal(evidence.regressionVectors['P4-R02-T05'], true, 'P4-R02-T05: Inactive tab share provenance must be exact');
-    assert.equal(evidence.regressionVectors['P4-R02-T06'], true, 'P4-R02-T06: Invalid tab share must fail closed');
 
     // Verify stdout log messages
 

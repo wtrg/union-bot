@@ -154,6 +154,27 @@ class BrowserService {
       return { action: 'deny' };
     });
 
+    // UB-P4-R02-001 / P4-R03-A01: Protect allowed popup windows with identical navigation and redirect policies
+    view.webContents.on('did-create-window', (childWindow) => {
+      childWindow.webContents.on('will-navigate', (event, targetUrl) => {
+        const navCheck = validateUrl(targetUrl);
+        if (!navCheck.valid || !isAllowedForProvider(tab.providerId, targetUrl)) {
+          console.warn(`[BrowserPopup] Navigation in child window blocked or cross-boundary: ${targetUrl}`);
+          event.preventDefault();
+          safeOpenExternal(targetUrl, shell);
+        }
+      });
+
+      childWindow.webContents.on('will-redirect', (event, targetUrl) => {
+        const redirCheck = validateUrl(targetUrl);
+        if (!redirCheck.valid || !isAllowedForProvider(tab.providerId, targetUrl)) {
+          console.warn(`[BrowserPopup] Redirect in child window blocked or cross-boundary: ${targetUrl}`);
+          event.preventDefault();
+          safeOpenExternal(targetUrl, shell);
+        }
+      });
+    });
+
     // Main frame navigation guard (P4-R02-T02)
     view.webContents.on('will-navigate', (event, targetUrl) => {
       const navCheck = validateUrl(targetUrl);
@@ -307,23 +328,33 @@ class BrowserService {
   }
 
   createTab(providerId, url, title) {
-    const check = validateUrl(url);
+    // UB-P4-R02-003 / P4-R03-A03: If URL is omitted, resolve defaultUrl from PROVIDER_REGISTRY first
+    let candidateUrl = url;
+    if (!candidateUrl || (typeof candidateUrl === 'string' && candidateUrl.trim().length === 0)) {
+      const reg = PROVIDER_REGISTRY[providerId];
+      if (reg && reg.defaultUrl) {
+        candidateUrl = reg.defaultUrl;
+      }
+    }
+
+    const check = validateUrl(candidateUrl);
     if (!check.valid) {
-      console.warn(`[BrowserService] createTab rejected invalid URL (${check.reason}): ${url}`);
+      console.warn(`[BrowserService] createTab rejected invalid URL (${check.reason}): ${candidateUrl}`);
       return { success: false, error: check.reason };
     }
 
     if (providerId !== 'search' && providerId !== 'custom') {
       if (!isAllowedForProvider(providerId, check.sanitizedUrl)) {
-        console.warn(`[BrowserService] createTab rejected cross-provider URL: ${url}`);
+        console.warn(`[BrowserService] createTab rejected cross-provider URL: ${candidateUrl}`);
         return {
           success: false,
-          error: `Target URL violates provider boundary for '${providerId}': ${url}`,
+          error: `Target URL violates provider boundary for '${providerId}': ${candidateUrl}`,
         };
       }
     }
 
-    const tab = this.stateManager.createTab(providerId, check.sanitizedUrl, title);
+    const tabTitle = title || PROVIDER_REGISTRY[providerId]?.name || 'New Tab';
+    const tab = this.stateManager.createTab(providerId, check.sanitizedUrl, tabTitle);
     try {
       this._createViewForTab(tab);
     } catch (err) {
@@ -378,6 +409,20 @@ class BrowserService {
     const resolution = resolveAddressBarInput(inputUrl);
     if (!resolution.valid || !resolution.sanitizedUrl) {
       return { success: false, error: resolution.reason || 'Invalid navigation URL' };
+    }
+
+    // UB-P4-R02-001 / P4-R03-A01: Insecure HTTP auth on provider tab is strictly denied fail-closed
+    const allowedAuthOrigins = PROVIDER_AUTH_ORIGINS[tab.providerId] || [];
+    const targetParsed = new URL(resolution.sanitizedUrl);
+    const targetHost = targetParsed.hostname.toLowerCase();
+    const isAuthHost = allowedAuthOrigins.some(origin => {
+      const oHost = new URL(origin).hostname.toLowerCase();
+      return targetHost === oHost || targetHost.endsWith(`.${oHost}`);
+    });
+
+    if (isAuthHost && targetParsed.protocol !== 'https:') {
+      console.warn(`[BrowserService] Insecure HTTP auth navigation blocked: ${resolution.sanitizedUrl}`);
+      return { success: false, error: 'Insecure HTTP authentication is prohibited (UB-P4-R02-001)' };
     }
 
     // P4-R02-T02: Enforce provider boundary in navigate
@@ -452,10 +497,23 @@ class BrowserService {
         const tab = this.stateManager.tabs.get(targetTabId);
         if (tab && tab.crashed) {
           this.stateManager.updateTab(targetTabId, { crashed: false, lastError: null });
+          if (typeof view.webContents.isCrashed === 'function' && view.webContents.isCrashed()) {
+            try {
+              if (this._isViewAttached(view)) {
+                this.mainWindow.contentView.removeChildView(view);
+              }
+              view.webContents.close();
+            } catch {}
+            this.views.delete(targetTabId);
+            this._createViewForTab(tab);
+            this.updateLayout();
+          }
+        } else {
+          try {
+            view.webContents.reload();
+          } catch {}
         }
-        try {
-          view.webContents.reload();
-        } catch {}
+        this._notifyRenderer();
       } else if (action === 'stop') {
         view.webContents.stop();
       } else if (action.startsWith('zoom-')) {
@@ -555,12 +613,25 @@ class BrowserService {
     }
 
     try {
-      if (typeof this.storageService.insertEnvelope === 'function') {
-        await this.storageService.insertEnvelope(envelope);
+      if (this._testStorageFaultMode === 'throw') {
+        throw new Error('ERR_TEST_INJECTED_STORAGE_FAULT: Simulated SQLite write exception');
+      }
+
+      let insertRes = null;
+      if (this._testStorageFaultMode === 'return_false') {
+        insertRes = { success: false, error: 'ERR_TEST_INJECTED_STORAGE_FAILURE: Simulated SQLite write rejection' };
+      } else if (typeof this.storageService.insertEnvelope === 'function') {
+        insertRes = await this.storageService.insertEnvelope(envelope);
       } else if (typeof this.storageService.dispatchEnvelope === 'function') {
-        await this.storageService.dispatchEnvelope(envelope);
+        insertRes = await this.storageService.dispatchEnvelope(envelope);
       } else {
         return { success: false, error: 'No compatible storage insert method found' };
+      }
+
+      // UB-P4-R02-002 / P4-R03-A02: Fail-closed if storage returns explicit { success: false }
+      if (insertRes && insertRes.success === false) {
+        console.error('[BrowserService] Storage returned failure for shared envelope:', insertRes.error);
+        return { success: false, error: `STORAGE_WRITE_FAILED: ${insertRes.error || 'Write rejected'}` };
       }
 
       if (this.mainWindow && !this.mainWindow.isDestroyed()) {

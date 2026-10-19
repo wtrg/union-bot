@@ -259,6 +259,10 @@ export function isAllowedForProvider(providerId: string, targetUrl: string): boo
 
   try {
     const targetParsed = new URL(validation.sanitizedUrl);
+    // UB-P4-R02-001 / P4-R03-A01: Strict HTTPS enforcement for provider & auth origins (HTTP is rejected)
+    if (targetParsed.protocol !== 'https:') {
+      return false;
+    }
     const targetHost = targetParsed.hostname.toLowerCase();
 
     for (const origin of allowedOrigins) {

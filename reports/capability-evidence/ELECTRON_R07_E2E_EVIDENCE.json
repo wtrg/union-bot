@@ -1,7 +1,7 @@
 {
   "suite": "UNION_BOT_ELECTRON_R07_E2E_EVIDENCE",
-  "timestamp": "2026-10-19T13:48:00.010Z",
-  "userDataDir": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\ub-test-r07-e2e-1792417679349",
+  "timestamp": "2026-10-19T14:12:22.765Z",
+  "userDataDir": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\ub-test-r07-e2e-1792419141918",
   "vectors": {
     "R07-A01": {
       "unconfirmedDenied": true,
