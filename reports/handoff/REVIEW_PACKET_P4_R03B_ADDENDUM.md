@@ -2,6 +2,7 @@
 **Project:** Union Bot (0đ Zero-Cost Desktop AI Workspace on Windows 11)  
 **Date:** 2026-10-19  
 **Gate:** Phase P4 Gate (Embedded Chromium, Browser Isolation & Native AI Provider Surfaces) — Round R03B Addendum  
+**Commit:** `2ce2a0b` (origin/main)  
 **Roles:** Implementation Lead (Antigravity), Verification Lead (Codex), Technical Leader (ChatGPT Web)  
 **Status:** **SUBMITTED FOR FORMAL GATE REVIEW APPROVAL — TARGET: `APPROVED — GO_P5 — P4_ACCEPTED`**
 
