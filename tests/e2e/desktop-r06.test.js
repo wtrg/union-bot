@@ -43,7 +43,12 @@ const electronPath = findElectronExecutable();
 function runElectronProcess(args, { timeoutMs = 25000, onStdout, env = {} } = {}) {
   return new Promise((resolve, reject) => {
     assert.ok(electronPath, 'Electron executable must be found');
-    const childEnv = { ...process.env, ...env };
+    const childEnv = {
+      ...process.env,
+      UNION_BOT_E2E_HARNESS: '1',
+      NODE_ENV: 'test',
+      ...env,
+    };
     delete childEnv.NODE_TEST_CONTEXT;
 
     const child = spawn(electronPath, [mainScript, ...args], {

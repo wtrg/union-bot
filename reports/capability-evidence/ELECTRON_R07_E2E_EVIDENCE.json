@@ -1,0 +1,22 @@
+{
+  "suite": "UNION_BOT_ELECTRON_R07_E2E_EVIDENCE",
+  "timestamp": "2026-10-19T08:28:17.266Z",
+  "userDataDir": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\ub-test-r07-e2e-1792398496529",
+  "vectors": {
+    "R07-A01": {
+      "unconfirmedDenied": true,
+      "remainedPending": true,
+      "dispatchPendingBlocked": true,
+      "staleDenied": true,
+      "confirmedApproved": true,
+      "tokenBecameApproved": true,
+      "dispatchSucceeded": true,
+      "tokenConsumed": true,
+      "digestMatched": true
+    },
+    "R07-A03": {
+      "harnessAllowed": true
+    }
+  },
+  "result": "PASS"
+}

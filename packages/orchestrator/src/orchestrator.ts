@@ -158,6 +158,10 @@ export class Orchestrator {
       };
     }
 
+    let pendingApprovalRequirement:
+      | { tokenId: string; tool: string; semanticInput: unknown; options: any }
+      | undefined;
+
     for (const part of envelope.parts) {
       if (part.kind === 'action') {
         // C02: Untrusted action parts from renderer cannot self-claim status='completed' or run tools unapproved
@@ -209,35 +213,26 @@ export class Orchestrator {
             };
           }
 
-          // 4c. Validate and consume approval token ONLY after admission policy passes (R04-G12)
-
-          // Validate approval token with ApprovalGateManager (UB-P2-R02-003, R03-E06, R04-G12, R04-C02)
+          // 4c. Prepare approval requirement for atomic consumption inside transaction (UB-P2-R06-C01, R07-A04)
           if (this.approvalGate) {
-            try {
-              const semanticInput = extractActionSemanticInput(part.input);
-              this.approvalGate.validateAndConsume(part.approvalTokenId, part.tool, semanticInput, {
+            const semanticInput = extractActionSemanticInput(part.input);
+            pendingApprovalRequirement = {
+              tokenId: part.approvalTokenId,
+              tool: part.tool,
+              semanticInput,
+              options: {
                 workspaceId: (envelope as any).workspaceId,
                 roomId: envelope.roomId,
                 actorId: envelope.sender.id,
                 recipient: envelope.recipient.id,
-              });
-            } catch (err: any) {
-              if (this.idempotency) {
-                this.idempotency.fail(envelope.id, { error: err.message });
-              }
-              return {
-                success: false,
-                envelopeId: envelope.id,
-                roomId: envelope.roomId,
-                error: `Approval token rejection: ${err.message}`,
-              };
-            }
+              },
+            };
           }
         }
       }
     }
 
-    // 5. Durable Event Persistence & Idempotency in a Single Atomic Transaction (UB-P2-R01-004, P2-T05)
+    // 5. Durable Event Persistence & Idempotency in a Single Atomic Transaction (UB-P2-R01-004, P2-T05, R07-A04)
     const result: DispatchResult = {
       success: true,
       envelopeId: envelope.id,
@@ -248,15 +243,25 @@ export class Orchestrator {
     if (this.storage) {
       try {
         this.storage.transaction(() => {
-          // 5a. Insert envelope into durable table
+          // 5a. Consume approval atomically within the transaction (UB-P2-R06-C01, R07-A04)
+          if (pendingApprovalRequirement && this.approvalGate) {
+            this.approvalGate.validateAndConsume(
+              pendingApprovalRequirement.tokenId,
+              pendingApprovalRequirement.tool,
+              pendingApprovalRequirement.semanticInput,
+              pendingApprovalRequirement.options
+            );
+          }
+
+          // 5b. Insert envelope into durable table
           this.storage!.insertEnvelope(envelope);
 
-          // 5b. Append event to event journal
+          // 5c. Append event to event journal
           if (this.eventStore) {
             this.eventStore.appendEvent(`room:${envelope.roomId}`, 'ENVELOPE_RECORDED', envelope as any);
           }
 
-          // 5c. Complete idempotency key atomically
+          // 5d. Complete idempotency key atomically
           if (this.idempotency) {
             this.idempotency.complete(envelope.id, result as any);
           }
@@ -267,14 +272,38 @@ export class Orchestrator {
             this.idempotency.fail(envelope.id, { error: txErr.message });
           } catch {}
         }
+        const isApprovalErr =
+          txErr?.name === 'UnionBotError' ||
+          txErr?.code?.startsWith?.('ERR_APPROVAL_') ||
+          txErr?.code === 'ERR_UNTRUSTED_ACTION';
         return {
           success: false,
           envelopeId: envelope.id,
           roomId: envelope.roomId,
-          error: `Durable transaction aborted: ${txErr.message}`,
+          error: isApprovalErr ? `Approval token rejection: ${txErr.message}` : `Durable transaction aborted: ${txErr.message}`,
         };
       }
     } else {
+      if (pendingApprovalRequirement && this.approvalGate) {
+        try {
+          this.approvalGate.validateAndConsume(
+            pendingApprovalRequirement.tokenId,
+            pendingApprovalRequirement.tool,
+            pendingApprovalRequirement.semanticInput,
+            pendingApprovalRequirement.options
+          );
+        } catch (err: any) {
+          if (this.idempotency) {
+            this.idempotency.fail(envelope.id, { error: err.message });
+          }
+          return {
+            success: false,
+            envelopeId: envelope.id,
+            roomId: envelope.roomId,
+            error: `Approval token rejection: ${err.message}`,
+          };
+        }
+      }
       if (this.eventStore) {
         this.eventStore.appendEvent(`room:${envelope.roomId}`, 'ENVELOPE_RECORDED', envelope as any);
       }

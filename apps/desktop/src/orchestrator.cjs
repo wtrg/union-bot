@@ -282,6 +282,7 @@ const UnionBotErrorCodeSchema = z.enum([
   'ERR_MIGRATION_FAILED',
   'ERR_MIGRATION_TAMPERED',
   'ERR_IDEMPOTENCY_CONFLICT',
+  'ERR_IDEMPOTENCY_UNVERIFIED',
   'ERR_RECONCILIATION_REQUIRED',
   'ERR_NETWORK_DISCONNECTED',
   'ERR_TIMEOUT',
@@ -506,20 +507,46 @@ class Orchestrator {
       try {
         const existingRecord = await this.storage.getIdempotencyRecord(envelope.id);
         if (existingRecord) {
+          // UB-P2-R06-002 / R07-A02: Replay of COMPLETED records requires valid non-null digest equality
+          if (existingRecord.status === 'COMPLETED') {
+            const hasValidStoredDigest =
+              typeof existingRecord.payloadDigest === 'string' &&
+              /^[a-f0-9]{64}$/i.test(existingRecord.payloadDigest);
+
+            if (!hasValidStoredDigest) {
+              return {
+                success: false,
+                envelopeId: envelope.id,
+                roomId: envelope.roomId,
+                code: 'ERR_IDEMPOTENCY_UNVERIFIED',
+                error: `ERR_IDEMPOTENCY_UNVERIFIED: Existing idempotency record has null or malformed payload digest; cannot verify replay authenticity without external reconciliation (UB-P2-R06-002)`,
+              };
+            }
+
+            if (existingRecord.payloadDigest !== incomingDigest) {
+              return {
+                success: false,
+                envelopeId: envelope.id,
+                roomId: envelope.roomId,
+                code: 'ERR_PAYLOAD_MISMATCH',
+                error: `ERR_PAYLOAD_MISMATCH: Idempotency key '${envelope.id}' reused with mismatched payload. Replay with different content is forbidden.`,
+              };
+            }
+
+            return {
+              success: true,
+              envelopeId: envelope.id,
+              roomId: envelope.roomId,
+              deduplicated: true,
+            };
+          }
+
           if (existingRecord.payloadDigest && existingRecord.payloadDigest !== incomingDigest) {
             return {
               success: false,
               envelopeId: envelope.id,
               roomId: envelope.roomId,
               error: `ERR_PAYLOAD_MISMATCH: Idempotency key '${envelope.id}' reused with mismatched payload. Replay with different content is forbidden.`,
-            };
-          }
-          if (existingRecord.status === 'COMPLETED') {
-            return {
-              success: true,
-              envelopeId: envelope.id,
-              roomId: envelope.roomId,
-              deduplicated: true,
             };
           }
           if (existingRecord.status === 'UNKNOWN_NEEDS_RECONCILIATION') {

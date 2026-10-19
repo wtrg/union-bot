@@ -67,6 +67,7 @@ export function isCodeRetryable(code: UnionBotErrorCode): boolean {
     case 'ERR_MIGRATION_FAILED':
     case 'ERR_MIGRATION_TAMPERED':
     case 'ERR_IDEMPOTENCY_CONFLICT':
+    case 'ERR_IDEMPOTENCY_UNVERIFIED':
     case 'ERR_RECONCILIATION_REQUIRED':
     default:
       return false;

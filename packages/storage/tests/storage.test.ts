@@ -149,21 +149,23 @@ describe('Union Bot Storage Engine & Event Sourcing (P2)', () => {
   it('enforces idempotency and outbox pattern (P2-005, C01, C05)', () => {
     const idemp = new IdempotencyManager(storage);
 
-    // 1. Acquire new key
-    const acq1 = idemp.acquire('idemp_key_001', 'req_1');
+    const testDigest = 'a'.repeat(64);
+
+    // 1. Acquire new key with canonical payload digest (UB-P2-R06-002)
+    const acq1 = idemp.acquire('idemp_key_001', 'req_1', { payloadDigest: testDigest });
     assert.equal(acq1.isDuplicate, false);
 
     // 2. Concurrent pending acquire throws conflict
     assert.throws(
-      () => idemp.acquire('idemp_key_001', 'req_1'),
+      () => idemp.acquire('idemp_key_001', 'req_1', { payloadDigest: testDigest }),
       (err: any) => err instanceof UnionBotError && err.code === 'ERR_IDEMPOTENCY_CONFLICT'
     );
 
     // 3. Mark completed
     idemp.complete('idemp_key_001', { success: true, processedEnvelopeId: 'env_999' });
 
-    // 4. Re-acquire returns cached response
-    const acq2 = idemp.acquire('idemp_key_001', 'req_1');
+    // 4. Re-acquire returns cached response when matching valid digest is supplied
+    const acq2 = idemp.acquire('idemp_key_001', 'req_1', { payloadDigest: testDigest });
     assert.equal(acq2.isDuplicate, true);
     assert.equal(acq2.cachedResponse?.processedEnvelopeId, 'env_999');
 

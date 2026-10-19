@@ -73,6 +73,34 @@ export class IdempotencyManager {
       .get(key) as { status: string; response_json: string | null; payload_digest: string | null; expires_at: string; dispatch_prepared?: number } | undefined;
 
     if (existing) {
+      // UB-P2-R06-002 / R07-A02: Replay of COMPLETED records requires valid non-null digest equality
+      const hasValidStoredDigest =
+        typeof existing.payload_digest === 'string' &&
+        /^[a-f0-9]{64}$/i.test(existing.payload_digest);
+
+      if (existing.status === 'COMPLETED') {
+        if (!hasValidStoredDigest) {
+          throw new UnionBotError({
+            code: 'ERR_IDEMPOTENCY_UNVERIFIED',
+            message: `Existing idempotency record has null or malformed payload digest; cannot verify replay authenticity without external reconciliation (UB-P2-R06-002)`,
+            details: { key, targetId },
+          });
+        }
+        if (options.payloadDigest && existing.payload_digest !== options.payloadDigest) {
+          throw new UnionBotError({
+            code: 'ERR_PAYLOAD_MISMATCH',
+            message: `Idempotency key '${key}' reused with mismatched payload digest. Replay with different parameters is forbidden.`,
+            details: { key, expectedDigest: existing.payload_digest, actualDigest: options.payloadDigest },
+          });
+        }
+        if (existing.response_json) {
+          return {
+            isDuplicate: true,
+            cachedResponse: JSON.parse(existing.response_json),
+          };
+        }
+      }
+
       // Check payload digest mismatch (UB-P2-R01-005, P2-T07, UB-P2-R03-03)
       if (options.payloadDigest) {
         if (!existing.payload_digest || existing.payload_digest !== options.payloadDigest) {
@@ -82,13 +110,6 @@ export class IdempotencyManager {
             details: { key, expectedDigest: existing.payload_digest, actualDigest: options.payloadDigest },
           });
         }
-      }
-
-      if (existing.status === 'COMPLETED' && existing.response_json) {
-        return {
-          isDuplicate: true,
-          cachedResponse: JSON.parse(existing.response_json),
-        };
       }
 
       // Never auto-reissue an unresolved external dispatch (P2-T06, P2-T07, UB-P2-R02-005, R03-E09, R03-E10)

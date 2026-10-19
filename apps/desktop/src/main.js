@@ -10,7 +10,7 @@
  * - Automated GUI smoke test mode (--smoke)
  */
 
-const { app, BrowserWindow, ipcMain, session, shell } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, session, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { pathToFileURL } = require('url');
@@ -911,7 +911,10 @@ function createWindow() {
             const unconfirmedRes = await window.unionBotAPI.approveToken(tokenB03);
             const tokenAfterUnconfirmed = await window.unionBotAPI.getApprovalToken(tokenB03);
 
-            // Call approveToken with confirmedByUser: true -> must succeed
+            // Call approveToken with affirmative native confirmation -> must succeed
+            if (window.unionBotAPI.testSetConfirmationMode) {
+              await window.unionBotAPI.testSetConfirmationMode('auto-approve');
+            }
             const confirmedRes = await window.unionBotAPI.approveToken(tokenB03, { confirmedByUser: true });
             const tokenAfterConfirmed = await window.unionBotAPI.getApprovalToken(tokenB03);
 
@@ -1039,6 +1042,264 @@ function createWindow() {
         process.exit(0);
       } catch (err) {
         console.error('[R06-E2E] Exception:', err);
+        app.quit();
+        process.exit(1);
+      }
+    });
+    return;
+  }
+
+  // 7i. R07-E2E: Full Windows Electron Verification for Round R07 (R07-A01, R07-A03)
+  if (process.argv.includes('--r07-e2e')) {
+    mainWindow.webContents.once('did-finish-load', async () => {
+      try {
+        console.log('[R07-E2E] Running Real Windows Electron R07 Verification...');
+
+        const r07Result = await mainWindow.webContents.executeJavaScript(`
+          (async () => {
+            // =========================================================================
+            // Vector R07-A01: Human Consent / Native Confirmation Controller
+            // =========================================================================
+            const actionInput = { tool: 'write_file', estimatedCost: 0, path: 'r07_live.txt', content: 'live test' };
+            const { digest: actionDigest } = await window.unionBotAPI.computeActionDigest(actionInput);
+
+            const tokenA01 = 'tok_r07_a01_live';
+            await window.unionBotAPI.createApprovalToken({
+              tokenId: tokenA01,
+              actionType: 'write_file',
+              payloadDigest: actionDigest,
+              origin: 'desktop_ui',
+              roomId: 'orchestration',
+              workspaceId: 'ws_r07',
+              recipient: 'agent_coder',
+            });
+
+            // 1. Untrusted renderer claims confirmedByUser: true without native confirmation -> MUST REJECT
+            const unconfirmedRes = await window.unionBotAPI.approveToken(tokenA01, { confirmedByUser: true });
+            const tokenAfterUnconfirmed = await window.unionBotAPI.getApprovalToken(tokenA01);
+
+            // Attempting dispatch with pending token -> must be rejected
+            const pendingEnv = {
+              id: 'env_r07_pending_01',
+              traceId: 'trc_r07_pend1',
+              roomId: 'orchestration',
+              workspaceId: 'ws_r07',
+              timestamp: Date.now(),
+              sender: { kind: 'user', id: 'usr_r07', name: 'R07 User', role: 'USER' },
+              recipient: { kind: 'agent', id: 'agent_coder' },
+              fidelity: 'L0_RAW_TEXT',
+              parts: [{
+                kind: 'action',
+                tool: 'write_file',
+                callId: 'call_r07_pend1',
+                status: 'requested',
+                input: actionInput,
+                approvalTokenId: tokenA01,
+              }],
+            };
+            const dispatchWithPending = await window.unionBotAPI.dispatchEnvelope(pendingEnv);
+
+            // 2. Changed / stale intent: expectedDigest mismatch -> MUST REJECT
+            const staleExpectedDigest = '0'.repeat(64);
+            const staleRes = await window.unionBotAPI.approveToken(tokenA01, { expectedDigest: staleExpectedDigest });
+            const tokenAfterStale = await window.unionBotAPI.getApprovalToken(tokenA01);
+
+            // 3. Affirmative Native Confirmation via Test Delegate
+            if (window.unionBotAPI.testSetConfirmationMode) {
+              await window.unionBotAPI.testSetConfirmationMode('auto-approve');
+            }
+            const confirmedRes = await window.unionBotAPI.approveToken(tokenA01, { expectedDigest: actionDigest });
+            const tokenAfterConfirmed = await window.unionBotAPI.getApprovalToken(tokenA01);
+
+            // 4. Dispatch with approved token -> must succeed and consume token
+            const approvedEnv = {
+              id: 'env_r07_approved_01',
+              traceId: 'trc_r07_app1',
+              roomId: 'orchestration',
+              workspaceId: 'ws_r07',
+              timestamp: Date.now(),
+              sender: { kind: 'user', id: 'usr_r07', name: 'R07 User', role: 'USER' },
+              recipient: { kind: 'agent', id: 'agent_coder' },
+              fidelity: 'L0_RAW_TEXT',
+              parts: [{
+                kind: 'action',
+                tool: 'write_file',
+                callId: 'call_r07_app1',
+                status: 'requested',
+                input: actionInput,
+                approvalTokenId: tokenA01,
+              }],
+            };
+            const dispatchWithApproved = await window.unionBotAPI.dispatchEnvelope(approvedEnv);
+            const tokenAfterConsumed = await window.unionBotAPI.getApprovalToken(tokenA01);
+
+            // =========================================================================
+            // Vector R07-A03: Test IPC Isolation in Dedicated Test Harness
+            // =========================================================================
+            const testKillSupportedInHarness = typeof window.unionBotAPI.testKillWorker === 'function';
+
+            return {
+              unconfirmedRes,
+              tokenAfterUnconfirmed,
+              dispatchWithPending,
+              staleRes,
+              tokenAfterStale,
+              confirmedRes,
+              tokenAfterConfirmed,
+              dispatchWithApproved,
+              tokenAfterConsumed,
+              testKillSupportedInHarness,
+              actionDigest,
+            };
+          })()
+        `);
+
+        const a01UnconfirmedDenied = r07Result.unconfirmedRes?.success === false &&
+          String(r07Result.unconfirmedRes?.error).includes('ERR_HUMAN_CONFIRMATION_REQUIRED');
+        const a01RemainedPending = r07Result.tokenAfterUnconfirmed?.status === 'PENDING';
+        const a01DispatchPendingBlocked = r07Result.dispatchWithPending?.success === false;
+
+        const a01StaleDenied = r07Result.staleRes?.success === false &&
+          String(r07Result.staleRes?.error).includes('ERR_PAYLOAD_MISMATCH');
+        const a01StaleRemainedPending = r07Result.tokenAfterStale?.status === 'PENDING';
+
+        const a01ConfirmedApproved = r07Result.confirmedRes?.success === true;
+        const a01TokenBecameApproved = r07Result.tokenAfterConfirmed?.status === 'APPROVED';
+
+        const a01DispatchSucceeded = r07Result.dispatchWithApproved?.success === true;
+        const a01TokenConsumed = r07Result.tokenAfterConsumed?.status === 'CONSUMED';
+        const a01DigestMatched = (r07Result.tokenAfterConsumed?.payload_digest || r07Result.tokenAfterConsumed?.payloadDigest) === r07Result.actionDigest;
+
+        const a03HarnessAllowed = r07Result.testKillSupportedInHarness === true;
+
+        console.log('[R07-E2E] R07-A01 Unconfirmed approval rejected:', a01UnconfirmedDenied);
+        console.log('[R07-E2E] R07-A01 Token remained PENDING:', a01RemainedPending);
+        console.log('[R07-E2E] R07-A01 Dispatch with pending token blocked:', a01DispatchPendingBlocked);
+        console.log('[R07-E2E] R07-A01 Stale intent rejected (digest mismatch):', a01StaleDenied);
+        console.log('[R07-E2E] R07-A01 Stale token remained PENDING:', a01StaleRemainedPending);
+        console.log('[R07-E2E] R07-A01 Confirmed approval succeeded:', a01ConfirmedApproved);
+        console.log('[R07-E2E] R07-A01 Token became APPROVED:', a01TokenBecameApproved);
+        console.log('[R07-E2E] R07-A01 Dispatch with approved token succeeded:', a01DispatchSucceeded);
+        console.log('[R07-E2E] R07-A01 Token atomically CONSUMED:', a01TokenConsumed);
+        console.log('[R07-E2E] R07-A01 Consumed digest matches action digest:', a01DigestMatched);
+        console.log('[R07-E2E] R07-A03 Test kill supported in dedicated harness:', a03HarnessAllowed);
+
+        const allPassed = a01UnconfirmedDenied &&
+          a01RemainedPending &&
+          a01DispatchPendingBlocked &&
+          a01StaleDenied &&
+          a01StaleRemainedPending &&
+          a01ConfirmedApproved &&
+          a01TokenBecameApproved &&
+          a01DispatchSucceeded &&
+          a01TokenConsumed &&
+          a01DigestMatched &&
+          a03HarnessAllowed;
+
+        const report = {
+          suite: 'UNION_BOT_ELECTRON_R07_E2E_EVIDENCE',
+          timestamp: new Date().toISOString(),
+          userDataDir,
+          vectors: {
+            'R07-A01': {
+              unconfirmedDenied: a01UnconfirmedDenied,
+              remainedPending: a01RemainedPending,
+              dispatchPendingBlocked: a01DispatchPendingBlocked,
+              staleDenied: a01StaleDenied,
+              confirmedApproved: a01ConfirmedApproved,
+              tokenBecameApproved: a01TokenBecameApproved,
+              dispatchSucceeded: a01DispatchSucceeded,
+              tokenConsumed: a01TokenConsumed,
+              digestMatched: a01DigestMatched,
+            },
+            'R07-A03': {
+              harnessAllowed: a03HarnessAllowed,
+            },
+          },
+          result: allPassed ? 'PASS' : 'FAIL',
+        };
+
+        const reportDir = path.resolve(__dirname, '../../../reports/capability-evidence');
+        if (!fs.existsSync(reportDir)) fs.mkdirSync(reportDir, { recursive: true });
+        fs.writeFileSync(
+          path.join(reportDir, 'ELECTRON_R07_E2E_EVIDENCE.json'),
+          JSON.stringify(report, null, 2),
+          'utf-8'
+        );
+
+        if (!allPassed) {
+          app.quit();
+          process.exit(1);
+        }
+
+        console.log('[R07-E2E] ALL_R07_E2E_CHECKS_PASSED');
+        app.quit();
+        process.exit(0);
+      } catch (err) {
+        console.error('[R07-E2E] Exception:', err);
+        app.quit();
+        process.exit(1);
+      }
+    });
+    return;
+  }
+
+  // 7j. R07-PROD: Production Security Boundary Verification (R07-A03, C03)
+  if (process.argv.includes('--r07-prod-e2e')) {
+    mainWindow.webContents.once('did-finish-load', async () => {
+      try {
+        console.log('[R07-PROD-E2E] Running Real Windows Electron Production Mode Verification...');
+
+        const prodResult = await mainWindow.webContents.executeJavaScript(`
+          (async () => {
+            const hasTestKill = typeof window.unionBotAPI.testKillWorker === 'function';
+            const hasTestConfirmation = typeof window.unionBotAPI.testSetConfirmationMode === 'function';
+            return {
+              hasTestKill,
+              hasTestConfirmation,
+            };
+          })()
+        `);
+
+        const testKillDisabled = prodResult.hasTestKill === false;
+        const testConfirmationDisabled = prodResult.hasTestConfirmation === false;
+
+        console.log('[R07-PROD-E2E] testKillWorker strictly undefined in production:', testKillDisabled);
+        console.log('[R07-PROD-E2E] testSetConfirmationMode strictly undefined in production:', testConfirmationDisabled);
+
+        const allPassed = testKillDisabled && testConfirmationDisabled;
+
+        const report = {
+          suite: 'UNION_BOT_ELECTRON_R07_PROD_EVIDENCE',
+          timestamp: new Date().toISOString(),
+          userDataDir,
+          vectors: {
+            'R07-A03': {
+              productionTestKillDisabled: testKillDisabled,
+              productionConfirmationDisabled: testConfirmationDisabled,
+            },
+          },
+          result: allPassed ? 'PASS' : 'FAIL',
+        };
+
+        const reportDir = path.resolve(__dirname, '../../../reports/capability-evidence');
+        if (!fs.existsSync(reportDir)) fs.mkdirSync(reportDir, { recursive: true });
+        fs.writeFileSync(
+          path.join(reportDir, 'ELECTRON_R07_PROD_EVIDENCE.json'),
+          JSON.stringify(report, null, 2),
+          'utf-8'
+        );
+
+        if (!allPassed) {
+          app.quit();
+          process.exit(1);
+        }
+
+        console.log('[R07-PROD-E2E] ALL_R07_PROD_CHECKS_PASSED');
+        app.quit();
+        process.exit(0);
+      } catch (err) {
+        console.error('[R07-PROD-E2E] Exception:', err);
         app.quit();
         process.exit(1);
       }
@@ -1257,6 +1518,62 @@ ipcMain.handle('union-bot:compute-action-digest', async (event, input) => {
   }
 });
 
+// UB-P2-R06-003 / R07-A03: Test mutation channels strictly isolated.
+// Packaged apps and normal launches NEVER expose test mutation channels.
+// Launcher flags like --headless or --test alone CANNOT enable test mutation API.
+const isPackagedApp = app.isPackaged || process.env.NODE_ENV === 'production';
+const isDedicatedTestHarness =
+  !isPackagedApp &&
+  process.env.NODE_ENV === 'test' &&
+  process.env.UNION_BOT_E2E_HARNESS === '1';
+
+// Native Human Confirmation Controller (Main-Process Owned - UB-P2-R06-001, R07-A01)
+// Never accepts untrusted renderer boolean. Requires authentic OS-bound native prompt or verified test confirmation delegate.
+let nativeConfirmationDelegate = null;
+if (isDedicatedTestHarness) {
+  if (process.env.UNION_BOT_AUTO_APPROVE === '1') {
+    nativeConfirmationDelegate = async () => true;
+  } else {
+    // In automated test harness without explicit auto-approve, default to Cancel/rejection
+    // to prevent headless test runner hanging on native modal dialog.
+    nativeConfirmationDelegate = async () => false;
+  }
+}
+
+async function requestNativeHumanConfirmation(tokenRecord, ownerWindow) {
+  if (typeof nativeConfirmationDelegate === 'function') {
+    return await nativeConfirmationDelegate(tokenRecord, ownerWindow);
+  }
+
+  // Default: Main-process owned Electron native dialog
+  if (dialog && typeof dialog.showMessageBox === 'function') {
+    try {
+      const targetWin = ownerWindow || BrowserWindow.getFocusedWindow() || mainWindow;
+      const res = await dialog.showMessageBox(targetWin, {
+        type: 'question',
+        buttons: ['Cancel', 'Authorize & Approve'],
+        defaultId: 0, // Cancel is the default button
+        cancelId: 0, // Escape or closing window cancels
+        title: 'Union Bot - Native Security Authorization',
+        message: `Authorize Action: ${tokenRecord.action_type || tokenRecord.actionType || 'execute'}`,
+        detail: [
+          `Target: ${tokenRecord.target || tokenRecord.recipient || 'local'}`,
+          `Scope: ${tokenRecord.scope || 'default'}`,
+          `Payload Digest: ${tokenRecord.payload_digest || tokenRecord.payloadDigest || 'unknown'}`,
+          `Cost: $0.00 (Zero-Cost Local Execution)`,
+          '',
+          'Affirmative native human interaction required. Cancel or dismissal will deny authorization.',
+        ].join('\n'),
+      });
+      return res.response === 1; // 1 is Authorize & Approve, 0 is Cancel
+    } catch {
+      return false;
+    }
+  }
+
+  return false;
+}
+
 ipcMain.handle('union-bot:approve-token', async (event, payload) => {
   if (appStatus !== 'READY') {
     return { success: false, error: `ERR_STORAGE_UNAVAILABLE: Desktop storage is not ready (${appStatus}) (UB-P2-R03-05)` };
@@ -1265,36 +1582,78 @@ ipcMain.handle('union-bot:approve-token', async (event, payload) => {
     return { success: false, error: 'Security violation: Unauthorized IPC sender origin or missing frame (UB-P2-R01-008)' };
   }
 
-  const tokenId = typeof payload === 'string' ? payload : payload?.tokenId;
-  const decisionContext = typeof payload === 'object' ? payload?.decisionContext : undefined;
+  const tokenId = typeof payload === 'string' ? payload : (payload?.tokenId || payload?.id);
+  const rawContext = typeof payload === 'object' ? (payload?.decisionContext || payload) : undefined;
+  const decisionContext = (rawContext && typeof rawContext === 'object' && rawContext.decisionContext)
+    ? rawContext.decisionContext
+    : rawContext;
 
   if (!tokenId || typeof tokenId !== 'string') {
     return { success: false, error: 'ERR_UNTRUSTED_ACTION: tokenId is required' };
   }
 
-  // F03 / R06-B03: Human Consent Requirement
-  // Renderer must provide explicit user confirmation before approval token is activated
-  const isConfirmedByUser = Boolean(
-    decisionContext &&
-    (decisionContext.confirmedByUser === true || decisionContext.userConfirmed === true)
-  );
+  // 1. Fetch pending token directly from durable storage (Main Process Owned)
+  let tokenRecord;
+  try {
+    tokenRecord = await storage.getApprovalToken(tokenId);
+  } catch (fetchErr) {
+    return { success: false, error: `ERR_STORAGE_UNAVAILABLE: Failed to read token: ${fetchErr.message}` };
+  }
 
-  if (!isConfirmedByUser) {
+  if (!tokenRecord) {
+    return { success: false, error: `ERR_UNTRUSTED_ACTION: Approval token not found: ${tokenId}` };
+  }
+  if (tokenRecord.status !== 'PENDING') {
     return {
       success: false,
-      error: 'ERR_HUMAN_CONFIRMATION_REQUIRED: Action approval requires explicit user confirmation (confirmedByUser: true) (R05-F03)',
+      error: `ERR_UNTRUSTED_ACTION: Token ${tokenId} is not in PENDING state (status: ${tokenRecord.status})`,
     };
   }
 
-  // Server-side TrustedPrincipal minted by main process - NEVER take untrusted role from renderer (UB-P2-R03-02)
+  // 2. Check expiration
+  if (tokenRecord.expires_at && new Date(tokenRecord.expires_at).getTime() < Date.now()) {
+    return { success: false, error: `ERR_APPROVAL_EXPIRED: Token ${tokenId} has expired` };
+  }
+
+  // 3. Stale / changed intent check: verify expected digest against stored canonical digest (R07-A01)
+  const storedDigest = tokenRecord.payload_digest || tokenRecord.payloadDigest;
+  const expectedDigest = decisionContext?.expectedDigest || payload?.expectedDigest;
+  if (expectedDigest && storedDigest && expectedDigest !== storedDigest) {
+    return {
+      success: false,
+      error: `ERR_PAYLOAD_MISMATCH: Stale or modified intent; expected digest ${expectedDigest} does not match stored digest ${storedDigest} (R07-A01)`,
+    };
+  }
+
+  // 4. Authentic Native Human Confirmation (UB-P2-R06-001, R07-A01)
+  // Renderer-supplied boolean is strictly untrusted and IGNORED as authorization proof.
+  const ownerWindow = BrowserWindow.fromWebContents(event.sender);
+  const confirmedByHuman = await requestNativeHumanConfirmation(tokenRecord, ownerWindow);
+
+  if (!confirmedByHuman) {
+    return {
+      success: false,
+      error: 'ERR_HUMAN_CONFIRMATION_REQUIRED: Action approval requires explicit native user confirmation. User cancelled, dismissed prompt, or affirmative native approval was not given (R07-A01)',
+    };
+  }
+
+  // 5. Server-side TrustedPrincipal minted by main process - NEVER take untrusted role from renderer (UB-P2-R03-02)
   const trustedApprover = {
     id: 'local-operator',
     role: 'OPERATOR',
     isTrustedContext: true,
   };
 
+  const authenticatedDecisionContext = {
+    ...decisionContext,
+    confirmedByUser: true,
+    confirmedVia: 'NATIVE_MAIN_PROCESS_CONFIRMATION',
+    confirmedDigest: storedDigest,
+    confirmedAt: new Date().toISOString(),
+  };
+
   try {
-    const result = await storage.approveToken(tokenId, trustedApprover, decisionContext);
+    const result = await storage.approveToken(tokenId, trustedApprover, authenticatedDecisionContext);
     return { success: true, ...result };
   } catch (err) {
     return { success: false, error: err.message };
@@ -1313,39 +1672,44 @@ ipcMain.handle('union-bot:get-approval-token', async (event, tokenId) => {
   }
 });
 
-ipcMain.handle('union-bot:test-kill-worker', async (event) => {
-  const isTestMode =
-    process.env.NODE_ENV === 'test' ||
-    process.argv.some((arg) =>
-      arg.startsWith('--r04-e2e') ||
-      arg.startsWith('--r05-e2e') ||
-      arg.startsWith('--r06-e2e') ||
-      arg === '--smoke' ||
-      arg === '--test' ||
-      arg === '--headless' ||
-      arg.startsWith('--test-')
-    );
+if (isDedicatedTestHarness) {
+  ipcMain.handle('union-bot:test-kill-worker', async (event) => {
+    if (!checkSenderAuthorized(event)) {
+      return { success: false, error: 'Unauthorized IPC sender origin (UB-P2-R01-008)' };
+    }
+    if (storage && storage.worker) {
+      try {
+        storage.worker.kill();
+        return { success: true };
+      } catch (e) {
+        return { success: false, error: e.message };
+      }
+    }
+    return { success: false, error: 'No active storage worker' };
+  });
 
-  if (!isTestMode) {
+  ipcMain.handle('union-bot:test-set-confirmation-mode', async (event, mode) => {
+    if (!checkSenderAuthorized(event)) {
+      return { success: false, error: 'Unauthorized IPC sender origin' };
+    }
+    if (mode === 'auto-approve') {
+      nativeConfirmationDelegate = async () => true;
+    } else if (mode === 'auto-reject') {
+      nativeConfirmationDelegate = async () => false;
+    } else {
+      nativeConfirmationDelegate = process.env.UNION_BOT_AUTO_APPROVE === '1' ? async () => true : async () => false;
+    }
+    return { success: true, mode };
+  });
+} else {
+  // Production / non-harness mode: fail-closed rejection
+  ipcMain.handle('union-bot:test-kill-worker', async () => {
     return {
       success: false,
-      error: 'ERR_TEST_IPC_DISABLED: Test IPC channels are strictly disabled in production mode (R05-F03)',
+      error: 'ERR_TEST_IPC_DISABLED: Test IPC channels are strictly disabled in production mode (UB-P2-R06-003)',
     };
-  }
-
-  if (!checkSenderAuthorized(event)) {
-    return { success: false, error: 'Unauthorized IPC sender origin (UB-P2-R01-008)' };
-  }
-  if (storage && storage.worker) {
-    try {
-      storage.worker.kill();
-      return { success: true };
-    } catch (e) {
-      return { success: false, error: e.message };
-    }
-  }
-  return { success: false, error: 'No active storage worker' };
-});
+  });
+}
 
 
 // App Lifecycle

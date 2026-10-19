@@ -161,8 +161,19 @@ const MIGRATIONS = [
   },
 ];
 
+const LEGACY_STRUCTURAL_SIGNATURE = {
+  rooms: ['id', 'name', 'created_at', 'updated_at'],
+  events: ['stream_id', 'event_type'],
+  envelopes: ['id', 'room_id', 'sender_id', 'status', 'created_at'],
+  idempotency_keys: ['key', 'target_id', 'status', 'created_at', 'expires_at'],
+  outbox: ['id', 'status', 'created_at'],
+  approvals: ['token_id', 'action_type', 'status', 'created_at', 'expires_at'],
+  audit_ledger: ['id', 'created_at'],
+};
+
 /**
  * Checks if the database matches a verified legacy schema fingerprint.
+ * Inspects both table existence and precise column structural signature (UB-P2-R06-C02, R07-A05).
  */
 function isVerifiedLegacyFingerprint(db, appliedChecksum) {
   if (appliedChecksum !== LEGACY_R04_EMPTY_CHECKSUM) {
@@ -176,12 +187,18 @@ function isVerifiedLegacyFingerprint(db, appliedChecksum) {
       return false;
     }
 
-    // 2. Verify expected legacy core tables exist
+    // 2. Verify expected legacy core tables and exact column structure exist (UB-P2-R06-C02)
     const tables = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all().map((r) => r.name);
-    const requiredLegacyTables = ['rooms', 'events', 'envelopes', 'idempotency_keys', 'outbox', 'approvals', 'audit_ledger'];
-    for (const t of requiredLegacyTables) {
-      if (!tables.includes(t)) {
+    for (const [tableName, requiredColumns] of Object.entries(LEGACY_STRUCTURAL_SIGNATURE)) {
+      if (!tables.includes(tableName)) {
         return false;
+      }
+      const tableInfo = db.prepare(`PRAGMA table_info(${tableName})`).all();
+      const colNames = tableInfo.map((c) => c.name);
+      for (const col of requiredColumns) {
+        if (!colNames.includes(col)) {
+          return false;
+        }
       }
     }
     return true;

@@ -107,13 +107,25 @@ function handleRequest(msg) {
           if (envelope.id) {
             const existing = db.prepare('SELECT status, response_json, payload_digest FROM idempotency_keys WHERE key = ?').get(envelope.id);
             if (existing) {
-              if (!existing.payload_digest || existing.payload_digest !== envelopeDigest) {
-                throw new Error(`ERR_PAYLOAD_MISMATCH: Idempotency key '${envelope.id}' reused with mismatched payload. Replay with different content is forbidden.`);
-              }
+              // UB-P2-R06-002: Replay of COMPLETED records requires valid non-null digest equality
+              const hasValidStoredDigest =
+                typeof existing.payload_digest === 'string' &&
+                /^[a-f0-9]{64}$/i.test(existing.payload_digest);
+
               if (existing.status === 'COMPLETED') {
+                if (!hasValidStoredDigest) {
+                  throw new Error(`ERR_IDEMPOTENCY_UNVERIFIED: Existing idempotency record has null or malformed payload digest; cannot verify replay authenticity without external reconciliation (UB-P2-R06-002)`);
+                }
+                if (existing.payload_digest !== envelopeDigest) {
+                  throw new Error(`ERR_PAYLOAD_MISMATCH: Idempotency key '${envelope.id}' reused with mismatched payload. Replay with different content is forbidden.`);
+                }
                 db.exec('COMMIT;');
                 process.send({ id, result: { success: true, envelopeId: envelope.id, deduplicated: true } });
                 break;
+              }
+
+              if (existing.payload_digest && existing.payload_digest !== envelopeDigest) {
+                throw new Error(`ERR_PAYLOAD_MISMATCH: Idempotency key '${envelope.id}' reused with mismatched payload. Replay with different content is forbidden.`);
               }
               if (existing.status === 'UNKNOWN_NEEDS_RECONCILIATION') {
                 throw new Error(`ERR_RECONCILIATION_REQUIRED: Key ${envelope.id} requires external reconciliation`);

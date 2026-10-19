@@ -5,7 +5,7 @@ const { contextBridge, ipcRenderer } = require('electron');
  * Strictly isolates Electron main capabilities from renderer context.
  * Only vetted channels and schemas are accessible.
  */
-contextBridge.exposeInMainWorld('unionBotAPI', {
+const api = {
   isElectron: true,
   version: '1.0.0',
 
@@ -67,7 +67,18 @@ contextBridge.exposeInMainWorld('unionBotAPI', {
     };
   },
 
-  testKillWorker: async () => {
+};
+
+// UB-P2-R06-003 / R07-A03: Strictly isolate test mutation channels.
+// Only expose testKillWorker if running inside an explicit dedicated test harness environment.
+// Never expose in production builds, packaged apps, or generic --headless launches.
+if (process.env.UNION_BOT_E2E_HARNESS === '1' && process.env.NODE_ENV === 'test') {
+  api.testKillWorker = async () => {
     return ipcRenderer.invoke('union-bot:test-kill-worker');
-  },
-});
+  };
+  api.testSetConfirmationMode = async (mode) => {
+    return ipcRenderer.invoke('union-bot:test-set-confirmation-mode', mode);
+  };
+}
+
+contextBridge.exposeInMainWorld('unionBotAPI', api);
