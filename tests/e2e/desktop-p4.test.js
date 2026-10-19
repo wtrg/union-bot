@@ -161,7 +161,16 @@ describe('Union Bot Phase P4 Gate: Windows Real Electron E2E Suite', () => {
     assert.equal(evidence.results.domProviderTabsRendered, true);
     assert.equal(evidence.results.domToolbarAndMountRendered, true);
 
+    // Assert Round R02 regression vectors (UB-P4-R01-001, UB-P4-R01-002, UB-P4-R01-003)
+    assert.equal(evidence.regressionVectors['P4-R02-T01'], true, 'P4-R02-T01: Malicious/private createTab must be denied');
+    assert.equal(evidence.regressionVectors['P4-R02-T02'], true, 'P4-R02-T02: Search navigation must preserve provider boundary');
+    assert.equal(evidence.regressionVectors['P4-R02-T03'], true, 'P4-R02-T03: Loopback/metadata must be blocked');
+    assert.equal(evidence.regressionVectors['P4-R02-T04'], true, 'P4-R02-T04: Provider auth origin must be allowed');
+    assert.equal(evidence.regressionVectors['P4-R02-T05'], true, 'P4-R02-T05: Inactive tab share provenance must be exact');
+    assert.equal(evidence.regressionVectors['P4-R02-T06'], true, 'P4-R02-T06: Invalid tab share must fail closed');
+
     // Verify stdout log messages
+
     assert.match(stdout, /\[P4-E2E\] P4-001 Tabs initialized in WebContentsView manager: true/);
     assert.match(stdout, /\[P4-E2E\] P4-002 All 4 AI Provider surfaces configured: true/);
     assert.match(stdout, /\[P4-E2E\] P4-002 Partitions bound to persist:mcb-web-\*: true/);

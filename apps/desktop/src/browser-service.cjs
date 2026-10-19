@@ -10,10 +10,13 @@ const { safeOpenExternal, validateExternalUrl } = require('./safe-external.js');
 const {
   BrowserStateManager,
   PROVIDER_REGISTRY,
+  PROVIDER_AUTH_ORIGINS,
   isCostGuardBlockedUrl,
   resolveAddressBarInput,
   validateUrl,
   isAllowedProviderNavigation,
+  isAllowedForProvider,
+  isPrivateOrLoopbackHost,
   inferAuthStatus,
 } = require('../../../packages/browser-manager/src/browser-manager.cjs');
 
@@ -32,13 +35,17 @@ class BrowserService {
   async initialize() {
     const defaultTabs = this.stateManager.initializeDefaultTabs();
     for (const tab of defaultTabs) {
-      this._createViewForTab(tab);
+      try {
+        this._createViewForTab(tab);
+      } catch (err) {
+        console.error(`[BrowserService] Failed to create view for default tab ${tab.id}:`, err.message);
+      }
     }
     this.updateLayout();
   }
 
   /**
-   * Configures security, permissions, and cost guard filter for a partition
+   * Configures security, permissions, and cost guard filter for a partition (Fail-closed)
    */
   _ensurePartitionConfigured(partitionName) {
     if (this.configuredPartitions.has(partitionName)) return;
@@ -52,8 +59,18 @@ class BrowserService {
         callback(false);
       });
 
-      // Ticket P4-003: Cost Guard network egress filter (blocks paid API endpoints)
+      // Ticket P4-003 & P4-R02-T03: Egress & Private/Loopback Interception Filter
       partSession.webRequest.onBeforeRequest((details, callback) => {
+        // Block private or loopback requests from renderer
+        try {
+          const parsed = new URL(details.url);
+          if (isPrivateOrLoopbackHost(parsed.hostname)) {
+            console.warn(`[BrowserSession] Blocked loopback/private request in ${partitionName}: ${details.url}`);
+            callback({ cancel: true });
+            return;
+          }
+        } catch {}
+
         if (isCostGuardBlockedUrl(details.url)) {
           console.warn(`[CostGuard-Session] Blocked paid API egress in ${partitionName}: ${details.url}`);
           callback({ cancel: true });
@@ -64,7 +81,8 @@ class BrowserService {
 
       this.configuredPartitions.add(partitionName);
     } catch (err) {
-      console.warn(`[BrowserSession] Warning configuring partition ${partitionName}:`, err.message);
+      console.error(`[BrowserSession] Fail-closed: security configuration failed for partition ${partitionName}:`, err.message);
+      throw new Error(`SECURITY_INIT_FAILED: ${err.message}`);
     }
   }
 
@@ -77,6 +95,20 @@ class BrowserService {
       return null;
     }
 
+    // P4-R02-T01: Pre-validate tab URL
+    const check = validateUrl(tab.url);
+    if (!check.valid) {
+      throw new Error(`INVALID_TAB_URL: ${check.reason}`);
+    }
+
+    // P4-R02-T02: Enforce provider boundary on initial URL
+    if (tab.providerId !== 'search' && tab.providerId !== 'custom') {
+      if (!isAllowedForProvider(tab.providerId, tab.url)) {
+        throw new Error(`PROVIDER_ORIGIN_VIOLATION: Initial URL '${tab.url}' is not allowed for provider '${tab.providerId}'`);
+      }
+    }
+
+    // P4-R02-T03: Partition security setup must succeed or fail-closed
     this._ensurePartitionConfigured(tab.partition);
 
     const partSession = session.fromPartition(tab.partition);
@@ -90,40 +122,71 @@ class BrowserService {
       },
     });
 
-    const approvedOrigin = PROVIDER_REGISTRY[tab.providerId]?.approvedOrigin || 'https://duckduckgo.com';
-
-    // Strict setWindowOpenHandler: deny child popups, route safe URLs to OS browser
+    // UB-P4-R01-002: setWindowOpenHandler
+    // Allows OAuth/auth popups in same partition session, denies/routes external links to OS browser safely
     view.webContents.setWindowOpenHandler(({ url }) => {
-      console.log(`[BrowserView] Intercepted new-window request from ${tab.id} to: ${url}`);
+      const urlCheck = validateUrl(url);
+      if (!urlCheck.valid) {
+        console.warn(`[BrowserView] Blocked dangerous window.open request from ${tab.id}: ${url}`);
+        return { action: 'deny' };
+      }
+
+      if (isAllowedForProvider(tab.providerId, url)) {
+        console.log(`[BrowserView] Allowed auth/provider popup in partition ${tab.partition}: ${url}`);
+        return {
+          action: 'allow',
+          overrideBrowserWindowOptions: {
+            parent: this.mainWindow,
+            modal: false,
+            autoHideMenuBar: true,
+            webPreferences: {
+              session: partSession,
+              sandbox: true,
+              contextIsolation: true,
+              nodeIntegration: false,
+            },
+          },
+        };
+      }
+
+      console.log(`[BrowserView] Routing external popup link from ${tab.id} to OS browser: ${url}`);
       safeOpenExternal(url, shell);
       return { action: 'deny' };
     });
 
-    // Main frame navigation guard
+    // Main frame navigation guard (P4-R02-T02)
     view.webContents.on('will-navigate', (event, targetUrl) => {
-      const check = validateUrl(targetUrl);
-      if (!check.valid) {
-        console.warn(`[BrowserView] Blocked invalid navigation (${check.reason}): ${targetUrl}`);
+      const navCheck = validateUrl(targetUrl);
+      if (!navCheck.valid) {
+        console.warn(`[BrowserView] Blocked invalid navigation (${navCheck.reason}): ${targetUrl}`);
         event.preventDefault();
         return;
       }
 
-      // If provider has an approved origin and navigation leaves it, route to OS browser
       if (tab.providerId !== 'search' && tab.providerId !== 'custom') {
-        if (!isAllowedProviderNavigation(targetUrl, approvedOrigin)) {
-          console.log(`[BrowserView] External link clicked in provider view, opening externally: ${targetUrl}`);
+        if (!isAllowedForProvider(tab.providerId, targetUrl)) {
+          console.log(`[BrowserView] Navigation left provider boundary, opening externally: ${targetUrl}`);
           event.preventDefault();
           safeOpenExternal(targetUrl, shell);
         }
       }
     });
 
-    // Scheme redirect guard
+    // Scheme redirect guard (P4-R02-T02)
     view.webContents.on('will-redirect', (event, targetUrl) => {
-      const check = validateUrl(targetUrl);
-      if (!check.valid) {
+      const redirCheck = validateUrl(targetUrl);
+      if (!redirCheck.valid) {
         console.warn(`[BrowserView] Blocked dangerous redirect to: ${targetUrl}`);
         event.preventDefault();
+        return;
+      }
+
+      if (tab.providerId !== 'search' && tab.providerId !== 'custom') {
+        if (!isAllowedForProvider(tab.providerId, targetUrl)) {
+          console.warn(`[BrowserView] Redirect left provider boundary, opening externally: ${targetUrl}`);
+          event.preventDefault();
+          safeOpenExternal(targetUrl, shell);
+        }
       }
     });
 
@@ -244,11 +307,34 @@ class BrowserService {
   }
 
   createTab(providerId, url, title) {
-    const tab = this.stateManager.createTab(providerId, url, title);
-    this._createViewForTab(tab);
+    const check = validateUrl(url);
+    if (!check.valid) {
+      console.warn(`[BrowserService] createTab rejected invalid URL (${check.reason}): ${url}`);
+      return { success: false, error: check.reason };
+    }
+
+    if (providerId !== 'search' && providerId !== 'custom') {
+      if (!isAllowedForProvider(providerId, check.sanitizedUrl)) {
+        console.warn(`[BrowserService] createTab rejected cross-provider URL: ${url}`);
+        return {
+          success: false,
+          error: `Target URL violates provider boundary for '${providerId}': ${url}`,
+        };
+      }
+    }
+
+    const tab = this.stateManager.createTab(providerId, check.sanitizedUrl, title);
+    try {
+      this._createViewForTab(tab);
+    } catch (err) {
+      console.error(`[BrowserService] Failed to create view for tab ${tab.id}:`, err.message);
+      this.stateManager.closeTab(tab.id);
+      return { success: false, error: err.message };
+    }
+
     this.updateLayout();
     this._notifyRenderer();
-    return tab;
+    return { success: true, tab };
   }
 
   closeTab(tabId) {
@@ -284,10 +370,44 @@ class BrowserService {
       return { success: false, error: 'No active tab' };
     }
 
+    const tab = this.stateManager.tabs.get(targetTabId);
+    if (!tab) {
+      return { success: false, error: 'Tab not found' };
+    }
+
     const resolution = resolveAddressBarInput(inputUrl);
     if (!resolution.valid || !resolution.sanitizedUrl) {
       return { success: false, error: resolution.reason || 'Invalid navigation URL' };
     }
+
+    // P4-R02-T02: Enforce provider boundary in navigate
+    if (tab.providerId !== 'search' && tab.providerId !== 'custom') {
+      if (!isAllowedForProvider(tab.providerId, resolution.sanitizedUrl)) {
+        // Route outside target to dedicated search partition tab to preserve provider isolation
+        let searchTab = Array.from(this.stateManager.tabs.values()).find(t => t.providerId === 'search');
+        if (!searchTab) {
+          const createRes = this.createTab('search', resolution.sanitizedUrl, 'Search');
+          searchTab = createRes.tab;
+        } else {
+          this.stateManager.updateTab(searchTab.id, { url: resolution.sanitizedUrl });
+          const searchView = this.views.get(searchTab.id);
+          if (searchView) {
+            searchView.webContents.loadURL(resolution.sanitizedUrl).catch(() => {});
+          }
+        }
+        if (searchTab) {
+          this.selectTab(searchTab.id);
+        }
+        return {
+          success: true,
+          sanitizedUrl: resolution.sanitizedUrl,
+          routedToSearchTab: true,
+          partitionIsolated: true,
+          tabId: searchTab?.id,
+        };
+      }
+    }
+
 
     const view = this.views.get(targetTabId);
     if (!view) {
@@ -309,6 +429,7 @@ class BrowserService {
       return { success: false, error: err.message };
     }
   }
+
 
   async performAction(tabId, action) {
     const targetTabId = tabId || this.stateManager.getState().activeTabId;
@@ -370,17 +491,18 @@ class BrowserService {
   }
 
   /**
-   * Fulfills P4-010: Manual share selection or page summary to group room
+   * Fulfills P4-010 & UB-P4-R01-003: Manual share selection or page summary to group room
+   * Provenance strictly derived from target tab; fail-closed on storage failure.
    */
   async shareSelection(tabId, selectedText, roomId) {
     const targetTabId = tabId || this.stateManager.getState().activeTabId;
     if (!targetTabId) {
-      return { success: false, error: 'No active tab' };
+      return { success: false, error: 'No target tab specified or active' };
     }
 
-    const tab = this.stateManager.getActiveTab();
+    const tab = this.stateManager.tabs.get(targetTabId);
     if (!tab) {
-      return { success: false, error: 'Active tab state not found' };
+      return { success: false, error: 'Target tab state not found' };
     }
 
     let textToShare = selectedText;
@@ -428,23 +550,30 @@ class BrowserService {
       ],
     };
 
-    if (this.storageService) {
-      try {
-        if (typeof this.storageService.insertEnvelope === 'function') {
-          await this.storageService.insertEnvelope(envelope);
-        } else if (typeof this.storageService.dispatchEnvelope === 'function') {
-          await this.storageService.dispatchEnvelope(envelope);
-        }
-        if (this.mainWindow && !this.mainWindow.isDestroyed()) {
-          this.mainWindow.webContents.send('union-bot:envelope-received', envelope);
-        }
-      } catch (err) {
-        console.warn('[BrowserService] Error saving shared envelope to storage:', err.message);
-      }
+    if (!this.storageService) {
+      return { success: false, error: 'Storage service unavailable' };
     }
 
-    return { success: true, envelope };
+    try {
+      if (typeof this.storageService.insertEnvelope === 'function') {
+        await this.storageService.insertEnvelope(envelope);
+      } else if (typeof this.storageService.dispatchEnvelope === 'function') {
+        await this.storageService.dispatchEnvelope(envelope);
+      } else {
+        return { success: false, error: 'No compatible storage insert method found' };
+      }
+
+      if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+        this.mainWindow.webContents.send('union-bot:envelope-received', envelope);
+      }
+
+      return { success: true, envelope };
+    } catch (err) {
+      console.error('[BrowserService] Fail-closed: Error saving shared envelope to storage:', err.message);
+      return { success: false, error: `STORAGE_WRITE_FAILED: ${err.message}` };
+    }
   }
+
 
   destroy() {
     for (const view of this.views.values()) {

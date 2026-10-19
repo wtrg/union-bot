@@ -28,18 +28,78 @@ export interface UrlValidationResult {
 }
 
 /**
- * Checks if a hostname resolves to loopback, private IPv4, or internal host.
+ * Checks if a hostname resolves to loopback, private IPv4/IPv6, link-local, or internal host.
+ * Strictly blocks 127.0.0.0/8, 169.254.0.0/16, ::1, [::1], fe80::/10, fc00::/7, private LANs.
  */
 export function isPrivateOrLoopbackHost(hostname: string | null | undefined): boolean {
   if (!hostname) return true;
-  const lower = hostname.toLowerCase();
-  if (lower === 'localhost' || lower === '127.0.0.1' || lower === '::1' || lower === '0.0.0.0') {
+  let lower = hostname.toLowerCase().trim();
+
+  // Strip brackets from IPv6 hostnames (e.g. [::1] -> ::1)
+  if (lower.startsWith('[') && lower.endsWith(']')) {
+    lower = lower.slice(1, -1);
+  }
+
+  // Common localhost names & internal TLDs
+  if (
+    lower === 'localhost' ||
+    lower.endsWith('.localhost') ||
+    lower.endsWith('.local') ||
+    lower.endsWith('.internal') ||
+    lower === '0.0.0.0'
+  ) {
     return true;
   }
-  // Private IPv4 ranges: 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16
-  if (/^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(lower)) return true;
-  if (/^192\.168\.\d{1,3}\.\d{1,3}$/.test(lower)) return true;
-  if (/^172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}$/.test(lower)) return true;
+
+  // IPv4 Loopback range: 127.0.0.0/8 (127.0.0.1 - 127.255.255.255)
+  if (/^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(lower)) {
+    return true;
+  }
+
+  // IPv4 Link-Local / Cloud Metadata: 169.254.0.0/16 (e.g. 169.254.169.254)
+  if (/^169\.254\.\d{1,3}\.\d{1,3}$/.test(lower)) {
+    return true;
+  }
+
+  // Private IPv4 ranges:
+  // 10.0.0.0/8
+  if (/^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(lower)) {
+    return true;
+  }
+  // 172.16.0.0/12
+  if (/^172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}$/.test(lower)) {
+    return true;
+  }
+  // 192.168.0.0/16
+  if (/^192\.168\.\d{1,3}\.\d{1,3}$/.test(lower)) {
+    return true;
+  }
+  // 0.0.0.0/8
+  if (/^0\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(lower)) {
+    return true;
+  }
+
+  // IPv6 Loopback: ::1, 0:0:0:0:0:0:0:1
+  if (lower === '::1' || lower === '::' || /^0*(:0*)*:1$/.test(lower)) {
+    return true;
+  }
+
+  // IPv6 Link-Local: fe80::/10
+  if (lower.startsWith('fe80:') || /^fe[89ab][0-9a-f]:/i.test(lower)) {
+    return true;
+  }
+
+  // IPv6 Unique Local Address (ULA): fc00::/7 (fc00:: - fdff::)
+  if (/^f[cd][0-9a-f]{2}:/i.test(lower)) {
+    return true;
+  }
+
+  // IPv4-mapped IPv6: ::ffff:127.0.0.1
+  if (lower.startsWith('::ffff:')) {
+    const v4Part = lower.slice(7);
+    return isPrivateOrLoopbackHost(v4Part);
+  }
+
   return false;
 }
 
@@ -110,6 +170,45 @@ export function resolveAddressBarInput(
 }
 
 /**
+ * Approved authentication and origin boundaries per provider (UB-P4-R01-002).
+ * Enables OAuth identity federation (Google, Microsoft, Apple) in-session while blocking external leaks.
+ */
+export const PROVIDER_AUTH_ORIGINS: Record<string, string[]> = {
+  chatgpt: [
+    'https://chatgpt.com',
+    'https://auth.openai.com',
+    'https://auth0.openai.com',
+    'https://platform.openai.com',
+    'https://accounts.google.com',
+    'https://appleid.apple.com',
+    'https://login.microsoftonline.com',
+    'https://login.live.com',
+  ],
+  gemini: [
+    'https://gemini.google.com',
+    'https://accounts.google.com',
+    'https://myaccount.google.com',
+    'https://policies.google.com',
+    'https://support.google.com',
+  ],
+  claude: [
+    'https://claude.ai',
+    'https://anthropic.com',
+    'https://accounts.google.com',
+    'https://appleid.apple.com',
+  ],
+  deepseek: [
+    'https://chat.deepseek.com',
+    'https://deepseek.com',
+    'https://auth.deepseek.com',
+  ],
+  search: [
+    'https://duckduckgo.com',
+    'https://html.duckduckgo.com',
+  ],
+};
+
+/**
  * Validates whether a target URL is within the approved origin or domain of a provider.
  */
 export function isAllowedProviderNavigation(targetUrl: string, approvedOrigin: string): boolean {
@@ -138,3 +237,41 @@ export function isAllowedProviderNavigation(targetUrl: string, approvedOrigin: s
     return false;
   }
 }
+
+/**
+ * Checks if a URL is permitted for a specific provider (including allowed OAuth federation domains).
+ */
+export function isAllowedForProvider(providerId: string, targetUrl: string): boolean {
+  const validation = validateUrl(targetUrl);
+  if (!validation.valid || !validation.sanitizedUrl) {
+    return false;
+  }
+
+  // Search or custom tab permits any valid public URL
+  if (providerId === 'search' || providerId === 'custom') {
+    return true;
+  }
+
+  const allowedOrigins = PROVIDER_AUTH_ORIGINS[providerId];
+  if (!allowedOrigins || allowedOrigins.length === 0) {
+    return false;
+  }
+
+  try {
+    const targetParsed = new URL(validation.sanitizedUrl);
+    const targetHost = targetParsed.hostname.toLowerCase();
+
+    for (const origin of allowedOrigins) {
+      const originParsed = new URL(origin);
+      const originHost = originParsed.hostname.toLowerCase();
+      if (targetHost === originHost || targetHost.endsWith(`.${originHost}`)) {
+        return true;
+      }
+    }
+  } catch {
+    return false;
+  }
+
+  return false;
+}
+

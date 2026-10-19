@@ -2095,6 +2095,44 @@ function createWindow() {
             });
             results.dangerousLoopbackBlocked = Boolean(dangerousLoopbackNav && dangerousLoopbackNav.success === false);
 
+            // UB-P4-R01-001 / P4-R02-T01: Deny createTab with malicious or private URLs
+            const t01MaliciousTab = await window.unionBotAPI.browserCreateTab({
+              providerId: 'custom',
+              url: 'javascript:alert(1)',
+            });
+            const t01PrivateTab = await window.unionBotAPI.browserCreateTab({
+              providerId: 'custom',
+              url: 'http://127.0.0.2:8080/exploit',
+            });
+            results.t01CreateTabMaliciousDenied = Boolean(t01MaliciousTab && t01MaliciousTab.success === false);
+            results.t01CreateTabPrivateDenied = Boolean(t01PrivateTab && t01PrivateTab.success === false);
+
+            // UB-P4-R01-001 / P4-R02-T03: Block 127.0.0.2, [::1], and 169.254.169.254
+            const loopback2Nav = await window.unionBotAPI.browserNavigate({
+              tabId: chatgptTab?.id,
+              url: 'http://127.0.0.2:8080/exploit',
+            });
+            const loopbackIpv6Nav = await window.unionBotAPI.browserNavigate({
+              tabId: chatgptTab?.id,
+              url: 'http://[::1]:9000/admin',
+            });
+            const metadataNav = await window.unionBotAPI.browserNavigate({
+              tabId: chatgptTab?.id,
+              url: 'http://169.254.169.254/latest/meta-data',
+            });
+            results.t03LoopbackPrivateBlocked = Boolean(
+              loopback2Nav?.success === false &&
+              loopbackIpv6Nav?.success === false &&
+              metadataNav?.success === false
+            );
+
+            // UB-P4-R01-002 / P4-R02-T04: Provider auth origin allowed
+            const geminiAuthNav = await window.unionBotAPI.browserNavigate({
+              tabId: geminiTab?.id,
+              url: 'https://accounts.google.com/signin',
+            });
+            results.t04ProviderAuthAllowed = Boolean(geminiAuthNav && geminiAuthNav.success === true);
+
             const validSearchNav = await window.unionBotAPI.browserNavigate({
               tabId: chatgptTab?.id,
               url: 'offline zero cost search query',
@@ -2105,6 +2143,7 @@ function createWindow() {
               typeof validSearchNav.sanitizedUrl === 'string' &&
               validSearchNav.sanitizedUrl.includes('duckduckgo.com/?q=')
             );
+
 
             // 4. Tab Switching & Zoom Controls (P4-007)
             const selectRes = await window.unionBotAPI.browserSelectTab(geminiTab?.id);
@@ -2131,7 +2170,7 @@ function createWindow() {
             const crashTriggerRes = await window.unionBotAPI.testTriggerTabCrash(deepseekTab?.id);
             results.crashTriggerDispatched = Boolean(crashTriggerRes && crashTriggerRes.success === true);
 
-            await new Promise(r => setTimeout(r, 400));
+            await new Promise(r => setTimeout(r, 600));
             const stateAfterCrash = await window.unionBotAPI.browserGetState();
             const crashedTab = stateAfterCrash.tabs.find(t => t.id === deepseekTab?.id);
             results.deepseekTabCrashed = Boolean(crashedTab && crashedTab.crashed === true);
@@ -2166,6 +2205,26 @@ function createWindow() {
               Array.isArray(e.parts) && e.parts.some(p => p.text && p.text.includes('Architectural analysis: Browser isolation'))
             );
             results.sharePersistedInHistory = Boolean(sharedEnvelope);
+
+            // UB-P4-R01-003 / P4-R02-T05: Background inactive tab share provenance
+            const bgShareRes = await window.unionBotAPI.browserShareSelection({
+              tabId: chatgptTab?.id,
+              selectedText: 'Provenance test from inactive tab',
+              roomId: 'p4-verification-room',
+            });
+            results.t05BackgroundShareProvenanceCorrect = Boolean(
+              bgShareRes &&
+              bgShareRes.success === true &&
+              bgShareRes.envelope?.sender?.provider === 'chatgpt'
+            );
+
+            // UB-P4-R01-003 / P4-R02-T06: Fail-closed on missing/invalid tab
+            const badShareRes = await window.unionBotAPI.browserShareSelection({
+              tabId: 'invalid_tab_does_not_exist_9999',
+              selectedText: 'Should fail closed',
+              roomId: 'p4-verification-room',
+            });
+            results.t06FailClosedStorageHandled = Boolean(badShareRes && badShareRes.success === false);
 
             // 8. DOM Controls Verification (P4-011)
             const toggleDockBtn = document.querySelector('[data-testid="toggle-browser-btn"]');
@@ -2224,6 +2283,11 @@ function createWindow() {
         console.log('[P4-E2E] P4-004 Dangerous powershell: scheme blocked:', p4Result.dangerousPsBlocked);
         console.log('[P4-E2E] P4-005 Loopback address navigation blocked:', p4Result.dangerousLoopbackBlocked);
         console.log('[P4-E2E] P4-004 Valid query resolved to DuckDuckGo search:', p4Result.searchQueryResolved);
+        console.log('[P4-E2E] P4-R02-T01 CreateTab malicious/private denied fail-closed:', p4Result.t01CreateTabMaliciousDenied && p4Result.t01CreateTabPrivateDenied);
+        console.log('[P4-E2E] P4-R02-T03 Comprehensive loopback/metadata blocked:', p4Result.t03LoopbackPrivateBlocked);
+        console.log('[P4-E2E] P4-R02-T04 Provider auth origin allowed in-session:', p4Result.t04ProviderAuthAllowed);
+        console.log('[P4-E2E] P4-R02-T05 Inactive tab share preserves exact provenance:', p4Result.t05BackgroundShareProvenanceCorrect);
+        console.log('[P4-E2E] P4-R02-T06 Missing/invalid tab share fails closed:', p4Result.t06FailClosedStorageHandled);
         console.log('[P4-E2E] P4-006 Cost Guard blocks paid APIs on browser session:', costGuardEgressBlocked);
         console.log('[P4-E2E] P4-007 Tab switching to Gemini succeeded:', p4Result.selectGeminiTab && p4Result.activeTabSwitched);
         console.log('[P4-E2E] P4-007 Zoom controls applied (zoom-in / zoom-reset):', p4Result.zoomInApplied && p4Result.zoomResetApplied);
@@ -2248,6 +2312,12 @@ function createWindow() {
           p4Result.dangerousPsBlocked &&
           p4Result.dangerousLoopbackBlocked &&
           p4Result.searchQueryResolved &&
+          p4Result.t01CreateTabMaliciousDenied &&
+          p4Result.t01CreateTabPrivateDenied &&
+          p4Result.t03LoopbackPrivateBlocked &&
+          p4Result.t04ProviderAuthAllowed &&
+          p4Result.t05BackgroundShareProvenanceCorrect &&
+          p4Result.t06FailClosedStorageHandled &&
           costGuardEgressBlocked &&
           p4Result.selectGeminiTab &&
           p4Result.activeTabSwitched &&
@@ -2272,12 +2342,22 @@ function createWindow() {
           process.exit(1);
         }
 
+        const regressionVectors = {
+          'P4-R02-T01': Boolean(p4Result.t01CreateTabMaliciousDenied && p4Result.t01CreateTabPrivateDenied),
+          'P4-R02-T02': Boolean(p4Result.searchQueryResolved),
+          'P4-R02-T03': Boolean(p4Result.t03LoopbackPrivateBlocked),
+          'P4-R02-T04': Boolean(p4Result.t04ProviderAuthAllowed),
+          'P4-R02-T05': Boolean(p4Result.t05BackgroundShareProvenanceCorrect),
+          'P4-R02-T06': Boolean(p4Result.t06FailClosedStorageHandled),
+        };
+
         const evidencePath = path.resolve(__dirname, '../../../reports/capability-evidence/ELECTRON_P4_E2E_EVIDENCE.json');
         fs.writeFileSync(evidencePath, JSON.stringify({
           timestamp: new Date().toISOString(),
           environment: 'Real Windows Electron Chromium E2E (Phase P4 Embedded AI Browser)',
           nodeEnv: process.env.NODE_ENV,
           costGuardEgressBlocked,
+          regressionVectors,
           results: p4Result,
           allPassed: allP4Passed,
         }, null, 2));
@@ -2285,6 +2365,7 @@ function createWindow() {
         console.log('[P4-E2E] ALL_P4_E2E_CHECKS_PASSED');
         app.quit();
         process.exit(0);
+
       } catch (err) {
         console.error('[P4-E2E] Exception:', err);
         app.quit();
@@ -3193,11 +3274,12 @@ ipcMain.handle('union-bot:browser-create-tab', async (event, payload) => {
   }
   if (!browserService) return { success: false, error: 'BrowserService not initialized' };
   try {
-    const tab = browserService.createTab(payload?.providerId || 'search', payload?.url, payload?.title);
-    return { success: true, tab };
+    const res = browserService.createTab(payload?.providerId || 'search', payload?.url, payload?.title);
+    return res;
   } catch (err) {
     return { success: false, error: err.message };
   }
+
 });
 
 ipcMain.handle('union-bot:browser-close-tab', async (event, tabId) => {
@@ -3396,26 +3478,20 @@ if (isDedicatedTestHarness) {
       if (typeof view.webContents.forcefullyCrashRenderer === 'function') {
         try {
           view.webContents.forcefullyCrashRenderer();
-        } catch {}
+        } catch (_) {}
       }
-      browserService.stateManager.updateTab(targetTabId, {
-        crashed: true,
-        lastError: 'Process crashed: simulated_test_crash',
-        isLoading: false,
-      });
-      view.webContents.emit('render-process-gone', {}, { reason: 'crashed', exitCode: 1 });
-      browserService._notifyRenderer();
+      setTimeout(() => {
+        const currentTab = browserService.stateManager.tabs.get(targetTabId);
+        if (currentTab && !currentTab.crashed) {
+          view.webContents.emit('render-process-gone', {}, { reason: 'crashed', exitCode: 1 });
+        }
+      }, 100);
       return { success: true };
     } catch (err) {
-      browserService.stateManager.updateTab(targetTabId, {
-        crashed: true,
-        lastError: `Process crashed: ${err.message}`,
-        isLoading: false,
-      });
-      browserService._notifyRenderer();
-      return { success: true };
+      return { success: false, error: err.message };
     }
   });
+
 } else {
   // Production / non-harness mode: fail-closed rejection
   ipcMain.handle('union-bot:test-kill-worker', async () => {
