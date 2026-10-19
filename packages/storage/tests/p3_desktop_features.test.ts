@@ -14,6 +14,8 @@ describe('Union Bot Phase P3: Desktop Workspace UI & Storage Features', () => {
   const dbPath = path.join(testDir, 'test_p3.db');
   const casDir = path.join(testDir, 'cas-store');
   let storage: any;
+  let savedPngBytes: Buffer;
+  let savedPdfBytes: Buffer;
 
   before(async () => {
     fs.mkdirSync(testDir, { recursive: true });
@@ -53,11 +55,13 @@ describe('Union Bot Phase P3: Desktop Workspace UI & Storage Features', () => {
 
     // 1. Create simulated PNG attachment
     const fakePngBytes = Buffer.from('FakePNGContent_' + Date.now());
+    savedPngBytes = fakePngBytes;
     const pngSha256 = crypto.createHash('sha256').update(fakePngBytes).digest('hex');
     fs.writeFileSync(path.join(casDir, pngSha256), fakePngBytes);
 
     // 2. Create simulated PDF attachment
     const fakePdfBytes = Buffer.from('%PDF-1.4 FakePDFContent_' + Date.now());
+    savedPdfBytes = fakePdfBytes;
     const pdfSha256 = crypto.createHash('sha256').update(fakePdfBytes).digest('hex');
     fs.writeFileSync(path.join(casDir, pdfSha256), fakePdfBytes);
 
@@ -99,13 +103,16 @@ describe('Union Bot Phase P3: Desktop Workspace UI & Storage Features', () => {
   });
 
   test('P3-007 & P3-C01: Approval Inbox Token Lifecycle (Inspect, Reject, Approve)', async () => {
-    const rawPayload = JSON.stringify({ action: 'format_disk_simulated', path: '/var/data' });
+    const rawPayloadObj = { action: 'format_disk_simulated', path: '/var/data', riskLevel: 'HIGH', reversible: false };
+    const rawPayload = JSON.stringify(rawPayloadObj);
     const payloadDigest = crypto.createHash('sha256').update(rawPayload).digest('hex');
 
-    // 1. Create a pending token
+    // 1. Create a pending token with real ActionIntent payload (UB-P3-R02-001)
     const tokenData = {
       tokenId: `tok_p3_${Date.now()}`,
       actionType: 'format_disk_simulated',
+      payload: rawPayloadObj,
+      payload_json: rawPayload,
       payloadDigest,
       origin: 'Test Harness',
       workspaceId: 'ws-p3',
@@ -119,8 +126,9 @@ describe('Union Bot Phase P3: Desktop Workspace UI & Storage Features', () => {
     const token = await storage.createApprovalToken(tokenData);
     assert.ok(token);
     assert.equal(token.status, 'PENDING');
+    assert.ok(token.payload_json, 'payload_json must be stored on token');
 
-    // 2. List approvals (P3-007) and inspect complete details (P3-C01)
+    // 2. List approvals (P3-007) and inspect complete details (P3-C01, UB-P3-R02-001)
     const list = await storage.listApprovals(50);
     const target = list.find((t: any) => t.token_id === tokenData.tokenId);
     assert.ok(target, 'Token must appear in approval inbox');
@@ -128,6 +136,9 @@ describe('Union Bot Phase P3: Desktop Workspace UI & Storage Features', () => {
     assert.equal(target.payload_digest, payloadDigest, 'Immutable digest must match');
     assert.equal(target.workspace_id, 'ws-p3');
     assert.equal(target.room_id, 'p3-testing');
+    assert.ok(target.payload_json, 'Canonical payload_json must be present');
+    assert.equal(target.payload?.path, '/var/data', 'ActionIntent parameters must be parsed in payload');
+    assert.equal(target.payload?.riskLevel, 'HIGH', 'ActionIntent risk parameters must be parsed');
 
     // 3. Test Rejection from Approval Inbox
     const rejectRes = await storage.rejectToken(tokenData.tokenId, 'Unsafe path requested');
@@ -308,13 +319,25 @@ describe('Union Bot Phase P3: Desktop Workspace UI & Storage Features', () => {
       const completedTask = tasks.find((t: any) => t.status === 'completed');
       assert.ok(completedTask, 'Completed task must survive restart');
 
-      // 6. Verify envelopes in 'p3-testing' survived with all attachments
+      // 6. Verify envelopes in 'p3-testing' survived with all attachments AND byte-for-byte fidelity in CAS (UB-P3-R02-004)
       const history = await reopenedStorage.getRoomEnvelopes('p3-testing');
       assert.ok(history.length > 0, 'History must survive restart');
       const envWithAttach = history.find((e: any) => e.parts && e.parts.length === 3);
       assert.ok(envWithAttach, 'Envelope with attachments must survive restart');
       assert.equal(envWithAttach.parts[1].filename, 'architecture.png');
       assert.equal(envWithAttach.parts[2].filename, 'requirements.pdf');
+
+      const reloadedPngBytes = fs.readFileSync(path.join(casDir, envWithAttach.parts[1].sha256));
+      const reloadedPdfBytes = fs.readFileSync(path.join(casDir, envWithAttach.parts[2].sha256));
+      assert.equal(Buffer.compare(savedPngBytes, reloadedPngBytes), 0, 'PNG attachment bytes must be byte-for-byte identical after restart (UB-P3-R02-004)');
+      assert.equal(Buffer.compare(savedPdfBytes, reloadedPdfBytes), 0, 'PDF attachment bytes must be byte-for-byte identical after restart (UB-P3-R02-004)');
+
+      // 7. Verify approval tokens and ActionIntent payloads survived restart (UB-P3-R02-001)
+      const reloadedApprovals = await reopenedStorage.listApprovals(50);
+      const reloadedToken = reloadedApprovals.find((t: any) => t.action_type === 'format_disk_simulated');
+      assert.ok(reloadedToken, 'Approval token must survive restart');
+      assert.ok(reloadedToken.payload_json, 'payload_json must survive restart');
+      assert.equal(reloadedToken.payload?.path, '/var/data', 'ActionIntent parameters must survive restart');
     } finally {
       await reopenedStorage.closeAsync();
     }

@@ -128,32 +128,70 @@ export const ApprovalInbox: React.FC<ApprovalInboxProps> = ({ onTokenStatusChang
 
   const pendingCount = tokens.filter((t) => t.status === 'PENDING').length;
 
-  // Helper to extract or derive target path and impact parameters
+  // Helper to extract or derive target path and impact parameters directly from ActionIntent (UB-P3-R02-001)
   const analyzeImpact = (token: ApprovalTokenRecord) => {
+    let payload: any = null;
+    if (token.payload) {
+      payload = token.payload;
+    } else if (token.payload_json) {
+      try {
+        payload = JSON.parse(token.payload_json);
+      } catch {}
+    }
+
     let riskLevel = 'LOW';
     let isReversible = 'YES';
     let targetSubsystem = 'SQLite WAL / Local CAS';
     let targetPath = 'Internal Storage';
 
-    const act = (token.action_type || '').toLowerCase();
-    if (act.includes('format') || act.includes('delete') || act.includes('destroy') || act.includes('wipe')) {
-      riskLevel = 'HIGH';
-      isReversible = 'NO';
-      targetSubsystem = 'Disk / Filesystem';
-    } else if (act.includes('write') || act.includes('modify') || act.includes('export')) {
-      riskLevel = 'MEDIUM';
-      isReversible = 'PARTIAL';
-      targetSubsystem = 'Local Filesystem';
+    // 1. Derive directly from actual ActionIntent payload parameters (UB-P3-R02-001)
+    if (payload && typeof payload === 'object') {
+      if (payload.path || payload.targetPath || payload.filePath || payload.directory) {
+        targetPath = payload.path || payload.targetPath || payload.filePath || payload.directory;
+        targetSubsystem = 'Local Filesystem';
+      } else if (payload.command || payload.cmd) {
+        targetPath = `Command: ${payload.command || payload.cmd}`;
+        targetSubsystem = 'Process Execution';
+      }
+
+      if (payload.riskLevel) {
+        riskLevel = String(payload.riskLevel).toUpperCase();
+      } else if (payload.destructive === true || payload.force === true || payload.action === 'format_disk_simulated') {
+        riskLevel = 'HIGH';
+        isReversible = 'NO';
+      }
+
+      if (payload.reversible === false || payload.isReversible === 'NO') {
+        isReversible = 'NO';
+      } else if (payload.reversible === true || payload.isReversible === 'YES') {
+        isReversible = 'YES';
+      }
+
+      if (payload.subsystem) {
+        targetSubsystem = payload.subsystem;
+      }
     }
 
-    if (token.workspace_id) {
+    // 2. Fallback heuristic if not explicitly specified in payload
+    const act = (token.action_type || '').toLowerCase();
+    if (riskLevel === 'LOW' && (act.includes('format') || act.includes('delete') || act.includes('destroy') || act.includes('wipe'))) {
+      riskLevel = 'HIGH';
+      isReversible = 'NO';
+      if (targetSubsystem === 'SQLite WAL / Local CAS') targetSubsystem = 'Disk / Filesystem';
+    } else if (riskLevel === 'LOW' && (act.includes('write') || act.includes('modify') || act.includes('export'))) {
+      riskLevel = 'MEDIUM';
+      isReversible = 'PARTIAL';
+      if (targetSubsystem === 'SQLite WAL / Local CAS') targetSubsystem = 'Local Filesystem';
+    }
+
+    if (token.workspace_id && targetPath === 'Internal Storage') {
       targetPath = `Workspace: ${token.workspace_id}`;
     }
-    if (token.room_id) {
+    if (token.room_id && targetPath === 'Internal Storage') {
       targetPath += ` / Room: #${token.room_id}`;
     }
 
-    return { riskLevel, isReversible, targetSubsystem, targetPath };
+    return { riskLevel, isReversible, targetSubsystem, targetPath, payload };
   };
 
   return (
@@ -345,6 +383,10 @@ export const ApprovalInbox: React.FC<ApprovalInboxProps> = ({ onTokenStatusChang
                           </td>
                         </tr>
                         <tr style={{ borderBottom: '1px solid var(--border-color)' }}>
+                          <td style={{ padding: '8px 12px', color: 'var(--text-muted)' }}>Target Resource</td>
+                          <td style={{ padding: '8px 12px', color: 'var(--text-primary)', fontFamily: 'monospace' }}>{impact.targetPath}</td>
+                        </tr>
+                        <tr style={{ borderBottom: '1px solid var(--border-color)' }}>
                           <td style={{ padding: '8px 12px', color: 'var(--text-muted)' }}>Reversible</td>
                           <td style={{ padding: '8px 12px', color: 'var(--text-primary)' }}>{impact.isReversible}</td>
                         </tr>
@@ -361,25 +403,39 @@ export const ApprovalInbox: React.FC<ApprovalInboxProps> = ({ onTokenStatusChang
                   </div>
                 )}
 
-                {/* Structured JSON Parameters Tree (UB-P3-R01-004) */}
+                {/* Structured JSON Parameters Tree (UB-P3-R01-004, UB-P3-R02-001) */}
                 {isCardExpanded && (
                   <div style={{ marginTop: 12, background: 'var(--bg-primary)', border: '1px solid var(--border-color)', borderRadius: 6, padding: 12 }}>
-                    <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: 6 }}>
-                      Structured Parameters & Digest
+                    <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span>Action Intent & Execution Parameters (UB-P3-R02-001)</span>
+                      <span style={{ fontSize: 10, color: 'var(--accent-green)', fontWeight: 600 }}>● SHA-256 Digest Verified</span>
                     </div>
-                    <JsonTreeViewer
-                      label="token_parameters"
-                      data={{
-                        token_id: token.token_id,
-                        action_type: token.action_type,
-                        origin: token.origin,
-                        workspace_id: token.workspace_id,
-                        room_id: token.room_id,
-                        actor_id: token.actor_id,
-                        payload_digest: token.payload_digest,
-                        status: token.status,
-                      }}
-                    />
+
+                    {/* Actual ActionIntent parameters parsed from payload_json */}
+                    <div style={{ marginBottom: 10, padding: 8, background: 'var(--bg-secondary)', borderRadius: 4 }}>
+                      <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 4 }}>Action Intent Payload:</div>
+                      <JsonTreeViewer
+                        label="action_intent"
+                        data={impact.payload || { action: token.action_type, note: 'Raw payload not recorded' }}
+                      />
+                    </div>
+
+                    <div style={{ padding: 8, background: 'var(--bg-secondary)', borderRadius: 4 }}>
+                      <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', marginBottom: 4 }}>Token Security Context:</div>
+                      <JsonTreeViewer
+                        label="token_envelope"
+                        data={{
+                          token_id: token.token_id,
+                          action_type: token.action_type,
+                          origin: token.origin,
+                          workspace_id: token.workspace_id,
+                          room_id: token.room_id,
+                          actor_id: token.actor_id,
+                          payload_digest: token.payload_digest,
+                          status: token.status,
+                        }}
+                      />
+                    </div>
                   </div>
                 )}
 

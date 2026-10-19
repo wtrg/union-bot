@@ -9,7 +9,7 @@ const cp = require('node:child_process');
 const path = require('node:path');
 const fs = require('node:fs');
 const { EventEmitter } = require('node:events');
-const { computeEnvelopeDigest } = require('./canonical-json.cjs');
+const { computeEnvelopeDigest, canonicalizeJson } = require('./canonical-json.cjs');
 const { runSchemaMigrations } = require('./schema-definition.cjs');
 
 function findSystemNode() {
@@ -225,41 +225,7 @@ class StorageServiceClient extends EventEmitter {
   }
 
   ensureP3Schema(db) {
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS projects (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        description TEXT,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        archived INTEGER NOT NULL DEFAULT 0
-      );
-      CREATE INDEX IF NOT EXISTS idx_projects_archived ON projects (archived);
-
-      CREATE TABLE IF NOT EXISTS tasks (
-        id TEXT PRIMARY KEY,
-        title TEXT NOT NULL,
-        status TEXT NOT NULL,
-        progress INTEGER NOT NULL DEFAULT 0,
-        room_id TEXT,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        metadata_json TEXT
-      );
-      CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks (status);
-      CREATE INDEX IF NOT EXISTS idx_tasks_room ON tasks (room_id);
-    `);
-
-    const now = new Date().toISOString();
-    db.prepare(`
-      INSERT OR IGNORE INTO projects (id, name, description, created_at, updated_at, archived)
-      VALUES ('default', 'General Project', 'Default local workspace project', ?, ?, 0)
-    `).run(now, now);
-
-    const roomCols = db.prepare('PRAGMA table_info(rooms)').all();
-    if (!roomCols.some((c) => c.name === 'project_id')) {
-      db.exec("ALTER TABLE rooms ADD COLUMN project_id TEXT DEFAULT 'default';");
-    }
+    // Phase P3 schema is formally handled by Migration 002_p3_desktop_workspace (UB-P3-R02-003)
   }
 
   handleFallback(method, args = {}) {
@@ -386,7 +352,10 @@ class StorageServiceClient extends EventEmitter {
       }
       case 'listApprovals': {
         const rows = Array.from(this.fallbackApprovals.values()).reverse();
-        return Promise.resolve(rows);
+        return Promise.resolve(rows.map(r => ({
+          ...r,
+          payload: r.payload || (r.payload_json ? JSON.parse(r.payload_json) : null),
+        })));
       }
       case 'rejectToken': {
         const token = this.fallbackApprovals.get(args.tokenId);
@@ -410,15 +379,30 @@ class StorageServiceClient extends EventEmitter {
       }
       case 'getRoomEnvelopes': {
         const list = this.fallbackEnvelopes.get(args.roomId) || [];
-        return Promise.resolve(list.slice(0, args.limit || 100));
+        const queryLimit = typeof args.limit === 'number' ? args.limit : 100;
+        return Promise.resolve(queryLimit === -1 ? list : list.slice(0, queryLimit));
       }
       case 'createApprovalToken': {
         const token = args.token;
-        this.fallbackApprovals.set(token.tokenId, token);
-        return Promise.resolve({ ...token, status: 'PENDING' });
+        let payloadJson = token.payloadJson || token.payload_json || null;
+        if (!payloadJson && token.payload) {
+          payloadJson = canonicalizeJson(token.payload);
+        }
+        const record = {
+          ...token,
+          status: 'PENDING',
+          payload_json: payloadJson,
+          payload: token.payload || (payloadJson ? JSON.parse(payloadJson) : null),
+        };
+        this.fallbackApprovals.set(token.tokenId, record);
+        return Promise.resolve(record);
       }
       case 'getApprovalToken': {
-        return Promise.resolve(this.fallbackApprovals.get(args.tokenId) || null);
+        const row = this.fallbackApprovals.get(args.tokenId) || null;
+        if (row) {
+          row.payload = row.payload || (row.payload_json ? JSON.parse(row.payload_json) : null);
+        }
+        return Promise.resolve(row);
       }
       case 'approveToken': {
         const t = this.fallbackApprovals.get(args.tokenId);
@@ -501,7 +485,7 @@ class StorageServiceClient extends EventEmitter {
             return Promise.resolve({ id: args.id, name: args.name, project_id: args.projectId || 'default', created_at: now, updated_at: now });
           }
           case 'listTasks': {
-            const limit = (args && args.limit) || 50;
+            const limit = typeof (args && args.limit) === 'number' ? args.limit : 50;
             let query = 'SELECT * FROM tasks WHERE 1=1';
             const params = [];
             if (args && args.status) {
@@ -579,9 +563,12 @@ class StorageServiceClient extends EventEmitter {
             });
           }
           case 'listApprovals': {
-            const limit = args.limit || 50;
+            const limit = typeof args.limit === 'number' ? args.limit : 50;
             const rows = this.nativeDb.prepare('SELECT * FROM approvals ORDER BY created_at DESC LIMIT ?').all(limit);
-            return Promise.resolve(rows);
+            return Promise.resolve(rows.map(r => ({
+              ...r,
+              payload: r.payload_json ? JSON.parse(r.payload_json) : null,
+            })));
           }
           case 'rejectToken': {
             const { tokenId, reason } = args;
@@ -775,8 +762,9 @@ class StorageServiceClient extends EventEmitter {
           }
           case 'getRoomEnvelopes': {
             const { roomId, limit = 100 } = args;
+            const queryLimit = typeof limit === 'number' ? limit : 100;
             const rows = this.nativeDb.prepare('SELECT raw_json FROM envelopes WHERE room_id = ? ORDER BY rowid ASC LIMIT ?')
-              .all(roomId, limit);
+              .all(roomId, queryLimit);
             const envelopes = rows.map((r) => JSON.parse(r.raw_json));
             return Promise.resolve(envelopes);
           }
@@ -784,12 +772,16 @@ class StorageServiceClient extends EventEmitter {
             const token = args.token;
             const now = new Date().toISOString();
             const expiresAt = token.expiresAt || new Date(Date.now() + 3600000).toISOString();
+            let payloadJson = token.payloadJson || token.payload_json || null;
+            if (!payloadJson && token.payload) {
+              payloadJson = canonicalizeJson(token.payload);
+            }
             this.nativeDb.prepare(`
               INSERT INTO approvals (
                 token_id, action_type, payload_digest, canonicalization_version, origin,
                 workspace_id, room_id, actor_id, recipient, policy_version,
-                status, created_at, expires_at
-              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?)
+                status, created_at, expires_at, payload_json
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?, ?)
             `).run(
               token.tokenId,
               token.actionType,
@@ -802,12 +794,23 @@ class StorageServiceClient extends EventEmitter {
               token.recipient || null,
               token.policyVersion || '1.0.0',
               token.createdAt || now,
-              expiresAt
+              expiresAt,
+              payloadJson
             );
-            return Promise.resolve({ ...token, status: 'PENDING', createdAt: now, expiresAt });
+            return Promise.resolve({
+              ...token,
+              status: 'PENDING',
+              createdAt: now,
+              expiresAt,
+              payload_json: payloadJson,
+              payload: token.payload || (payloadJson ? JSON.parse(payloadJson) : null),
+            });
           }
           case 'getApprovalToken': {
             const row = this.nativeDb.prepare('SELECT * FROM approvals WHERE token_id = ?').get(args.tokenId);
+            if (row) {
+              row.payload = row.payload_json ? JSON.parse(row.payload_json) : null;
+            }
             return Promise.resolve(row || null);
           }
           case 'approveToken': {

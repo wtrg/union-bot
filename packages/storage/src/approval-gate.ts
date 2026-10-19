@@ -15,7 +15,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { StorageEngine } from './storage-engine.ts';
 import { type ApprovalToken, ApprovalTokenSchema } from '../../protocol/src/index.ts';
 import { UnionBotError } from './errors.ts';
-import { computeCanonicalDigest, CANONICALIZATION_VERSION } from './canonical-json.ts';
+import { computeCanonicalDigest, canonicalizeJson, CANONICALIZATION_VERSION } from './canonical-json.ts';
 
 export interface CreateTokenParams {
   actionType: string;
@@ -66,6 +66,7 @@ export class ApprovalGateManager {
   public createToken(params: CreateTokenParams): ApprovalToken {
     const tokenId = `appr_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
     const payloadDigest = ApprovalGateManager.computePayloadDigest(params.payload);
+    const canonicalPayloadJson = canonicalizeJson(params.payload);
     const now = new Date();
     const expiresAt = new Date(now.getTime() + (params.ttlMs || 300000)).toISOString(); // default 5 min
 
@@ -73,6 +74,8 @@ export class ApprovalGateManager {
       tokenId,
       actionType: params.actionType,
       payloadDigest,
+      payload_json: canonicalPayloadJson,
+      payload: params.payload,
       canonicalizationVersion: CANONICALIZATION_VERSION,
       origin: params.origin,
       workspaceId: params.workspaceId,
@@ -92,9 +95,9 @@ export class ApprovalGateManager {
         INSERT INTO approvals (
           token_id, action_type, payload_digest, canonicalization_version, origin,
           workspace_id, room_id, actor_id, recipient, policy_version,
-          status, created_at, expires_at
+          status, created_at, expires_at, payload_json
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?, ?)
       `)
       .run(
         token.tokenId,
@@ -108,7 +111,8 @@ export class ApprovalGateManager {
         token.recipient || null,
         token.policyVersion,
         token.createdAt,
-        token.expiresAt
+        token.expiresAt,
+        canonicalPayloadJson
       );
 
     // Audit log
@@ -455,10 +459,19 @@ export class ApprovalGateManager {
       .get(tokenId) as any;
     if (!row) return null;
 
+    let parsedPayload: any = undefined;
+    if (row.payload_json) {
+      try {
+        parsedPayload = JSON.parse(row.payload_json);
+      } catch {}
+    }
+
     return {
       tokenId: row.token_id,
       actionType: row.action_type,
       payloadDigest: row.payload_digest,
+      payload_json: row.payload_json || undefined,
+      payload: parsedPayload,
       canonicalizationVersion: row.canonicalization_version || 1,
       origin: row.origin,
       workspaceId: row.workspace_id || undefined,

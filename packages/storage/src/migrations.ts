@@ -20,10 +20,20 @@ import schemaDefinition from './schema-definition.cjs';
 const {
   MIGRATION_1_SQL,
   CANONICAL_MIGRATION_1_CHECKSUM,
+  MIGRATION_2_SQL,
+  CANONICAL_MIGRATION_2_CHECKSUM,
   LEGACY_R04_EMPTY_CHECKSUM,
   computeChecksum: schemaComputeChecksum,
   runSchemaMigrations,
 } = schemaDefinition;
+
+export {
+  MIGRATION_1_SQL,
+  CANONICAL_MIGRATION_1_CHECKSUM,
+  MIGRATION_2_SQL,
+  CANONICAL_MIGRATION_2_CHECKSUM,
+  LEGACY_R04_EMPTY_CHECKSUM,
+};
 
 export interface Migration {
   version: number;

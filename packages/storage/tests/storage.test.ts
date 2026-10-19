@@ -44,13 +44,17 @@ describe('Union Bot Storage Engine & Event Sourcing (P2)', () => {
     const pragmaRow = db.prepare('PRAGMA journal_mode;').get() as { journal_mode: string };
     assert.equal(pragmaRow.journal_mode.toLowerCase(), 'wal');
 
-    const migrations = db.prepare('SELECT version, name FROM schema_migrations').all() as any[];
-    assert.equal(migrations.length, 1);
+    const migrations = db.prepare('SELECT version, name FROM schema_migrations ORDER BY version ASC').all() as any[];
+    assert.equal(migrations.length, 2);
     assert.equal(migrations[0].name, '001_initial_p2_schema');
+    assert.equal(migrations[1].name, '002_p3_desktop_workspace');
 
-    // Test rollback capability
-    const rollback = storage.rollbackLatestMigration();
-    assert.equal(rollback.rolledBackVersion, 1);
+    // Test rollback capability: rolls back version 2, then version 1
+    const rollback2 = storage.rollbackLatestMigration();
+    assert.equal(rollback2.rolledBackVersion, 2);
+
+    const rollback1 = storage.rollbackLatestMigration();
+    assert.equal(rollback1.rolledBackVersion, 1);
 
     const afterRollback = db.prepare('SELECT COUNT(*) as cnt FROM schema_migrations').get() as { cnt: number };
     assert.equal(afterRollback.cnt, 0);

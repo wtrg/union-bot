@@ -66,6 +66,8 @@ export interface ApprovalTokenRecord {
   token_id: string;
   action_type: string;
   payload_digest: string;
+  payload_json?: string;
+  payload?: any;
   origin: string;
   workspace_id?: string;
   room_id?: string;

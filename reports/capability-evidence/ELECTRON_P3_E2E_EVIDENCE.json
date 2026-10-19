@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-10-19T10:00:18.571Z",
+  "timestamp": "2026-10-19T10:35:00.868Z",
   "environment": "Real Windows Electron Chromium E2E (Phase P3 Gate R02)",
   "nodeEnv": "test",
   "results": {
@@ -11,6 +11,7 @@
     "historyFound": true,
     "tokenCreated": true,
     "tokenInList": true,
+    "actionIntentPreserved": true,
     "tokenRejected": true,
     "exportSucceeded": true,
     "pathTraversalBlocked": true,

@@ -128,11 +128,38 @@ const MIGRATION_1_SQL = `
   );
 `;
 
+const MIGRATION_2_SQL = `
+  -- Phase P3 Desktop Workspace Schema (UB-P3-R02-003)
+  CREATE TABLE IF NOT EXISTS projects (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    description TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    archived INTEGER NOT NULL DEFAULT 0
+  );
+  CREATE INDEX IF NOT EXISTS idx_projects_archived ON projects (archived);
+
+  CREATE TABLE IF NOT EXISTS tasks (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    status TEXT NOT NULL,
+    progress INTEGER NOT NULL DEFAULT 0,
+    room_id TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    metadata_json TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks (status);
+  CREATE INDEX IF NOT EXISTS idx_tasks_room ON tasks (room_id);
+`;
+
 function computeChecksum(content) {
   return createHash('sha256').update(content.trim(), 'utf8').digest('hex');
 }
 
 const CANONICAL_MIGRATION_1_CHECKSUM = computeChecksum(MIGRATION_1_SQL);
+const CANONICAL_MIGRATION_2_CHECKSUM = computeChecksum(MIGRATION_2_SQL);
 // Known legacy checksum from R03/R04 desktop implementations
 const LEGACY_R04_EMPTY_CHECKSUM = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855';
 
@@ -156,6 +183,40 @@ const MIGRATIONS = [
         DROP TABLE IF EXISTS envelopes;
         DROP TABLE IF EXISTS events;
         DROP TABLE IF EXISTS rooms;
+      `);
+    },
+  },
+  {
+    version: 2,
+    name: '002_p3_desktop_workspace',
+    checksum: CANONICAL_MIGRATION_2_CHECKSUM,
+    sql: MIGRATION_2_SQL,
+    up: (db) => {
+      db.exec(MIGRATION_2_SQL);
+
+      // Seed default workspace project
+      const now = new Date().toISOString();
+      db.prepare(`
+        INSERT OR IGNORE INTO projects (id, name, description, created_at, updated_at, archived)
+        VALUES ('default', 'General Project', 'Default local workspace project', ?, ?, 0)
+      `).run(now, now);
+
+      // Add project_id column to rooms if not present
+      const roomCols = db.prepare('PRAGMA table_info(rooms)').all();
+      if (!roomCols.some((c) => c.name === 'project_id')) {
+        db.exec("ALTER TABLE rooms ADD COLUMN project_id TEXT DEFAULT 'default';");
+      }
+
+      // Add payload_json column to approvals if not present (UB-P3-R02-001)
+      const approvalCols = db.prepare('PRAGMA table_info(approvals)').all();
+      if (!approvalCols.some((c) => c.name === 'payload_json')) {
+        db.exec("ALTER TABLE approvals ADD COLUMN payload_json TEXT;");
+      }
+    },
+    down: (db) => {
+      db.exec(`
+        DROP TABLE IF EXISTS tasks;
+        DROP TABLE IF EXISTS projects;
       `);
     },
   },
@@ -400,6 +461,8 @@ function runSchemaMigrations(db) {
 module.exports = {
   MIGRATION_1_SQL,
   CANONICAL_MIGRATION_1_CHECKSUM,
+  MIGRATION_2_SQL,
+  CANONICAL_MIGRATION_2_CHECKSUM,
   LEGACY_R04_EMPTY_CHECKSUM,
   MIGRATIONS,
   computeChecksum,

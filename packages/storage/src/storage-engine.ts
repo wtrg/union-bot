@@ -28,9 +28,8 @@ export class StorageEngine {
     this.db.exec('PRAGMA foreign_keys = ON;');
     this.db.exec('PRAGMA busy_timeout = 5000;');
 
-    // Auto-run migrations
+    // Auto-run migrations (Migration 1: P2 Core, Migration 2: P3 Workspace & ActionIntent)
     runMigrations(this.db);
-    this.ensureP3Schema();
   }
 
   public getRawDatabase(): DatabaseSync {
@@ -46,43 +45,7 @@ export class StorageEngine {
   }
 
   public ensureP3Schema(): void {
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS projects (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        description TEXT,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        archived INTEGER NOT NULL DEFAULT 0
-      );
-      CREATE INDEX IF NOT EXISTS idx_projects_archived ON projects (archived);
-
-      CREATE TABLE IF NOT EXISTS tasks (
-        id TEXT PRIMARY KEY,
-        title TEXT NOT NULL,
-        status TEXT NOT NULL,
-        progress INTEGER NOT NULL DEFAULT 0,
-        room_id TEXT,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        metadata_json TEXT
-      );
-      CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks (status);
-      CREATE INDEX IF NOT EXISTS idx_tasks_room ON tasks (room_id);
-    `);
-
-    // Ensure default project exists
-    const now = new Date().toISOString();
-    this.db.prepare(`
-      INSERT OR IGNORE INTO projects (id, name, description, created_at, updated_at, archived)
-      VALUES ('default', 'General Project', 'Default local workspace project', ?, ?, 0)
-    `).run(now, now);
-
-    // Add project_id column to rooms if not present
-    const roomCols = this.db.prepare('PRAGMA table_info(rooms)').all() as any[];
-    if (!roomCols.some((c) => c.name === 'project_id')) {
-      this.db.exec("ALTER TABLE rooms ADD COLUMN project_id TEXT DEFAULT 'default';");
-    }
+    // Phase P3 schema is formally handled by Migration 002_p3_desktop_workspace (UB-P3-R02-003)
   }
 
   // --- Project Operations ---
@@ -175,7 +138,7 @@ export class StorageEngine {
 
   // --- Task Operations ---
   public listTasks(options: { status?: string; roomId?: string; limit?: number } = {}): Array<{ id: string; title: string; status: string; progress: number; roomId?: string; createdAt: string; updatedAt: string; metadata?: any }> {
-    const limit = options.limit || 50;
+    const limit = typeof options.limit === 'number' ? options.limit : 50;
     let query = 'SELECT * FROM tasks WHERE 1=1';
     const params: any[] = [];
     if (options.status) {

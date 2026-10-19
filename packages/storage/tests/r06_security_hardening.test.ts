@@ -21,7 +21,7 @@ import { StorageEngine, UnionBotError, MIGRATIONS } from '../src/index.ts';
 
 // @ts-ignore
 import schemaDefinition from '../src/schema-definition.cjs';
-const { CANONICAL_MIGRATION_1_CHECKSUM, runSchemaMigrations } = schemaDefinition;
+const { CANONICAL_MIGRATION_1_CHECKSUM, CANONICAL_MIGRATION_2_CHECKSUM, runSchemaMigrations } = schemaDefinition;
 
 // @ts-ignore
 import desktopStorageService from '../../../apps/desktop/src/storage-service.cjs';
@@ -322,10 +322,14 @@ describe('Union Bot Phase P2 Gate R06: Mandatory Hardening Vectors (R06-B01 .. R
       const integrityRow = rawDb.prepare('PRAGMA integrity_check').get() as any;
       assert.equal(integrityRow.integrity_check, 'ok');
 
-      const migrationRows = rawDb.prepare('SELECT version, checksum FROM schema_migrations').all() as any[];
-      assert.equal(migrationRows.length, 1);
+      const migrationRows = rawDb.prepare('SELECT version, checksum FROM schema_migrations ORDER BY version ASC').all() as any[];
+      assert.ok(migrationRows.length >= 1);
       assert.equal(migrationRows[0].version, 1);
       assert.equal(migrationRows[0].checksum, CANONICAL_MIGRATION_1_CHECKSUM);
+      if (migrationRows.length >= 2) {
+        assert.equal(migrationRows[1].version, 2);
+        assert.equal(migrationRows[1].checksum, CANONICAL_MIGRATION_2_CHECKSUM);
+      }
     } finally {
       tsEngine.close();
     }
