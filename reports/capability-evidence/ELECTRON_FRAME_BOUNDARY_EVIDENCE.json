@@ -1,6 +1,6 @@
 {
   "suite": "UNION_BOT_ELECTRON_FRAME_BOUNDARY_EVIDENCE",
-  "timestamp": "2026-10-19T15:50:37.958Z",
+  "timestamp": "2026-10-19T16:39:07.555Z",
   "mainFrameAllowed": true,
   "rogueBlocked": true,
   "iframeCheckDenied": true,

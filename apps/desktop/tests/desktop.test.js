@@ -318,17 +318,47 @@ describe('Union Bot Desktop Security & Shell Verification', () => {
     const { ToolHost } = require('../src/tool-host.cjs');
     const toolHost = new ToolHost(path.resolve(__dirname, '../../..'));
 
-    // Unapproved script execution must be rejected with ERR_APPROVAL_REQUIRED
+    // 1. Unapproved script execution must be rejected with ERR_APPROVAL_REQUIRED
     const runRes = await toolHost.runSafeTest('malicious_script.bat');
     assert.equal(runRes.success, false);
     assert.equal(runRes.code, 'ERR_APPROVAL_REQUIRED');
 
-    // Canonical realpath traversal denial
+    // 2. Approval token validation tests (Technical Leader Gate Verification)
+    // 2a. Missing token ID
+    const noIdVal = toolHost.validateApprovalToken({ status: 'APPROVED' }, 'test');
+    assert.equal(noIdVal.valid, false);
+    assert.match(noIdVal.reason, /Invalid or missing token ID/);
+
+    // 2b. Status mismatch
+    const rejectedVal = toolHost.validateApprovalToken({ id: 'tok_1', status: 'PENDING' }, 'test');
+    assert.equal(rejectedVal.valid, false);
+    assert.match(rejectedVal.reason, /Invalid token status/);
+
+    // 2c. Command binding mismatch
+    const cmdMismatchVal = toolHost.validateApprovalToken({ id: 'tok_1', status: 'APPROVED', boundCommand: 'typecheck' }, 'test');
+    assert.equal(cmdMismatchVal.valid, false);
+    assert.match(cmdMismatchVal.reason, /bound to command 'typecheck', not 'test'/);
+
+    // 2d. Expired token
+    const expiredVal = toolHost.validateApprovalToken({ id: 'tok_1', status: 'APPROVED', expiresAt: Date.now() - 5000 }, 'test');
+    assert.equal(expiredVal.valid, false);
+    assert.match(expiredVal.reason, /Approval token has expired/);
+
+    // 2e. Valid non-expired bound token
+    const validVal = toolHost.validateApprovalToken({ id: 'tok_valid', status: 'APPROVED', boundCommand: 'test', expiresAt: Date.now() + 60000 }, 'test');
+    assert.equal(validVal.valid, true);
+
+    // 3. Path traversal & boundary isolation (same-prefix attack defense via path.relative)
     const escapeRes = await toolHost.readFile('../../../Windows/win.ini');
     assert.equal(escapeRes.success, false);
     assert.match(escapeRes.error, /ERR_PATH_TRAVERSAL/);
 
-    // Verify max file read limit is enforced
+    // Same-prefix boundary isolation test (e.g. C:\repo vs C:\repo-evil)
+    assert.throws(() => {
+      toolHost.resolveSafePath('../' + path.basename(toolHost.workspaceRoot) + '-evil/malicious.txt');
+    }, /ERR_PATH_TRAVERSAL/);
+
+    // 4. Verify max file read limit is enforced
     assert.equal(ToolHost.ABSOLUTE_MAX_READ_BYTES, 5 * 1024 * 1024);
   });
 

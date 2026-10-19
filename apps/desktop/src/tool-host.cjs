@@ -38,7 +38,8 @@ class ToolHost {
       throw new Error('ERR_INVALID_PATH: Path must be a non-empty string');
     }
     const resolved = path.resolve(this.workspaceRoot, targetPath.trim());
-    if (resolved !== this.workspaceRoot && !resolved.startsWith(this.workspaceRoot + path.sep)) {
+    const relToWorkspace = path.relative(this.workspaceRoot, resolved);
+    if (relToWorkspace.startsWith('..') || path.isAbsolute(relToWorkspace)) {
       throw new Error(`ERR_PATH_TRAVERSAL: Access denied outside workspace boundary (${targetPath})`);
     }
 
@@ -47,7 +48,8 @@ class ToolHost {
       try {
         const realResolved = fs.realpathSync(resolved);
         const realWorkspace = fs.realpathSync(this.workspaceRoot);
-        if (realResolved !== realWorkspace && !realResolved.startsWith(realWorkspace + path.sep)) {
+        const relToRealWorkspace = path.relative(realWorkspace, realResolved);
+        if (relToRealWorkspace.startsWith('..') || path.isAbsolute(relToRealWorkspace)) {
           throw new Error(`ERR_PATH_TRAVERSAL: Symlink target outside workspace boundary (${targetPath})`);
         }
         return realResolved;
@@ -118,7 +120,8 @@ class ToolHost {
           // Verify symlink target does not escape workspace
           try {
             const realEntry = fs.realpathSync(fullPath);
-            if (realEntry !== realWorkspace && !realEntry.startsWith(realWorkspace + path.sep)) {
+            const relToReal = path.relative(realWorkspace, realEntry);
+            if (relToReal.startsWith('..') || path.isAbsolute(relToReal)) {
               continue;
             }
           } catch {
@@ -174,16 +177,43 @@ class ToolHost {
   }
 
   /**
+   * Validates human approval token (UB-P5-R01-002 / Gate Hardening).
+   * Verifies status, non-empty tokenId, command binding, and non-expiration.
+   */
+  validateApprovalToken(token, command) {
+    if (!token || typeof token !== 'object') {
+      return { valid: false, reason: 'Missing approval token' };
+    }
+    if (token.status !== 'APPROVED') {
+      return { valid: false, reason: `Invalid token status: ${token.status}` };
+    }
+    if (!token.id || typeof token.id !== 'string' || token.id.trim().length === 0) {
+      return { valid: false, reason: 'Invalid or missing token ID' };
+    }
+    if (token.boundCommand && token.boundCommand !== command) {
+      return { valid: false, reason: `Token is bound to command '${token.boundCommand}', not '${command}'` };
+    }
+    if (token.expiresAt) {
+      const expiry = typeof token.expiresAt === 'number' ? token.expiresAt : Date.parse(token.expiresAt);
+      if (isNaN(expiry) || expiry <= Date.now()) {
+        return { valid: false, reason: 'Approval token has expired' };
+      }
+    }
+    return { valid: true };
+  }
+
+  /**
    * Native script execution control (UB-P5-R01-002 / P5-R02-T02).
    * ToolHost is strictly read-only. Executing native test scripts requires an explicit approval token.
    */
   async runSafeTest(command = 'test', options = {}) {
     const { approvalToken } = options || {};
-    if (!approvalToken || approvalToken.status !== 'APPROVED') {
+    const validation = this.validateApprovalToken(approvalToken, command);
+    if (!validation.valid) {
       return {
         success: false,
         code: 'ERR_APPROVAL_REQUIRED',
-        error: 'ERR_APPROVAL_REQUIRED: Native script execution in ToolHost requires explicit human approval token (P5-R02-T02)',
+        error: `ERR_APPROVAL_REQUIRED: Native script execution in ToolHost requires valid approval token (${validation.reason})`,
       };
     }
 
