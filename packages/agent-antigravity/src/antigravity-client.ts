@@ -18,6 +18,7 @@ import fs from 'node:fs';
 
 export interface AntigravityTurnOptions {
   cwd?: string;
+  workspaceRoot?: string;
   conversationId?: string;
   addDirs?: string[];
   model?: string;
@@ -256,19 +257,99 @@ export class AntigravityClient extends EventEmitter {
   private isExecuting = false;
 
   /**
-   * Canonical Workspace Boundary Defense (Ticket P7-004).
-   * Verifies that targetPath is strictly inside workspaceRoot using path.relative.
+   * Resolves a path to its canonical filesystem realpath.
+   * If the target path does not exist, walks up ancestor directories until
+   * the nearest existing ancestor is found, canonicalizes it, and reconstructs
+   * the downstream path. Returns null if invalid or cannot be resolved.
+   */
+  public static getCanonicalPath(targetPath: string): string | null {
+    if (!targetPath || typeof targetPath !== 'string' || !targetPath.trim()) {
+      return null;
+    }
+    try {
+      const resolved = path.resolve(targetPath.trim());
+      // Check if file or symlink exists using lstatSync to avoid following broken/outside links blindly
+      try {
+        fs.lstatSync(resolved);
+        return fs.realpathSync(resolved);
+      } catch {
+        // resolved does not exist directly, walk up ancestors
+      }
+
+      let current = resolved;
+      const missing: string[] = [];
+      while (true) {
+        let exists = false;
+        try {
+          fs.lstatSync(current);
+          exists = true;
+        } catch {
+          exists = false;
+        }
+
+        if (exists) {
+          const realParent = fs.realpathSync(current);
+          return path.join(realParent, ...missing);
+        }
+
+        const parent = path.dirname(current);
+        if (parent === current) {
+          // Reached filesystem root without finding existing directory
+          return resolved;
+        }
+        missing.unshift(path.basename(current));
+        current = parent;
+      }
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Canonical Workspace Boundary Defense (Ticket P7-004, P7-R01).
+   * Verifies that targetPath is strictly inside workspaceRoot using both
+   * lexical containment and realpath filesystem canonicalization.
+   * Defends against:
+   * - Lexical traversal (../..)
+   * - Same-prefix sibling escapes (C:\workspace-evil vs C:\workspace)
+   * - Windows junctions and symlinks escaping workspace to outside targets
+   * - Symlink chains ending outside workspace
+   * - Non-existent file/directory targets inside symlink escapes
+   * - Reparse point and drive letter breakout
    */
   public static verifyWorkspaceBoundary(workspaceRoot: string, targetPath: string): boolean {
     if (!workspaceRoot || !targetPath) return false;
-    try {
-      const canonicalRoot = path.resolve(workspaceRoot);
-      const canonicalTarget = path.resolve(targetPath);
+    if (typeof workspaceRoot !== 'string' || typeof targetPath !== 'string') return false;
+    if (!workspaceRoot.trim() || !targetPath.trim()) return false;
 
-      const rel = path.relative(canonicalRoot, canonicalTarget);
-      if (rel.startsWith('..') || path.isAbsolute(rel)) {
+    try {
+      // 1. Initial lexical path resolution and containment check (fast-fail)
+      const resolvedRoot = path.resolve(workspaceRoot.trim());
+      const resolvedTarget = path.resolve(resolvedRoot, targetPath.trim());
+
+      const relLexical = path.relative(resolvedRoot, resolvedTarget);
+      if (relLexical.startsWith('..') || path.isAbsolute(relLexical)) {
         return false;
       }
+
+      // 2. Realpath filesystem canonicalization for workspaceRoot
+      const canonicalRoot = AntigravityClient.getCanonicalPath(resolvedRoot);
+      if (!canonicalRoot) {
+        return false;
+      }
+
+      // 3. Realpath filesystem canonicalization for targetPath (or nearest existing ancestor)
+      const canonicalTarget = AntigravityClient.getCanonicalPath(resolvedTarget);
+      if (!canonicalTarget) {
+        return false;
+      }
+
+      // 4. Canonical containment verification
+      const relCanonical = path.relative(canonicalRoot, canonicalTarget);
+      if (relCanonical.startsWith('..') || path.isAbsolute(relCanonical)) {
+        return false;
+      }
+
       return true;
     } catch {
       return false;
@@ -288,10 +369,10 @@ export class AntigravityClient extends EventEmitter {
       throw new Error('ERR_ANTIGRAVITY_BUSY: A turn is already executing on this client');
     }
 
-    // Ticket P7-004: Workspace Boundary Verification
-    if (options.cwd) {
-      const currentWorkspace = options.cwd;
-      const isValid = AntigravityClient.verifyWorkspaceBoundary(currentWorkspace, currentWorkspace);
+    // Ticket P7-004 & P7-R01: Workspace Boundary Verification (trusted workspaceRoot -> cwd)
+    const trustedRoot = options.workspaceRoot || options.cwd;
+    if (trustedRoot && options.cwd) {
+      const isValid = AntigravityClient.verifyWorkspaceBoundary(trustedRoot, options.cwd);
       if (!isValid) {
         throw new Error('ERR_PATH_TRAVERSAL: Execution cwd is outside permitted workspace boundary');
       }

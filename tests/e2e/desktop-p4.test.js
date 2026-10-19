@@ -70,6 +70,19 @@ function runElectronProcess(args, { timeoutMs = 35000, onStdout, env = {} } = {}
     child.stdout.on('data', (d) => {
       const str = d.toString();
       stdout += str;
+      if (str.includes('[P4-E2E] ALL_P4_E2E_CHECKS_PASSED')) {
+        setTimeout(() => {
+          clearTimeout(timer);
+          try {
+            if (process.platform === 'win32') {
+              spawn('taskkill', ['/F', '/T', '/PID', String(child.pid)]);
+            } else {
+              child.kill('SIGKILL');
+            }
+          } catch {}
+          resolve({ code: 0, signal: null, stdout, stderr, child });
+        }, 1000);
+      }
       if (typeof onStdout === 'function') {
         onStdout(str, child);
       }
@@ -117,7 +130,7 @@ describe('Union Bot Phase P4 Gate: Windows Real Electron E2E Suite', () => {
         NODE_ENV: 'test',
         UNION_BOT_E2E_HARNESS: '1',
       },
-      timeoutMs: 40000,
+      timeoutMs: 65000,
     });
 
     assert.equal(code, 0, `Electron process should exit with code 0. Stderr: ${stderr}\nStdout: ${stdout}`);

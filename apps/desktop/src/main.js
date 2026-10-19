@@ -13,6 +13,7 @@
 const { app, BrowserWindow, WebContentsView, dialog, ipcMain, session, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 const { pathToFileURL } = require('url');
 const { safeOpenExternal, validateExternalUrl } = require('./safe-external.js');
 const { CostGuard, installElectronCostGuardInterceptor } = require('./cost-guard.cjs');
@@ -2915,6 +2916,16 @@ function createWindow() {
       try {
         console.log('[P7-E2E] Running Real Windows Electron P7 Verification (Native Antigravity Agent Integration)...');
 
+        const e2eScratchDir = path.resolve(__dirname, '../../../scratch/p7-e2e-junction');
+        const e2eOutsideDir = path.join(os.tmpdir(), `p7-e2e-outside-${Date.now()}`);
+        fs.mkdirSync(e2eScratchDir, { recursive: true });
+        fs.mkdirSync(e2eOutsideDir, { recursive: true });
+        const e2eJunctionPath = path.join(e2eScratchDir, 'escape-junction');
+        const symlinkType = process.platform === 'win32' ? 'junction' : 'dir';
+        try {
+          fs.symlinkSync(e2eOutsideDir, e2eJunctionPath, symlinkType);
+        } catch {}
+
         const p7Result = await mainWindow.webContents.executeJavaScript(`
           (async () => {
             const results = {};
@@ -2935,6 +2946,16 @@ function createWindow() {
             results.invalidBoundaryDenied = Boolean(
               invalidBoundary?.success === false &&
               invalidBoundary?.error?.includes('ERR_PATH_TRAVERSAL')
+            );
+
+            // 2b. P7-R01: Real filesystem Windows junction escape defense (including non-existent child)
+            const junctionBoundary = await window.unionBotAPI.antigravityVerifyBoundary('scratch/p7-e2e-junction/escape-junction');
+            const nonExistInJunction = await window.unionBotAPI.antigravityVerifyBoundary('scratch/p7-e2e-junction/escape-junction/nested-file.txt');
+            results.junctionEscapeDenied = Boolean(
+              junctionBoundary?.success === false &&
+              junctionBoundary?.error?.includes('ERR_PATH_TRAVERSAL') &&
+              nonExistInJunction?.success === false &&
+              nonExistInJunction?.error?.includes('ERR_PATH_TRAVERSAL')
             );
 
             // 3. P7-004: Explicit denial of forbidden flags (--dangerously-skip-permissions)
@@ -3029,6 +3050,7 @@ function createWindow() {
           'antigravityVersionMatches',
           'validBoundaryAllowed',
           'invalidBoundaryDenied',
+          'junctionEscapeDenied',
           'forbiddenFlagDenied',
           'executeSuccess',
           'providerIsAntigravity',
@@ -3056,6 +3078,12 @@ function createWindow() {
           results: p7Result,
           allPassed,
         }, null, 2));
+
+        try {
+          if (fs.existsSync(e2eJunctionPath)) fs.rmSync(e2eJunctionPath, { force: true });
+          if (fs.existsSync(e2eScratchDir)) fs.rmSync(e2eScratchDir, { recursive: true, force: true });
+          if (fs.existsSync(e2eOutsideDir)) fs.rmSync(e2eOutsideDir, { recursive: true, force: true });
+        } catch {}
 
         if (!allPassed) {
           console.error('[P7-E2E] One or more P7 checks failed.');

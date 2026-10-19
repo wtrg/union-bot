@@ -41,17 +41,79 @@ describe('Phase P7: Antigravity Native Agent Adapter Suite', () => {
     assert.ok(discovery.installInstructions?.includes(fakePath));
   });
 
-  it('P7-004: Enforces Canonical Workspace Boundary Defense against directory traversal', () => {
-    const root = path.resolve('C:/safe/workspace');
+  it('P7-004 & P7-R01: Enforces Canonical Workspace Boundary Defense against real filesystem junctions, symlinks, chains, and non-existent targets', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-boundary-test-'));
+    const workspace = path.join(tempDir, 'workspace');
+    const outside = path.join(tempDir, 'outside');
+    const internalDir = path.join(workspace, 'internal');
 
-    // Valid paths
-    assert.equal(AntigravityClient.verifyWorkspaceBoundary(root, path.join(root, 'src/index.ts')), true);
-    assert.equal(AntigravityClient.verifyWorkspaceBoundary(root, path.join(root, 'nested/dir')), true);
+    fs.mkdirSync(workspace, { recursive: true });
+    fs.mkdirSync(outside, { recursive: true });
+    fs.mkdirSync(internalDir, { recursive: true });
 
-    // Path traversal attacks
-    assert.equal(AntigravityClient.verifyWorkspaceBoundary(root, 'C:/safe/workspace-evil'), false);
-    assert.equal(AntigravityClient.verifyWorkspaceBoundary(root, 'C:/other/dir'), false);
-    assert.equal(AntigravityClient.verifyWorkspaceBoundary(root, path.join(root, '../../escaped')), false);
+    const symlinkType = process.platform === 'win32' ? 'junction' : 'dir';
+
+    try {
+      // 1. Valid in-workspace paths
+      assert.equal(AntigravityClient.verifyWorkspaceBoundary(workspace, path.join(workspace, 'src/index.ts')), true);
+      assert.equal(AntigravityClient.verifyWorkspaceBoundary(workspace, internalDir), true);
+      assert.equal(AntigravityClient.verifyWorkspaceBoundary(workspace, path.join(internalDir, 'deep/non_existent.ts')), true);
+
+      // 2. Lexical traversal & same-prefix escapes
+      assert.equal(AntigravityClient.verifyWorkspaceBoundary(workspace, workspace + '-evil'), false, 'Same-prefix sibling must be denied');
+      assert.equal(AntigravityClient.verifyWorkspaceBoundary(workspace, path.join(workspace, '../outside')), false, '../ traversal must be denied');
+      assert.equal(AntigravityClient.verifyWorkspaceBoundary(workspace, outside), false, 'Outside directory must be denied');
+
+      // 3. Junction / Symlink inside workspace -> outside workspace (breakout)
+      const escapeLink = path.join(workspace, 'escape-link');
+      fs.symlinkSync(outside, escapeLink, symlinkType);
+      assert.equal(AntigravityClient.verifyWorkspaceBoundary(workspace, escapeLink), false, 'Symlink escaping to outside must be denied');
+      assert.equal(AntigravityClient.verifyWorkspaceBoundary(workspace, path.join(escapeLink, 'nested-file.txt')), false, 'Non-existent file inside escape symlink must be denied');
+      assert.equal(AntigravityClient.verifyWorkspaceBoundary(workspace, path.join(escapeLink, 'deep/non_existent/dir')), false, 'Deep non-existent path inside escape symlink must be denied');
+
+      // 4. Symlink chain: link-a -> link-b -> outside
+      const linkB = path.join(workspace, 'link-b');
+      const linkA = path.join(workspace, 'link-a');
+      fs.symlinkSync(outside, linkB, symlinkType);
+      fs.symlinkSync(linkB, linkA, symlinkType);
+      assert.equal(AntigravityClient.verifyWorkspaceBoundary(workspace, linkA), false, 'Symlink chain escaping to outside must be denied');
+
+      // 5. Valid symlink staying inside workspace (allowed)
+      const validLink = path.join(workspace, 'valid-link');
+      fs.symlinkSync(internalDir, validLink, symlinkType);
+      assert.equal(AntigravityClient.verifyWorkspaceBoundary(workspace, validLink), true, 'Symlink inside workspace must be allowed');
+      assert.equal(AntigravityClient.verifyWorkspaceBoundary(workspace, path.join(validLink, 'new-file.txt')), true, 'Non-existent file inside valid symlink must be allowed');
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('P7-R01: executeTurn enforces workspaceRoot -> cwd boundary validation', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-exec-boundary-'));
+    const workspace = path.join(tempDir, 'workspace');
+    const outside = path.join(tempDir, 'outside');
+    fs.mkdirSync(workspace, { recursive: true });
+    fs.mkdirSync(outside, { recursive: true });
+
+    const client = new AntigravityClient();
+    const mockTransport = new MockAntigravityTransport([]);
+
+    try {
+      await assert.rejects(
+        async () => {
+          await client.executeTurn('mock-agy', 'prompt', {
+            workspaceRoot: workspace,
+            cwd: outside,
+          }, mockTransport);
+        },
+        (err: any) => {
+          assert.match(err.message, /ERR_PATH_TRAVERSAL/);
+          return true;
+        }
+      );
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 
   it('P7-004: Explicitly rejects --dangerously-skip-permissions fail-closed', async () => {
@@ -191,16 +253,26 @@ describe('Phase P7: Antigravity Native Agent Adapter Suite', () => {
     fs.rmSync(tempCasDir, { recursive: true, force: true });
   });
 
-  it('P7-004: Adapter rejects out-of-boundary directory fail-closed', async () => {
-    const adapter = new AntigravityAdapter();
-    const result = await adapter.execute({
-      prompt: 'test',
-      workspaceRoot: path.resolve('C:/safe/workspace'),
-      targetDir: path.resolve('C:/escaped/path'),
-      mockTransport: new MockAntigravityTransport([]),
-    });
+  it('P7-004 & P7-R01: Adapter rejects out-of-boundary directory fail-closed', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-adapter-boundary-'));
+    const safeWorkspace = path.join(tempDir, 'safe-workspace');
+    const escapedDir = path.join(tempDir, 'escaped-path');
+    fs.mkdirSync(safeWorkspace, { recursive: true });
+    fs.mkdirSync(escapedDir, { recursive: true });
 
-    assert.equal(result.success, false);
-    assert.match(result.error || '', /ERR_PATH_TRAVERSAL/);
+    try {
+      const adapter = new AntigravityAdapter();
+      const result = await adapter.execute({
+        prompt: 'test',
+        workspaceRoot: safeWorkspace,
+        targetDir: escapedDir,
+        mockTransport: new MockAntigravityTransport([]),
+      });
+
+      assert.equal(result.success, false);
+      assert.match(result.error || '', /ERR_PATH_TRAVERSAL/);
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 });

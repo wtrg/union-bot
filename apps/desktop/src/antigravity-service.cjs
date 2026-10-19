@@ -96,11 +96,12 @@ class AntigravityService extends EventEmitter {
    * Verifies canonical workspace boundary containment (P7-004).
    */
   async verifyWorkspaceBoundary(targetPath) {
-    const resolved = path.resolve(this.workspaceRoot, targetPath);
-    const rel = path.relative(this.workspaceRoot, resolved);
-    if (rel.startsWith('..') || path.isAbsolute(rel)) {
+    const { AntigravityClient } = getAntigravityModules();
+    const isValid = AntigravityClient.verifyWorkspaceBoundary(this.workspaceRoot, targetPath);
+    if (!isValid) {
       throw new Error(`ERR_PATH_TRAVERSAL: Working directory '${targetPath}' escapes workspace root '${this.workspaceRoot}'`);
     }
+    const resolved = path.resolve(this.workspaceRoot, targetPath);
     return resolved;
   }
 

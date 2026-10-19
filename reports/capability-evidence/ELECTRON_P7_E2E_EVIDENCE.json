@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-10-19T18:35:33.429Z",
+  "timestamp": "2026-10-19T19:07:13.754Z",
   "environment": "Real Windows Electron (Phase P7 Native Antigravity Agent Integration)",
   "nodeEnv": "test",
   "results": {
@@ -10,6 +10,7 @@
     "antigravityVersionMatches": true,
     "validBoundaryAllowed": true,
     "invalidBoundaryDenied": true,
+    "junctionEscapeDenied": true,
     "forbiddenFlagDenied": true,
     "executeSuccess": true,
     "providerIsAntigravity": true,

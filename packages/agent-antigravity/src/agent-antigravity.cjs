@@ -330,16 +330,76 @@ class AntigravityClient extends EventEmitter {
     this.isExecuting = false;
   }
 
+  static getCanonicalPath(targetPath) {
+    if (!targetPath || typeof targetPath !== 'string' || !targetPath.trim()) {
+      return null;
+    }
+    try {
+      const resolved = path.resolve(targetPath.trim());
+      try {
+        fs.lstatSync(resolved);
+        return fs.realpathSync(resolved);
+      } catch {
+        // resolved does not exist directly, walk up ancestors
+      }
+
+      let current = resolved;
+      const missing = [];
+      while (true) {
+        let exists = false;
+        try {
+          fs.lstatSync(current);
+          exists = true;
+        } catch {
+          exists = false;
+        }
+
+        if (exists) {
+          const realParent = fs.realpathSync(current);
+          return path.join(realParent, ...missing);
+        }
+
+        const parent = path.dirname(current);
+        if (parent === current) {
+          return resolved;
+        }
+        missing.unshift(path.basename(current));
+        current = parent;
+      }
+    } catch {
+      return null;
+    }
+  }
+
   static verifyWorkspaceBoundary(workspaceRoot, targetPath) {
     if (!workspaceRoot || !targetPath) return false;
-    try {
-      const canonicalRoot = path.resolve(workspaceRoot);
-      const canonicalTarget = path.resolve(targetPath);
+    if (typeof workspaceRoot !== 'string' || typeof targetPath !== 'string') return false;
+    if (!workspaceRoot.trim() || !targetPath.trim()) return false;
 
-      const rel = path.relative(canonicalRoot, canonicalTarget);
-      if (rel.startsWith('..') || path.isAbsolute(rel)) {
+    try {
+      const resolvedRoot = path.resolve(workspaceRoot.trim());
+      const resolvedTarget = path.resolve(resolvedRoot, targetPath.trim());
+
+      const relLexical = path.relative(resolvedRoot, resolvedTarget);
+      if (relLexical.startsWith('..') || path.isAbsolute(relLexical)) {
         return false;
       }
+
+      const canonicalRoot = AntigravityClient.getCanonicalPath(resolvedRoot);
+      if (!canonicalRoot) {
+        return false;
+      }
+
+      const canonicalTarget = AntigravityClient.getCanonicalPath(resolvedTarget);
+      if (!canonicalTarget) {
+        return false;
+      }
+
+      const relCanonical = path.relative(canonicalRoot, canonicalTarget);
+      if (relCanonical.startsWith('..') || path.isAbsolute(relCanonical)) {
+        return false;
+      }
+
       return true;
     } catch {
       return false;
@@ -351,9 +411,9 @@ class AntigravityClient extends EventEmitter {
       throw new Error('ERR_ANTIGRAVITY_BUSY: A turn is already executing on this client');
     }
 
-    if (options.cwd) {
-      const currentWorkspace = options.cwd;
-      const isValid = AntigravityClient.verifyWorkspaceBoundary(currentWorkspace, currentWorkspace);
+    const trustedRoot = options.workspaceRoot || options.cwd;
+    if (trustedRoot && options.cwd) {
+      const isValid = AntigravityClient.verifyWorkspaceBoundary(trustedRoot, options.cwd);
       if (!isValid) {
         throw new Error('ERR_PATH_TRAVERSAL: Execution cwd is outside permitted workspace boundary');
       }
@@ -549,6 +609,7 @@ class AntigravityAdapter {
         prompt,
         {
           cwd: effectiveDir,
+          workspaceRoot,
           conversationId,
           forbiddenFlags,
         },

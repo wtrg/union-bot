@@ -129,6 +129,7 @@ export class AntigravityAdapter {
         prompt,
         {
           cwd: effectiveDir,
+          workspaceRoot,
           conversationId,
           forbiddenFlags,
         },

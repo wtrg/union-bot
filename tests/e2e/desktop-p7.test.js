@@ -141,6 +141,7 @@ describe('Union Bot Phase P7 Gate: Windows Real Electron E2E Suite', () => {
     assert.equal(evidence.results.antigravityVersionMatches, true, 'P7-001: Antigravity CLI version must be 1.4.2');
     assert.equal(evidence.results.validBoundaryAllowed, true, 'P7-004: In-workspace path must be allowed');
     assert.equal(evidence.results.invalidBoundaryDenied, true, 'P7-004: Directory traversal must be rejected with ERR_PATH_TRAVERSAL');
+    assert.equal(evidence.results.junctionEscapeDenied, true, 'P7-R01: Real filesystem Windows junction escape must be rejected with ERR_PATH_TRAVERSAL');
     assert.equal(evidence.results.forbiddenFlagDenied, true, 'P7-004: Forbidden flag must be rejected with ERR_FORBIDDEN_FLAG');
     assert.equal(evidence.results.executeSuccess, true, 'P7-002: Prompt execution must succeed');
     assert.equal(evidence.results.providerIsAntigravity, true, 'P7-002: Execution provider must be antigravity');
@@ -156,6 +157,7 @@ describe('Union Bot Phase P7 Gate: Windows Real Electron E2E Suite', () => {
     assert.match(stdout, /\[P7-E2E\] Check antigravityVersionMatches: true/);
     assert.match(stdout, /\[P7-E2E\] Check validBoundaryAllowed: true/);
     assert.match(stdout, /\[P7-E2E\] Check invalidBoundaryDenied: true/);
+    assert.match(stdout, /\[P7-E2E\] Check junctionEscapeDenied: true/);
     assert.match(stdout, /\[P7-E2E\] Check forbiddenFlagDenied: true/);
     assert.match(stdout, /\[P7-E2E\] Check executeSuccess: true/);
     assert.match(stdout, /\[P7-E2E\] Check providerIsAntigravity: true/);
