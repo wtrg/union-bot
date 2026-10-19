@@ -24,6 +24,9 @@ const RoleSchema = z.enum([
   'RESEARCHER',
   'ORCHESTRATOR',
   'USER',
+  'ARCHITECT',
+  'REVIEWER',
+  'TESTER',
 ]);
 
 const ProviderKindSchema = z.enum([
@@ -286,6 +289,10 @@ const UnionBotErrorCodeSchema = z.enum([
   'ERR_RECONCILIATION_REQUIRED',
   'ERR_NETWORK_DISCONNECTED',
   'ERR_TIMEOUT',
+  'ERR_CYCLE_DETECTED',
+  'ERR_TASK_GRAPH_FAILED',
+  'ERR_INVALID_STAGE_TRANSITION',
+  'ERR_CONSENSUS_FAILED',
 ]);
 
 const AdmissionActionTypeSchema = z.enum([

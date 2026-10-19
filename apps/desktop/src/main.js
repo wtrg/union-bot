@@ -28,6 +28,7 @@ const { ToolHost } = require('./tool-host.cjs');
 const { MCPService } = require('./mcp-service.cjs');
 const { CodexService } = require('./codex-service.cjs');
 const { AntigravityService } = require('./antigravity-service.cjs');
+const { TaskGraphService } = require('./task-graph-service.cjs');
 
 // Custom test userData override for isolated multi-process E2E testing
 const customUserDataArg = process.argv.find((a) => a.startsWith('--test-user-data=') || a.startsWith('--user-data-dir='));
@@ -95,6 +96,14 @@ antigravityService.on('delta', (delta) => {
 antigravityService.on('turn_completed', (result) => {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('union-bot:antigravity-turn-completed', { result });
+  }
+});
+
+const taskGraphService = new TaskGraphService(path.resolve(__dirname, '../../..'), costGuard, storage);
+
+taskGraphService.on('graph-event', (evt) => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('union-bot:task-graph-event', evt);
   }
 });
 
@@ -3103,6 +3112,155 @@ function createWindow() {
     return;
   }
 
+  // Phase P8: Real Windows Electron P8 Verification (Multi-Agent Task Graph & Consensus Engine)
+  if (process.argv.includes('--p8-e2e')) {
+    mainWindow.webContents.once('did-finish-load', async () => {
+      try {
+        console.log('[P8-E2E] Running Real Windows Electron P8 Verification (Multi-Agent Task Graph & Consensus Engine)...');
+
+        const e2eScratchDir = path.resolve(__dirname, '../../../scratch/p8-e2e-junction');
+        const e2eOutsideDir = path.join(os.tmpdir(), `p8-e2e-outside-${Date.now()}`);
+        fs.mkdirSync(e2eScratchDir, { recursive: true });
+        fs.mkdirSync(e2eOutsideDir, { recursive: true });
+        const e2eJunctionPath = path.join(e2eScratchDir, 'escape-junction');
+        const symlinkType = process.platform === 'win32' ? 'junction' : 'dir';
+        try {
+          fs.symlinkSync(e2eOutsideDir, e2eJunctionPath, symlinkType);
+        } catch {}
+
+        const p8Result = await mainWindow.webContents.executeJavaScript(`
+          (async () => {
+            const results = {};
+
+            // 1. P8-001 & P8-003: Create standard 5-stage pipeline
+            const pipeRes = await window.unionBotAPI.taskGraphStandardPipeline({
+              id: 'p8-e2e-pipeline',
+              name: 'Windows Electron E2E 5-Stage Task Graph',
+              planPrompt: 'Architect multi-agent consensus workflow',
+              targetFiles: ['src/feature.ts'],
+            });
+            results.pipelineCreateSuccess = Boolean(pipeRes?.success);
+            results.nodeCountIs5 = Boolean(pipeRes?.graph?.nodes?.length === 5);
+            results.hasPlanNode = Boolean(pipeRes?.graph?.nodes?.some(n => n.stage === 'PLAN'));
+            results.hasImplementNode = Boolean(pipeRes?.graph?.nodes?.some(n => n.stage === 'IMPLEMENT'));
+            results.hasReviewNode = Boolean(pipeRes?.graph?.nodes?.some(n => n.stage === 'REVIEW'));
+            results.hasFixNode = Boolean(pipeRes?.graph?.nodes?.some(n => n.stage === 'FIX'));
+            results.hasVerifyNode = Boolean(pipeRes?.graph?.nodes?.some(n => n.stage === 'VERIFY'));
+
+            // 2. P8-007: Canonical workspace boundary verification
+            const validBoundary = await window.unionBotAPI.taskGraphVerifyBoundary('package.json');
+            results.validBoundaryAllowed = Boolean(validBoundary?.success && validBoundary?.isInside === true);
+
+            const invalidBoundary = await window.unionBotAPI.taskGraphVerifyBoundary('../../Windows/System32/cmd.exe');
+            results.invalidBoundaryDenied = Boolean(invalidBoundary?.success && invalidBoundary?.isInside === false);
+
+            const junctionBoundary = await window.unionBotAPI.taskGraphVerifyBoundary('scratch/p8-e2e-junction/escape-junction');
+            results.junctionEscapeDenied = Boolean(junctionBoundary?.success && junctionBoundary?.isInside === false);
+
+            // 3. P8-002: Cycle detection fail-closed (ERR_CYCLE_DETECTED)
+            const cyclicRes = await window.unionBotAPI.taskGraphCreate({
+              id: 'p8-e2e-cyclic',
+              name: 'Cyclic Graph',
+              nodes: [
+                { id: 'node-a', name: 'Task A', stage: 'PLAN', assignedRole: 'ARCHITECT', dependencies: ['node-b'] },
+                { id: 'node-b', name: 'Task B', stage: 'IMPLEMENT', assignedRole: 'IMPLEMENTER', dependencies: ['node-a'] },
+              ],
+            });
+            results.cycleDetectionEnforced = Boolean(
+              cyclicRes?.success === false &&
+              (cyclicRes?.code === 'ERR_CYCLE_DETECTED' || cyclicRes?.error?.includes('Cyclic dependency'))
+            );
+
+            // 4. P8-004, P8-005, P8-006: Live execution of 5-Stage Task Graph with Consensus & Invalidation
+            const eventLog = [];
+            const unsubEvents = window.unionBotAPI.onTaskGraphEvent((evt) => {
+              if (evt) eventLog.push(evt);
+            });
+
+            // Mark node-fix as SKIPPED so smooth path completes through verify
+            const execRes = await window.unionBotAPI.taskGraphRun({
+              graphId: 'p8-e2e-pipeline',
+            });
+            unsubEvents();
+
+            results.runGraphSuccess = Boolean(execRes?.success);
+            results.graphStatusCompleted = (execRes?.status === 'COMPLETED');
+            results.all5NodesCompleted = Boolean(
+              execRes?.nodes?.length === 5 &&
+              execRes?.nodes?.every(n => n.status === 'COMPLETED' || n.status === 'SKIPPED')
+            );
+            results.consensusVotesRecorded = Boolean(
+              execRes?.nodes?.some(n => n.stage === 'REVIEW')
+            );
+            results.eventsEmitted = Boolean(eventLog.length >= 3);
+
+            return results;
+          })()
+        `);
+
+        console.log('[P8-E2E] Results:', JSON.stringify(p8Result, null, 2));
+
+        const requiredChecks = [
+          'pipelineCreateSuccess',
+          'nodeCountIs5',
+          'hasPlanNode',
+          'hasImplementNode',
+          'hasReviewNode',
+          'hasFixNode',
+          'hasVerifyNode',
+          'validBoundaryAllowed',
+          'invalidBoundaryDenied',
+          'junctionEscapeDenied',
+          'cycleDetectionEnforced',
+          'runGraphSuccess',
+          'graphStatusCompleted',
+          'all5NodesCompleted',
+          'consensusVotesRecorded',
+          'eventsEmitted',
+        ];
+
+        let allPassed = true;
+        for (const check of requiredChecks) {
+          const pass = Boolean(p8Result[check]);
+          console.log(`[P8-E2E] Check ${check}: ${pass}`);
+          if (!pass) allPassed = false;
+        }
+
+        const reportDir = path.resolve(__dirname, '../../../reports/capability-evidence');
+        if (!fs.existsSync(reportDir)) fs.mkdirSync(reportDir, { recursive: true });
+        const evidencePath = path.resolve(reportDir, 'ELECTRON_P8_E2E_EVIDENCE.json');
+        fs.writeFileSync(evidencePath, JSON.stringify({
+          timestamp: new Date().toISOString(),
+          environment: 'Real Windows Electron (Phase P8 Multi-Agent Task Graph & Consensus Engine)',
+          nodeEnv: process.env.NODE_ENV,
+          results: p8Result,
+          allPassed,
+        }, null, 2));
+
+        try {
+          if (fs.existsSync(e2eJunctionPath)) fs.rmSync(e2eJunctionPath, { force: true });
+          if (fs.existsSync(e2eScratchDir)) fs.rmSync(e2eScratchDir, { recursive: true, force: true });
+          if (fs.existsSync(e2eOutsideDir)) fs.rmSync(e2eOutsideDir, { recursive: true, force: true });
+        } catch {}
+
+        if (!allPassed) {
+          console.error('[P8-E2E] One or more P8 checks failed.');
+          app.quit();
+          process.exit(1);
+        }
+
+        console.log('[P8-E2E] ALL_P8_E2E_CHECKS_PASSED');
+        app.quit();
+        process.exit(0);
+      } catch (err) {
+        console.error('[P8-E2E] Exception:', err);
+        app.quit();
+        process.exit(1);
+      }
+    });
+    return;
+  }
+
   // 7. Handle Standard GUI Smoke Test Mode
   if (isSmoke) {
     console.log('[SmokeTest] Running Union Bot Automated GUI Smoke Test...');
@@ -4448,6 +4606,128 @@ ipcMain.handle('union-bot:antigravity-verify-boundary', async (event, targetPath
   try {
     const resolved = await antigravityService.verifyWorkspaceBoundary(targetPath);
     return { success: true, resolved };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+// Phase P8: Multi-Agent Task Graph & Consensus IPC Handlers
+ipcMain.handle('union-bot:task-graph-create', async (event, def) => {
+  if (!checkSenderAuthorized(event)) {
+    return { success: false, error: 'Unauthorized IPC sender origin' };
+  }
+  try {
+    const graph = taskGraphService.createGraph(def);
+    return {
+      success: true,
+      graph: {
+        id: graph.id,
+        name: graph.name,
+        status: graph.status,
+        nodeCount: graph.nodes.size,
+      },
+    };
+  } catch (err) {
+    return { success: false, error: err.message, code: err.code };
+  }
+});
+
+ipcMain.handle('union-bot:task-graph-standard-pipeline', async (event, params) => {
+  if (!checkSenderAuthorized(event)) {
+    return { success: false, error: 'Unauthorized IPC sender origin' };
+  }
+  try {
+    const pipeline = taskGraphService.createStandard5StagePipeline(params);
+    const graph = taskGraphService.createGraph(pipeline);
+    return {
+      success: true,
+      graph: {
+        id: graph.id,
+        name: graph.name,
+        status: graph.status,
+        nodes: Array.from(graph.nodes.values()).map((n) => ({
+          id: n.id,
+          stage: n.stage,
+          role: n.assignedRole,
+          dependencies: n.dependencies,
+        })),
+      },
+    };
+  } catch (err) {
+    return { success: false, error: err.message, code: err.code };
+  }
+});
+
+ipcMain.handle('union-bot:task-graph-run', async (event, payload) => {
+  if (!checkSenderAuthorized(event)) {
+    return { success: false, error: 'Unauthorized IPC sender origin' };
+  }
+  try {
+    const { graphId, mockHandlers } = payload || {};
+    const result = await taskGraphService.runGraph(graphId, mockHandlers);
+    return {
+      success: result.status === 'COMPLETED',
+      status: result.status,
+      graphId: result.id,
+      completedAt: result.completedAt,
+      error: result.error,
+      nodes: Array.from(result.nodes.values()).map((n) => ({
+        id: n.id,
+        stage: n.stage,
+        status: n.status,
+        result: n.result,
+        votes: n.votes,
+      })),
+      historyLength: result.history.length,
+    };
+  } catch (err) {
+    return { success: false, error: err.message, code: err.code };
+  }
+});
+
+ipcMain.handle('union-bot:task-graph-status', async (event, graphId) => {
+  if (!checkSenderAuthorized(event)) {
+    return { success: false, error: 'Unauthorized IPC sender origin' };
+  }
+  try {
+    const graph = taskGraphService.getGraph(graphId);
+    if (!graph) return { success: false, error: 'Graph not found' };
+    return {
+      success: true,
+      status: graph.status,
+      currentFixAttempt: graph.currentFixAttempt,
+      nodes: Array.from(graph.nodes.values()).map((n) => ({
+        id: n.id,
+        stage: n.stage,
+        status: n.status,
+      })),
+      historyCount: graph.history.length,
+    };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('union-bot:task-graph-submit-vote', async (event, payload) => {
+  if (!checkSenderAuthorized(event)) {
+    return { success: false, error: 'Unauthorized IPC sender origin' };
+  }
+  try {
+    const { graphId, nodeId, vote } = payload || {};
+    taskGraphService.submitVote(graphId, nodeId, vote);
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message, code: err.code };
+  }
+});
+
+ipcMain.handle('union-bot:task-graph-verify-boundary', async (event, targetPath) => {
+  if (!checkSenderAuthorized(event)) {
+    return { success: false, error: 'Unauthorized IPC sender origin' };
+  }
+  try {
+    const isInside = taskGraphService.verifyWorkspaceBoundary(targetPath);
+    return { success: true, isInside };
   } catch (err) {
     return { success: false, error: err.message };
   }

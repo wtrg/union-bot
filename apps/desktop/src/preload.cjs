@@ -260,6 +260,34 @@ const api = {
       ipcRenderer.removeListener('union-bot:antigravity-turn-completed', subscription);
     };
   },
+
+  // Phase P8: Multi-Agent Task Graph & Consensus API
+  taskGraphCreate: async (def) => {
+    return ipcRenderer.invoke('union-bot:task-graph-create', def);
+  },
+  taskGraphStandardPipeline: async (params) => {
+    return ipcRenderer.invoke('union-bot:task-graph-standard-pipeline', params);
+  },
+  taskGraphRun: async (payload) => {
+    return ipcRenderer.invoke('union-bot:task-graph-run', payload);
+  },
+  taskGraphStatus: async (graphId) => {
+    return ipcRenderer.invoke('union-bot:task-graph-status', graphId);
+  },
+  taskGraphSubmitVote: async (payload) => {
+    return ipcRenderer.invoke('union-bot:task-graph-submit-vote', payload);
+  },
+  taskGraphVerifyBoundary: async (targetPath) => {
+    return ipcRenderer.invoke('union-bot:task-graph-verify-boundary', targetPath);
+  },
+  onTaskGraphEvent: (callback) => {
+    if (typeof callback !== 'function') return () => {};
+    const subscription = (_event, data) => callback(data);
+    ipcRenderer.on('union-bot:task-graph-event', subscription);
+    return () => {
+      ipcRenderer.removeListener('union-bot:task-graph-event', subscription);
+    };
+  },
 };
 
 // UB-P2-R06-003 / R07-A03: Strictly isolate test mutation channels.

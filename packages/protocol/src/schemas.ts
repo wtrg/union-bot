@@ -15,6 +15,9 @@ export const RoleSchema = z.enum([
   'RESEARCHER',
   'ORCHESTRATOR',
   'USER',
+  'ARCHITECT',
+  'REVIEWER',
+  'TESTER',
 ]);
 export type Role = z.infer<typeof RoleSchema>;
 
@@ -318,6 +321,90 @@ export const TaskNodeSchema = z.object({
 });
 export type TaskNode = z.infer<typeof TaskNodeSchema>;
 
+// --- Phase P8 Task Graph & Multi-Agent Consensus Schemas ---
+export const StageTypeSchema = z.enum([
+  'PLAN',
+  'IMPLEMENT',
+  'REVIEW',
+  'FIX',
+  'VERIFY',
+]);
+export type StageType = z.infer<typeof StageTypeSchema>;
+
+export const TaskGraphStatusSchema = z.enum([
+  'PENDING',
+  'RUNNING',
+  'COMPLETED',
+  'FAILED',
+  'CANCELLED',
+]);
+export type TaskGraphStatus = z.infer<typeof TaskGraphStatusSchema>;
+
+export const NodeExecutionStatusSchema = z.enum([
+  'PENDING',
+  'RUNNING',
+  'WAITING_APPROVAL',
+  'COMPLETED',
+  'FAILED',
+  'STALE',
+  'CANCELLED',
+  'SKIPPED',
+]);
+export type NodeExecutionStatus = z.infer<typeof NodeExecutionStatusSchema>;
+
+export const ConsensusDecisionSchema = z.enum([
+  'APPROVE',
+  'REJECT',
+  'ABSTAIN',
+]);
+export type ConsensusDecision = z.infer<typeof ConsensusDecisionSchema>;
+
+export const ConsensusVoteSchema = z.object({
+  voterId: z.string().min(1),
+  voterRole: RoleSchema,
+  decision: ConsensusDecisionSchema,
+  rationale: z.string().default(''),
+  timestamp: z.number().int().nonnegative().default(() => Date.now()),
+});
+export type ConsensusVote = z.infer<typeof ConsensusVoteSchema>;
+
+export const ConsensusPolicyTypeSchema = z.enum([
+  'unanimous',
+  'majority',
+  'threshold',
+]);
+export type ConsensusPolicyType = z.infer<typeof ConsensusPolicyTypeSchema>;
+
+export const ConsensusPolicySchema = z.object({
+  type: ConsensusPolicyTypeSchema.default('majority'),
+  minThreshold: z.number().min(0).max(1).optional(),
+  requiredRoles: z.array(RoleSchema).optional(),
+});
+export type ConsensusPolicy = z.infer<typeof ConsensusPolicySchema>;
+
+export const TaskNodeDefinitionSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  stage: StageTypeSchema,
+  assignedRole: RoleSchema,
+  assignedProvider: ProviderKindSchema.optional(),
+  dependencies: z.array(z.string()).default([]),
+  actionPayload: z.record(z.unknown()).optional(),
+  metadata: z.record(z.unknown()).optional(),
+});
+export type TaskNodeDefinition = z.infer<typeof TaskNodeDefinitionSchema>;
+
+export const TaskGraphDefinitionSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  workspaceRoot: z.string().min(1),
+  nodes: z.array(TaskNodeDefinitionSchema).min(1),
+  consensusPolicy: ConsensusPolicySchema.optional(),
+  maxFixAttempts: z.number().int().positive().optional(),
+  metadata: z.record(z.unknown()).optional(),
+});
+export type TaskGraphDefinition = z.infer<typeof TaskGraphDefinitionSchema>;
+
 // Admission Gate schemas (for Zero-Cost & Policy Control)
 export const AdmissionActionTypeSchema = z.enum([
   'SEND_PROMPT',
@@ -386,6 +473,10 @@ export const UnionBotErrorCodeSchema = z.enum([
   'ERR_RECONCILIATION_REQUIRED',
   'ERR_NETWORK_DISCONNECTED',
   'ERR_TIMEOUT',
+  'ERR_CYCLE_DETECTED',
+  'ERR_TASK_GRAPH_FAILED',
+  'ERR_INVALID_STAGE_TRANSITION',
+  'ERR_CONSENSUS_FAILED',
 ]);
 export type UnionBotErrorCode = z.infer<typeof UnionBotErrorCodeSchema>;
 
