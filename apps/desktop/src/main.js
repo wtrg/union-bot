@@ -22,6 +22,9 @@ const { isAuthorizedSenderFrame } = require('./auth-check.cjs');
 const { extractActionSemanticInput, computeCanonicalDigest } = require('./canonical-json.cjs');
 const { BrowserService } = require('./browser-service.cjs');
 const { isCostGuardBlockedUrl, PROVIDER_REGISTRY } = require('../../../packages/browser-manager/src/browser-manager.cjs');
+const { ArtifactStore, detectMimeType, sanitizeSvg } = require('../../../packages/artifact-store/src/artifact-store.cjs');
+const { ToolHost } = require('./tool-host.cjs');
+const { MCPService } = require('./mcp-service.cjs');
 
 // Custom test userData override for isolated multi-process E2E testing
 const customUserDataArg = process.argv.find((a) => a.startsWith('--test-user-data=') || a.startsWith('--user-data-dir='));
@@ -54,9 +57,14 @@ const isDedicatedTestHarness =
   process.env.UNION_BOT_E2E_HARNESS === '1';
 
 const testQueuedFileDialogPaths = [];
+const testQueuedSaveDialogPaths = [];
 
 const userDataPath = app.getPath('userData');
 const dbFilePath = path.join(userDataPath, 'union_bot.db');
+const localCasDir = path.join(userDataPath, 'cas-store');
+const artifactStore = new ArtifactStore(localCasDir);
+const toolHost = new ToolHost(path.resolve(__dirname, '../../..'));
+const mcpService = new MCPService(localCasDir, path.resolve(__dirname, '../../..'));
 const storage = new StorageServiceClient(dbFilePath);
 const orchestrator = new Orchestrator({ costGuard, storage });
 
@@ -2493,6 +2501,200 @@ function createWindow() {
     return;
   }
 
+  // 7n. P5-E2E: Full Windows Electron Verification for Phase P5 Artifact Store, Previews & Local MCP
+  if (process.argv.includes('--p5-e2e')) {
+    mainWindow.webContents.once('did-finish-load', async () => {
+      try {
+        console.log('[P5-E2E] Running Real Windows Electron P5 Verification (Artifact Store, Previews, Tool Host & MCP)...');
+
+        const p5Result = await mainWindow.webContents.executeJavaScript(`
+          (async () => {
+            const results = {};
+
+            // 1. P5-001: Save binary attachment with magic MIME detection and SHA-256
+            const samplePngBase64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+            const saveRes = await window.unionBotAPI.saveAttachment({
+              filename: 'test-pixel.png',
+              dataBase64: samplePngBase64,
+            });
+            results.savePngSucceeded = Boolean(saveRes?.success);
+            results.pngSha256 = saveRes?.attachment?.sha256;
+            results.pngMimeDetected = (saveRes?.attachment?.mimeType === 'image/png');
+
+            // 2. P5-001: Deduplication test
+            const dupRes = await window.unionBotAPI.saveAttachment({
+              filename: 'test-pixel-duplicate.png',
+              dataBase64: samplePngBase64,
+            });
+            results.dedupSameSha = (dupRes?.attachment?.sha256 === results.pngSha256);
+
+            // 3. P5-004: Artifact Inspect
+            const inspectRes = await window.unionBotAPI.artifactInspect(results.pngSha256);
+            results.inspectSucceeded = Boolean(inspectRes?.success && inspectRes?.artifact?.byteSize > 0);
+
+            // 4. P5-004: Save As with Queued Path in Test Harness
+            const testExportPath = 'p5_test_saved_pixel.png';
+            await window.unionBotAPI.testQueueSavePath(testExportPath);
+            const saveAsRes = await window.unionBotAPI.artifactSaveAs({
+              sha256: results.pngSha256,
+              suggestedName: 'p5_test_saved_pixel.png',
+            });
+            results.saveAsSucceeded = Boolean(saveAsRes?.success && saveAsRes?.savedPath === testExportPath);
+
+            // 5. P5-004: Show in folder & Open original
+            const showFolderRes = await window.unionBotAPI.artifactShowInFolder(results.pngSha256);
+            results.showInFolderSucceeded = Boolean(showFolderRes?.success);
+            const openOrigRes = await window.unionBotAPI.artifactOpenOriginal(results.pngSha256);
+            results.openOriginalSucceeded = Boolean(openOrigRes?.success);
+
+            // 6. P5-005 / P5-010: Path traversal denial
+            const badShaInspect = await window.unionBotAPI.artifactInspect('../../Windows/System32/cmd.exe');
+            results.badShaInspectDenied = Boolean(badShaInspect?.success === false);
+
+            // 7. P5-007: Tool Host execution
+            const toolRead = await window.unionBotAPI.toolHostExecute({
+              command: 'readFile',
+              args: ['package.json'],
+            });
+            results.toolHostReadFile = Boolean(toolRead?.success && toolRead?.content?.includes('union-bot-monorepo'));
+
+            const toolTraversal = await window.unionBotAPI.toolHostExecute({
+              command: 'readFile',
+              args: ['../../Windows/System32/drivers/etc/hosts'],
+            });
+            results.toolHostTraversalDenied = Boolean(toolTraversal?.success === false && toolTraversal?.error?.includes('ERR_PATH_TRAVERSAL'));
+
+            const toolSearch = await window.unionBotAPI.toolHostExecute({
+              command: 'searchFiles',
+              args: ['mcp-service'],
+            });
+            results.toolHostSearchFiles = Boolean(toolSearch?.success && toolSearch?.count > 0);
+
+            const toolGit = await window.unionBotAPI.toolHostExecute({
+              command: 'getGitStatus',
+            });
+            results.toolHostGitStatus = Boolean(toolGit?.success && typeof toolGit?.branch === 'string');
+
+            // 8. P5-008: MCP Capability & Tool Listing
+            const mcpTools = await window.unionBotAPI.mcpListTools();
+            results.mcpListToolsSucceeded = Boolean(mcpTools?.success && mcpTools?.tools?.length >= 3);
+            const toolNames = (mcpTools?.tools || []).map(t => t.name);
+            results.mcpCalculatorPresent = toolNames.includes('calculator');
+            results.mcpArtifactInspectPresent = toolNames.includes('artifact_inspect');
+            results.mcpWorkspaceSummaryPresent = toolNames.includes('workspace_summary');
+
+            // 9. P5-009: MCP Safe Calculator Tool
+            const calcRes = await window.unionBotAPI.mcpCall({
+              toolName: 'calculator',
+              args: { expression: '(15 * 8) - (3 ^ 3) / 9' },
+            });
+            results.mcpCalculatorComputed = Boolean(calcRes && !calcRes.isError && calcRes.data?.value === 117);
+
+            const calcDivZero = await window.unionBotAPI.mcpCall({
+              toolName: 'calculator',
+              args: { expression: '50 / 0' },
+            });
+            results.mcpCalculatorDivZeroHandled = Boolean(calcDivZero && calcDivZero.isError);
+
+            // 10. P5-009: MCP Artifact Inspect Tool
+            const mcpInspectRes = await window.unionBotAPI.mcpCall({
+              toolName: 'artifact_inspect',
+              args: { sha256: results.pngSha256 },
+            });
+            results.mcpInspectComputed = Boolean(mcpInspectRes && !mcpInspectRes.isError && mcpInspectRes.data?.exists);
+
+            // 11. P5-009: MCP Workspace Summary Tool
+            const mcpSummaryRes = await window.unionBotAPI.mcpCall({
+              toolName: 'workspace_summary',
+            });
+            results.mcpSummaryComputed = Boolean(mcpSummaryRes && !mcpSummaryRes.isError && mcpSummaryRes.data?.directories?.length > 0);
+
+            // 12. P5-010: SVG XSS sanitization
+            const maliciousSvg = '<svg><script>alert("xss")</script><circle cx="5" cy="5" r="5" onclick="alert(1)"/><a href="javascript:alert(2)">click</a></svg>';
+            const svgSaveRes = await window.unionBotAPI.saveAttachment({
+              filename: 'test.svg',
+              textContent: maliciousSvg,
+            });
+            results.svgSaved = Boolean(svgSaveRes?.success);
+
+            // 13. P5-011: Transcript Bundle Export
+            const exportBundleRes = await window.unionBotAPI.exportTranscriptBundle({
+              roomId: 'orchestration',
+            });
+            results.exportBundleSucceeded = Boolean(exportBundleRes?.success && exportBundleRes?.transcriptPath && exportBundleRes?.manifestPath);
+
+            // 14. UI Component verification in DOM (P5-002, P5-003, P5-004)
+            const exportBundleBtn = document.querySelector('[data-testid="export-transcript-bundle-btn"]');
+            results.domExportBundleBtnRendered = Boolean(exportBundleBtn);
+
+            return results;
+          })();
+        `);
+
+        console.log('[P5-E2E] Results:', JSON.stringify(p5Result, null, 2));
+
+        const requiredChecks = [
+          'savePngSucceeded',
+          'pngMimeDetected',
+          'dedupSameSha',
+          'inspectSucceeded',
+          'saveAsSucceeded',
+          'showInFolderSucceeded',
+          'openOriginalSucceeded',
+          'badShaInspectDenied',
+          'toolHostReadFile',
+          'toolHostTraversalDenied',
+          'toolHostSearchFiles',
+          'toolHostGitStatus',
+          'mcpListToolsSucceeded',
+          'mcpCalculatorPresent',
+          'mcpArtifactInspectPresent',
+          'mcpWorkspaceSummaryPresent',
+          'mcpCalculatorComputed',
+          'mcpCalculatorDivZeroHandled',
+          'mcpInspectComputed',
+          'mcpSummaryComputed',
+          'svgSaved',
+          'exportBundleSucceeded',
+          'domExportBundleBtnRendered',
+        ];
+
+        let allPassed = true;
+        for (const check of requiredChecks) {
+          const pass = Boolean(p5Result[check]);
+          console.log(`[P5-E2E] Check ${check}: ${pass}`);
+          if (!pass) allPassed = false;
+        }
+
+        const reportDir = path.resolve(__dirname, '../../../reports/capability-evidence');
+        if (!fs.existsSync(reportDir)) fs.mkdirSync(reportDir, { recursive: true });
+        const evidencePath = path.resolve(reportDir, 'ELECTRON_P5_E2E_EVIDENCE.json');
+        fs.writeFileSync(evidencePath, JSON.stringify({
+          timestamp: new Date().toISOString(),
+          environment: 'Real Windows Electron (Phase P5 Artifact Store, Previews, Tool Host & MCP)',
+          nodeEnv: process.env.NODE_ENV,
+          results: p5Result,
+          allPassed,
+        }, null, 2));
+
+        if (!allPassed) {
+          console.error('[P5-E2E] One or more P5 checks failed.');
+          app.quit();
+          process.exit(1);
+        }
+
+        console.log('[P5-E2E] ALL_P5_E2E_CHECKS_PASSED');
+        app.quit();
+        process.exit(0);
+      } catch (err) {
+        console.error('[P5-E2E] Exception:', err);
+        app.quit();
+        process.exit(1);
+      }
+    });
+    return;
+  }
+
   // 7. Handle Standard GUI Smoke Test Mode
   if (isSmoke) {
     console.log('[SmokeTest] Running Union Bot Automated GUI Smoke Test...');
@@ -3470,6 +3672,229 @@ ipcMain.handle('union-bot:browser-share-selection', async (event, payload) => {
   return await browserService.shareSelection(payload?.tabId, payload?.selectedText, payload?.roomId);
 });
 
+// Phase P5: Artifact Store, Previews & Local MCP IPC Handlers
+ipcMain.handle('union-bot:artifact-save-as', async (event, payload) => {
+  if (!checkSenderAuthorized(event)) {
+    return { success: false, error: 'Unauthorized IPC sender origin' };
+  }
+  try {
+    const { sha256, suggestedName } = payload || {};
+    if (!sha256 || !ArtifactStore.isValidSha256(sha256)) {
+      return { success: false, error: 'ERR_INVALID_SHA256: Input must be a valid 64-character hexadecimal SHA-256 hash' };
+    }
+    const cleanSha = sha256.trim().toLowerCase();
+
+    let bytes;
+    try {
+      bytes = artifactStore.readBytes(cleanSha);
+    } catch {
+      const flatPath = path.resolve(localCasDir, cleanSha);
+      if (fs.existsSync(flatPath)) {
+        bytes = fs.readFileSync(flatPath);
+      } else {
+        return { success: false, error: `Artifact ${cleanSha} not found in CAS store` };
+      }
+    }
+
+    let targetPath;
+    if (isDedicatedTestHarness && testQueuedSaveDialogPaths.length > 0) {
+      targetPath = testQueuedSaveDialogPaths.shift();
+    } else {
+      const saveRes = await dialog.showSaveDialog(mainWindow, {
+        title: 'Save Artifact As',
+        defaultPath: suggestedName || cleanSha,
+      });
+      if (saveRes.canceled || !saveRes.filePath) {
+        return { success: false, canceled: true };
+      }
+      targetPath = saveRes.filePath;
+    }
+
+    fs.writeFileSync(targetPath, bytes);
+    return { success: true, savedPath: targetPath, byteSize: bytes.length };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('union-bot:artifact-show-in-folder', async (event, sha256) => {
+  if (!checkSenderAuthorized(event)) {
+    return { success: false, error: 'Unauthorized IPC sender origin' };
+  }
+  try {
+    if (!sha256 || !ArtifactStore.isValidSha256(sha256)) {
+      return { success: false, error: 'ERR_INVALID_SHA256: Input must be a valid 64-character hexadecimal SHA-256 hash' };
+    }
+    const cleanSha = sha256.trim().toLowerCase();
+    const info = artifactStore.inspectArtifact(cleanSha);
+    let targetPath = info?.storedPath;
+    if (!targetPath) {
+      const flatPath = path.resolve(localCasDir, cleanSha);
+      if (fs.existsSync(flatPath)) {
+        targetPath = flatPath;
+      } else {
+        return { success: false, error: `Artifact ${cleanSha} not found in CAS store` };
+      }
+    }
+    shell.showItemInFolder(targetPath);
+    return { success: true, path: targetPath };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('union-bot:artifact-open-original', async (event, sha256) => {
+  if (!checkSenderAuthorized(event)) {
+    return { success: false, error: 'Unauthorized IPC sender origin' };
+  }
+  try {
+    if (!sha256 || !ArtifactStore.isValidSha256(sha256)) {
+      return { success: false, error: 'ERR_INVALID_SHA256: Input must be a valid 64-character hexadecimal SHA-256 hash' };
+    }
+    const cleanSha = sha256.trim().toLowerCase();
+    const info = artifactStore.inspectArtifact(cleanSha);
+    let targetPath = info?.storedPath;
+    if (!targetPath) {
+      const flatPath = path.resolve(localCasDir, cleanSha);
+      if (fs.existsSync(flatPath)) {
+        targetPath = flatPath;
+      } else {
+        return { success: false, error: `Artifact ${cleanSha} not found in CAS store` };
+      }
+    }
+    const openErr = await shell.openPath(targetPath);
+    if (openErr) {
+      return { success: false, error: openErr };
+    }
+    return { success: true, path: targetPath };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('union-bot:artifact-inspect', async (event, sha256) => {
+  if (!checkSenderAuthorized(event)) {
+    return { success: false, error: 'Unauthorized IPC sender origin' };
+  }
+  try {
+    if (!sha256 || !ArtifactStore.isValidSha256(sha256)) {
+      return { success: false, error: 'ERR_INVALID_SHA256: Input must be a valid 64-character hexadecimal SHA-256 hash' };
+    }
+    const cleanSha = sha256.trim().toLowerCase();
+    const info = artifactStore.inspectArtifact(cleanSha);
+    if (info) {
+      return { success: true, artifact: info };
+    }
+    const flatPath = path.resolve(localCasDir, cleanSha);
+    if (fs.existsSync(flatPath)) {
+      const stat = fs.statSync(flatPath);
+      return {
+        success: true,
+        artifact: {
+          sha256: cleanSha,
+          byteSize: stat.size,
+          storedPath: flatPath,
+        },
+      };
+    }
+    return { success: false, error: `Artifact ${cleanSha} not found in CAS store` };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('union-bot:tool-host-execute', async (event, payload) => {
+  if (!checkSenderAuthorized(event)) {
+    return { success: false, error: 'Unauthorized IPC sender origin' };
+  }
+  const { command, args = [] } = payload || {};
+  if (command === 'readFile') {
+    return await toolHost.readFile(...args);
+  } else if (command === 'searchFiles') {
+    return await toolHost.searchFiles(...args);
+  } else if (command === 'getGitStatus') {
+    return await toolHost.getGitStatus();
+  } else if (command === 'runSafeTest') {
+    return await toolHost.runSafeTest(...args);
+  } else {
+    return { success: false, error: `Disallowed tool command: ${command}` };
+  }
+});
+
+ipcMain.handle('union-bot:mcp-call', async (event, payload) => {
+  if (!checkSenderAuthorized(event)) {
+    return { success: false, error: 'Unauthorized IPC sender origin' };
+  }
+  const { toolName, args } = payload || {};
+  return await mcpService.callTool(toolName, args);
+});
+
+ipcMain.handle('union-bot:mcp-list-tools', async (event) => {
+  if (!checkSenderAuthorized(event)) {
+    return { success: false, error: 'Unauthorized IPC sender origin' };
+  }
+  return { success: true, tools: mcpService.listTools() };
+});
+
+ipcMain.handle('union-bot:export-transcript-bundle', async (event, options = {}) => {
+  if (!checkSenderAuthorized(event)) {
+    return { success: false, error: 'Unauthorized IPC sender origin' };
+  }
+  try {
+    const { roomId = 'orchestration' } = options;
+    const history = orchestrator.getRoomHistory(roomId) || [];
+    const userDataDir = app.getPath('userData');
+    const exportsDir = path.resolve(userDataDir, 'exports');
+    if (!fs.existsSync(exportsDir)) {
+      fs.mkdirSync(exportsDir, { recursive: true });
+    }
+
+    const bundleDir = path.join(exportsDir, `bundle_${roomId}_${Date.now()}`);
+    fs.mkdirSync(bundleDir, { recursive: true });
+
+    let transcriptMd = `# Transcript Export — Room: ${roomId}\nExported at: ${new Date().toISOString()}\nTotal Messages: ${history.length}\n\n---\n\n`;
+    const shaList = [];
+
+    for (const env of history) {
+      const timeStr = new Date(env.timestamp).toLocaleTimeString();
+      const senderName = env.sender?.name || env.sender?.id || 'Unknown';
+      const role = env.sender?.role || env.sender?.kind || 'USER';
+      transcriptMd += `### [${timeStr}] ${senderName} (${role})\n`;
+
+      if (Array.isArray(env.parts)) {
+        for (const p of env.parts) {
+          if (p.kind === 'text') {
+            transcriptMd += `${p.text}\n\n`;
+          } else if (p.kind === 'attachment' || p.kind === 'artifact') {
+            const sha = p.sha256;
+            if (sha) {
+              shaList.push(sha);
+              transcriptMd += `📎 **Artifact**: \`${p.filename || sha}\` (SHA256: \`${sha}\`)\n\n`;
+            }
+          }
+        }
+      }
+      transcriptMd += `---\n\n`;
+    }
+
+    fs.writeFileSync(path.join(bundleDir, 'transcript.md'), transcriptMd, 'utf8');
+
+    const manifest = artifactStore.generateManifest(shaList);
+    fs.writeFileSync(path.join(bundleDir, 'manifest.json'), JSON.stringify(manifest, null, 2), 'utf8');
+
+    return {
+      success: true,
+      bundleDir,
+      transcriptPath: path.join(bundleDir, 'transcript.md'),
+      manifestPath: path.join(bundleDir, 'manifest.json'),
+      artifactCount: shaList.length,
+      manifest,
+    };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
 if (isDedicatedTestHarness) {
   ipcMain.handle('union-bot:test-kill-worker', async (event) => {
     if (!checkSenderAuthorized(event)) {
@@ -3523,6 +3948,17 @@ if (isDedicatedTestHarness) {
     }
     testQueuedFileDialogPaths.push(filePath);
     return { success: true, queuedCount: testQueuedFileDialogPaths.length };
+  });
+
+  ipcMain.handle('union-bot:test-queue-save-path', async (event, filePath) => {
+    if (!checkSenderAuthorized(event)) {
+      return { success: false, error: 'Unauthorized IPC sender origin (UB-P2-R01-008)' };
+    }
+    if (typeof filePath !== 'string' || !filePath) {
+      return { success: false, error: 'Valid filePath string required' };
+    }
+    testQueuedSaveDialogPaths.push(filePath);
+    return { success: true, queuedCount: testQueuedSaveDialogPaths.length };
   });
 
   ipcMain.handle('union-bot:test-get-export-files', async (event) => {
@@ -3757,6 +4193,13 @@ if (isDedicatedTestHarness) {
   });
 
   ipcMain.handle('union-bot:test-queue-attachment-path', async () => {
+    return {
+      success: false,
+      error: 'ERR_TEST_IPC_DISABLED: Test IPC channels are strictly disabled in production mode (UB-P2-R06-003)',
+    };
+  });
+
+  ipcMain.handle('union-bot:test-queue-save-path', async () => {
     return {
       success: false,
       error: 'ERR_TEST_IPC_DISABLED: Test IPC channels are strictly disabled in production mode (UB-P2-R06-003)',

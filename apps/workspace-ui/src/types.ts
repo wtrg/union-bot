@@ -25,7 +25,7 @@ export interface AttachmentInfo {
 }
 
 export interface MessagePart {
-  kind: 'text' | 'code' | 'artifact' | 'action' | 'status' | 'attachment';
+  kind: 'text' | 'code' | 'artifact' | 'action' | 'status' | 'attachment' | 'diff' | 'test_result';
   text?: string;
   code?: string;
   content?: string;
@@ -39,6 +39,18 @@ export interface MessagePart {
   status?: string;
   level?: string;
   message?: string;
+  args?: any;
+  output?: any;
+  mcpData?: any;
+  diff?: string;
+  testResult?: {
+    passed: boolean;
+    suiteName: string;
+    total: number;
+    passedCount: number;
+    failedCount: number;
+    durationMs?: number;
+  };
 }
 
 export interface EnvelopeView {
@@ -152,10 +164,21 @@ export interface UnionBotAPI {
   browserShareSelection?: (payload: { tabId?: string; selectedText?: string; roomId?: string }) => Promise<{ success: boolean; envelope?: any; error?: string }>;
   onBrowserStateUpdated?: (callback: (state: BrowserManagerState) => void) => () => void;
 
+  // Phase P5: Artifacts, Previews, Tool Host & MCP
+  artifactSaveAs?: (payload: { sha256: string; suggestedName?: string }) => Promise<{ success: boolean; savedPath?: string; error?: string; canceled?: boolean }>;
+  artifactShowInFolder?: (sha256: string) => Promise<{ success: boolean; path?: string; error?: string }>;
+  artifactOpenOriginal?: (sha256: string) => Promise<{ success: boolean; path?: string; error?: string }>;
+  artifactInspect?: (sha256: string) => Promise<{ success: boolean; artifact?: any; error?: string }>;
+  toolHostExecute?: (payload: { command: string; args?: any[] }) => Promise<any>;
+  mcpCall?: (payload: { toolName: string; args?: any }) => Promise<any>;
+  mcpListTools?: () => Promise<{ success: boolean; tools: any[] }>;
+  exportTranscriptBundle?: (options?: { roomId?: string; includeArtifacts?: boolean }) => Promise<any>;
+
   testKillWorker?: () => Promise<any>;
   testSetConfirmationMode?: (mode: string) => Promise<any>;
   testTamperApprovalPayload?: (payload: any) => Promise<any>;
   testQueueAttachmentPath?: (filePath: string) => Promise<any>;
+  testQueueSavePath?: (filePath: string) => Promise<any>;
   testGetExportFiles?: () => Promise<any>;
   testSetBrowserCookie?: (payload: any) => Promise<any>;
   testGetBrowserCookies?: (partition: string) => Promise<any>;

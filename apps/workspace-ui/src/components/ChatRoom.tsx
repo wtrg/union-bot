@@ -32,14 +32,408 @@ const HighlightedText: React.FC<{ text?: string; query?: string }> = ({ text = '
   }
 };
 
+// Rich Artifact Preview Card (P5-002, P5-003, P5-004)
+const ArtifactPreviewCard: React.FC<{ part: MessagePart; searchQuery: string }> = ({ part, searchQuery }) => {
+  const [copyStatus, setCopyStatus] = useState<string | null>(null);
+  const [actionMessage, setActionMessage] = useState<string | null>(null);
+  const [codeCopied, setCodeCopied] = useState(false);
+
+  const isImg = part.mimeType?.startsWith('image/') || part.filename?.match(/\.(png|jpg|jpeg|gif|webp|svg)$/i);
+  const isCode = part.language || part.filename?.match(/\.(js|cjs|mjs|ts|tsx|json|html|css|py|rs|go|sh|md)$/i) || part.code || part.content;
+
+  const handleCopySha = async () => {
+    if (!part.sha256) return;
+    try {
+      await navigator.clipboard.writeText(part.sha256);
+      setCopyStatus('Copied!');
+      setTimeout(() => setCopyStatus(null), 2000);
+    } catch {
+      setCopyStatus('Failed to copy');
+    }
+  };
+
+  const handleSaveAs = async () => {
+    if (!part.sha256 || !window.unionBotAPI?.artifactSaveAs) return;
+    try {
+      setActionMessage('Saving...');
+      const res = await window.unionBotAPI.artifactSaveAs({
+        sha256: part.sha256,
+        suggestedName: part.filename,
+      });
+      if (res.success) {
+        setActionMessage(`Saved to ${res.savedPath}`);
+      } else if (!res.canceled) {
+        setActionMessage(`Error: ${res.error || 'Failed to save'}`);
+      } else {
+        setActionMessage(null);
+      }
+    } catch (err: any) {
+      setActionMessage(`Error: ${err.message}`);
+    }
+    setTimeout(() => setActionMessage(null), 4000);
+  };
+
+  const handleShowInFolder = async () => {
+    if (!part.sha256 || !window.unionBotAPI?.artifactShowInFolder) return;
+    try {
+      const res = await window.unionBotAPI.artifactShowInFolder(part.sha256);
+      if (!res.success) {
+        setActionMessage(`Error: ${res.error}`);
+        setTimeout(() => setActionMessage(null), 3000);
+      }
+    } catch (err: any) {
+      setActionMessage(`Error: ${err.message}`);
+      setTimeout(() => setActionMessage(null), 3000);
+    }
+  };
+
+  const handleOpenOriginal = async () => {
+    if (!part.sha256 || !window.unionBotAPI?.artifactOpenOriginal) return;
+    try {
+      const res = await window.unionBotAPI.artifactOpenOriginal(part.sha256);
+      if (!res.success) {
+        setActionMessage(`Error: ${res.error}`);
+        setTimeout(() => setActionMessage(null), 3000);
+      }
+    } catch (err: any) {
+      setActionMessage(`Error: ${err.message}`);
+      setTimeout(() => setActionMessage(null), 3000);
+    }
+  };
+
+  const rawCode = part.content || part.code || '';
+  const lines = rawCode ? rawCode.split('\n') : [];
+
+  return (
+    <div
+      className="part-artifact"
+      data-testid="part-artifact"
+      style={{
+        marginTop: 8,
+        border: '1px solid var(--border-color)',
+        borderRadius: 8,
+        background: 'var(--bg-secondary)',
+        overflow: 'hidden',
+      }}
+    >
+      {/* Header bar */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '8px 12px',
+          background: 'var(--bg-tertiary)',
+          borderBottom: '1px solid var(--border-color)',
+          fontSize: 12,
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, overflow: 'hidden' }}>
+          <span style={{ fontSize: 16 }}>{isImg ? '🖼️' : isCode ? '💻' : '📄'}</span>
+          <span style={{ fontWeight: 600, color: 'var(--text-primary)' }} className="artifact-name">
+            <HighlightedText text={part.filename || (part.sha256 ? `artifact-${part.sha256.slice(0, 8)}` : 'Artifact')} query={searchQuery} />
+          </span>
+          <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>
+            ({part.sizeBytes || 0} bytes • {part.mimeType || 'application/octet-stream'})
+          </span>
+        </div>
+
+        {/* Action Toolbar (P5-004) */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          {part.sha256 && (
+            <button
+              onClick={handleCopySha}
+              data-testid="artifact-copy-sha"
+              style={{
+                fontSize: 11,
+                padding: '2px 8px',
+                borderRadius: 4,
+                border: '1px solid var(--border-color)',
+                background: 'transparent',
+                color: 'var(--text-secondary)',
+                cursor: 'pointer',
+              }}
+              title="Copy SHA-256 Digest"
+            >
+              {copyStatus || 'Copy SHA'}
+            </button>
+          )}
+
+          {part.sha256 && (
+            <button
+              onClick={handleSaveAs}
+              data-testid="artifact-save-as"
+              style={{
+                fontSize: 11,
+                padding: '2px 8px',
+                borderRadius: 4,
+                border: '1px solid var(--border-color)',
+                background: 'transparent',
+                color: '#38bdf8',
+                cursor: 'pointer',
+              }}
+              title="Save file to local disk"
+            >
+              Save As...
+            </button>
+          )}
+
+          {part.sha256 && (
+            <button
+              onClick={handleShowInFolder}
+              data-testid="artifact-show-folder"
+              style={{
+                fontSize: 11,
+                padding: '2px 8px',
+                borderRadius: 4,
+                border: '1px solid var(--border-color)',
+                background: 'transparent',
+                color: 'var(--text-secondary)',
+                cursor: 'pointer',
+              }}
+              title="Show file in folder"
+            >
+              Show in folder
+            </button>
+          )}
+
+          {part.sha256 && (
+            <button
+              onClick={handleOpenOriginal}
+              data-testid="artifact-open-original"
+              style={{
+                fontSize: 11,
+                padding: '2px 8px',
+                borderRadius: 4,
+                border: '1px solid var(--border-color)',
+                background: 'transparent',
+                color: 'var(--text-secondary)',
+                cursor: 'pointer',
+              }}
+              title="Open with OS default program"
+            >
+              Open
+            </button>
+          )}
+        </div>
+      </div>
+
+      {actionMessage && (
+        <div style={{ padding: '4px 12px', fontSize: 11, background: 'var(--bg-tertiary)', color: '#4ade80' }}>
+          {actionMessage}
+        </div>
+      )}
+
+      {/* Previews (P5-002, P5-003) */}
+      <div style={{ padding: 10 }}>
+        {/* Image Preview */}
+        {isImg && part.dataUrl && (
+          <div style={{ display: 'flex', justifyContent: 'center', background: 'rgba(0,0,0,0.15)', borderRadius: 4, padding: 8 }}>
+            <img
+              src={part.dataUrl}
+              alt={part.filename || 'Preview'}
+              style={{
+                maxWidth: '100%',
+                maxHeight: 280,
+                objectFit: 'contain',
+                borderRadius: 4,
+              }}
+            />
+          </div>
+        )}
+
+        {/* Code / Text Syntax Viewer with Line Numbers (P5-002) */}
+        {isCode && rawCode && (
+          <div style={{ position: 'relative', marginTop: 4, borderRadius: 4, background: '#0d1117', overflow: 'hidden' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 8px', background: '#161b22', fontSize: 11, color: '#8b949e' }}>
+              <span>{part.language || 'code'} • {lines.length} lines</span>
+              <button
+                onClick={async () => {
+                  try {
+                    await navigator.clipboard.writeText(rawCode);
+                    setCodeCopied(true);
+                    setTimeout(() => setCodeCopied(false), 2000);
+                  } catch {}
+                }}
+                style={{
+                  background: 'transparent',
+                  border: 'none',
+                  color: codeCopied ? '#4ade80' : '#8b949e',
+                  cursor: 'pointer',
+                  fontSize: 11,
+                }}
+              >
+                {codeCopied ? 'Copied code!' : 'Copy code'}
+              </button>
+            </div>
+            <pre style={{ margin: 0, padding: '8px 12px', overflowX: 'auto', fontSize: 12, lineHeight: 1.5, fontFamily: 'monospace', color: '#e6edf3' }}>
+              {lines.slice(0, 100).map((line, lIdx) => (
+                <div key={lIdx} style={{ display: 'flex' }}>
+                  <span style={{ width: 36, userSelect: 'none', color: '#484f58', textAlign: 'right', paddingRight: 12 }}>
+                    {lIdx + 1}
+                  </span>
+                  <span><HighlightedText text={line} query={searchQuery} /></span>
+                </div>
+              ))}
+              {lines.length > 100 && (
+                <div style={{ color: '#8b949e', fontStyle: 'italic', paddingLeft: 48, paddingTop: 4 }}>
+                  ... ({lines.length - 100} more lines truncated)
+                </div>
+              )}
+            </pre>
+          </div>
+        )}
+
+        {/* Test Result Card (P5-003) */}
+        {part.testResult && (
+          <div
+            data-testid="test-result-card"
+            style={{
+              padding: 10,
+              borderRadius: 6,
+              background: part.testResult.passed ? 'rgba(74, 222, 128, 0.08)' : 'rgba(248, 113, 113, 0.08)',
+              border: `1px solid ${part.testResult.passed ? '#4ade80' : '#f87171'}`,
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+              <span style={{ fontWeight: 700, fontSize: 13, color: part.testResult.passed ? '#4ade80' : '#f87171' }}>
+                {part.testResult.passed ? '✔ TEST SUITE PASSED' : '✖ TEST SUITE FAILED'}
+              </span>
+              <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                {part.testResult.durationMs ? `${part.testResult.durationMs}ms` : ''}
+              </span>
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+              Suite: <strong>{part.testResult.suiteName}</strong>
+            </div>
+            <div style={{ display: 'flex', gap: 16, marginTop: 6, fontSize: 12 }}>
+              <span style={{ color: '#4ade80' }}>Passed: {part.testResult.passedCount}</span>
+              <span style={{ color: '#f87171' }}>Failed: {part.testResult.failedCount}</span>
+              <span style={{ color: 'var(--text-muted)' }}>Total: {part.testResult.total}</span>
+            </div>
+          </div>
+        )}
+
+        {/* CAS Verification Digest Badge */}
+        {part.sha256 && (
+          <div style={{ marginTop: 8, fontSize: 11, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 4 }}>
+            <span>Verified CAS:</span>
+            <code style={{ fontSize: 10, background: 'var(--bg-tertiary)', padding: '2px 4px', borderRadius: 3 }}>
+              {part.sha256}
+            </code>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+// Rich Action / MCP Tool Card (P5-008, P5-009)
+const ActionToolCard: React.FC<{ part: MessagePart; searchQuery: string }> = ({ part, searchQuery }) => {
+  const [copied, setCopied] = useState(false);
+  const isCompleted = part.status === 'completed';
+  const isFailed = part.status === 'failed';
+  const isMcp = part.tool === 'calculator' || part.tool === 'artifact_inspect' || part.tool === 'workspace_summary' || part.mcpData;
+
+  const handleCopyOutput = async () => {
+    const textToCopy = typeof part.output === 'string' ? part.output : JSON.stringify(part.output, null, 2);
+    try {
+      await navigator.clipboard.writeText(textToCopy);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {}
+  };
+
+  return (
+    <div
+      className="part-action"
+      data-testid="part-action"
+      style={{
+        marginTop: 6,
+        padding: '8px 12px',
+        borderRadius: 6,
+        background: 'var(--bg-secondary)',
+        border: '1px solid var(--border-color)',
+        fontSize: 12,
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span>{isMcp ? '⚡ MCP Tool:' : '⚙️ Tool Call:'}</span>
+          <strong style={{ color: 'var(--text-primary)' }}>
+            <HighlightedText text={part.tool} query={searchQuery} />
+          </strong>
+          {isMcp && (
+            <span style={{ fontSize: 9, background: '#38bdf8', color: '#000', padding: '1px 4px', borderRadius: 2, fontWeight: 700 }}>
+              LOCAL MCP
+            </span>
+          )}
+        </div>
+        <span
+          style={{
+            fontSize: 10,
+            fontWeight: 700,
+            textTransform: 'uppercase',
+            color: isCompleted ? '#4ade80' : isFailed ? '#f87171' : '#fbbf24',
+          }}
+        >
+          {part.status}
+        </span>
+      </div>
+
+      {/* Tool Arguments */}
+      {part.args && (
+        <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 4 }}>
+          Input: <code>{typeof part.args === 'string' ? part.args : JSON.stringify(part.args)}</code>
+        </div>
+      )}
+
+      {/* Tool Output */}
+      {part.output !== undefined && (
+        <div style={{ marginTop: 4, background: '#0d1117', padding: '6px 8px', borderRadius: 4, position: 'relative' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 2 }}>
+            <span style={{ fontSize: 10, color: '#8b949e' }}>Output:</span>
+            <button
+              onClick={handleCopyOutput}
+              style={{ background: 'transparent', border: 'none', color: copied ? '#4ade80' : '#8b949e', cursor: 'pointer', fontSize: 10 }}
+            >
+              {copied ? 'Copied!' : 'Copy'}
+            </button>
+          </div>
+          <pre style={{ margin: 0, fontSize: 11, color: '#e6edf3', fontFamily: 'monospace', whiteSpace: 'pre-wrap' }}>
+            {typeof part.output === 'string' ? part.output : JSON.stringify(part.output, null, 2)}
+          </pre>
+        </div>
+      )}
+    </div>
+  );
+};
+
 export const ChatRoom: React.FC<ChatRoomProps> = ({ roomName, envelopes, onSendMessage }) => {
   const [inputText, setInputText] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [pendingAttachments, setPendingAttachments] = useState<AttachmentInfo[]>([]);
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
+  const [exportStatus, setExportStatus] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleExportBundle = async () => {
+    if (!window.unionBotAPI?.exportTranscriptBundle) return;
+    try {
+      setExportStatus('Exporting bundle...');
+      const res = await window.unionBotAPI.exportTranscriptBundle({ roomId: roomName || 'orchestration' });
+      if (res && res.success) {
+        setExportStatus(`Exported ${res.artifactCount} artifacts!`);
+      } else {
+        setExportStatus(`Export failed: ${res?.error || 'Unknown error'}`);
+      }
+    } catch (err: any) {
+      setExportStatus(`Export error: ${err.message}`);
+    }
+    setTimeout(() => setExportStatus(null), 4000);
+  };
 
   const handleSubmit = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -242,6 +636,26 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ roomName, envelopes, onSendM
             Clear
           </button>
         )}
+        <button
+          onClick={handleExportBundle}
+          data-testid="export-transcript-bundle-btn"
+          style={{
+            padding: '3px 8px',
+            borderRadius: 4,
+            border: '1px solid var(--border-color)',
+            background: 'var(--bg-tertiary)',
+            color: 'var(--text-secondary)',
+            cursor: 'pointer',
+            fontSize: 12,
+            whiteSpace: 'nowrap',
+          }}
+          title="Export complete room transcript and CAS manifest bundle (P5-011)"
+        >
+          📦 Export Bundle
+        </button>
+        {exportStatus && (
+          <span style={{ fontSize: 11, color: '#4ade80', whiteSpace: 'nowrap' }}>{exportStatus}</span>
+        )}
       </div>
 
       {/* Chat Messages Feed */}
@@ -343,65 +757,12 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ roomName, envelopes, onSendM
                       </div>
                     );
                   case 'artifact':
-                  case 'attachment': {
-                    const isImg = part.mimeType?.startsWith('image/') || part.filename?.match(/\.(png|jpg|jpeg|gif|webp)$/i);
-                    return (
-                      <div key={idx} className="part-artifact" style={{ marginTop: 6 }}>
-                        <div className="artifact-info" style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                            <span style={{ fontSize: 16 }}>{isImg ? '🖼️' : '📄'}</span>
-                            <span className="artifact-name" style={{ fontWeight: 600 }}>
-                              <HighlightedText text={part.filename || 'Attached File'} query={searchQuery} />
-                            </span>
-                          </div>
-                          {isImg && part.dataUrl && (
-                            <div style={{ marginTop: 4 }}>
-                              <img
-                                src={part.dataUrl}
-                                alt={part.filename || 'Attachment'}
-                                style={{
-                                  maxWidth: 240,
-                                  maxHeight: 180,
-                                  borderRadius: 4,
-                                  border: '1px solid var(--border-color)',
-                                  objectFit: 'contain',
-                                }}
-                              />
-                            </div>
-                          )}
-                          <span className="artifact-sha" style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                            SHA256: <code>{part.sha256}</code>
-                          </span>
-                          <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>
-                            {part.mimeType || 'file'} • {part.sizeBytes || 0} bytes • Verified CAS
-                          </span>
-                        </div>
-                      </div>
-                    );
-                  }
+                  case 'attachment':
+                    return <ArtifactPreviewCard key={idx} part={part} searchQuery={searchQuery} />;
+                  case 'test_result':
+                    return <ArtifactPreviewCard key={idx} part={part} searchQuery={searchQuery} />;
                   case 'action':
-                    return (
-                      <div key={idx} className="part-action">
-                        <div>
-                          <strong>Tool Call:</strong> {part.tool}
-                        </div>
-                        <span
-                          style={{
-                            fontSize: 10,
-                            fontWeight: 700,
-                            textTransform: 'uppercase',
-                            color:
-                              part.status === 'completed'
-                                ? 'var(--accent-green)'
-                                : part.status === 'failed'
-                                ? 'var(--accent-red)'
-                                : 'var(--accent-amber)',
-                          }}
-                        >
-                          {part.status}
-                        </span>
-                      </div>
-                    );
+                    return <ActionToolCard key={idx} part={part} searchQuery={searchQuery} />;
                   default:
                     return null;
                 }

@@ -1,0 +1,32 @@
+{
+  "timestamp": "2026-10-19T15:10:39.212Z",
+  "environment": "Real Windows Electron (Phase P5 Artifact Store, Previews, Tool Host & MCP)",
+  "nodeEnv": "test",
+  "results": {
+    "savePngSucceeded": true,
+    "pngSha256": "6b7fa434f92a8b80aab02d9bf1a12e49ffcae424e4013a1c4f68b67e3d2bbcd0",
+    "pngMimeDetected": true,
+    "dedupSameSha": true,
+    "inspectSucceeded": true,
+    "saveAsSucceeded": true,
+    "showInFolderSucceeded": true,
+    "openOriginalSucceeded": true,
+    "badShaInspectDenied": true,
+    "toolHostReadFile": true,
+    "toolHostTraversalDenied": true,
+    "toolHostSearchFiles": true,
+    "toolHostGitStatus": true,
+    "mcpListToolsSucceeded": true,
+    "mcpCalculatorPresent": true,
+    "mcpArtifactInspectPresent": true,
+    "mcpWorkspaceSummaryPresent": true,
+    "mcpCalculatorComputed": true,
+    "mcpCalculatorDivZeroHandled": true,
+    "mcpInspectComputed": true,
+    "mcpSummaryComputed": true,
+    "svgSaved": true,
+    "exportBundleSucceeded": true,
+    "domExportBundleBtnRendered": true
+  },
+  "allPassed": true
+}

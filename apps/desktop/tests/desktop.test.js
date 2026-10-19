@@ -213,4 +213,70 @@ describe('Union Bot Desktop Security & Shell Verification', () => {
     assert.equal(decisionPaid.allowed, false);
     assert.equal(decisionPaid.policyCode, 'DENY_PAID_API_DISABLED');
   });
+
+  it('ToolHost enforces read-only workspace bounds and prevents path traversal (P5-007)', async () => {
+    const { ToolHost } = require('../src/tool-host.cjs');
+    const toolHost = new ToolHost(path.resolve(__dirname, '../../..'));
+
+    // Safe read of package.json
+    const readRes = await toolHost.readFile('package.json');
+    assert.equal(readRes.success, true);
+    assert.match(readRes.content, /"name": "union-bot-monorepo"/);
+
+    // Path traversal rejection
+    const traversalRes = await toolHost.readFile('../../Windows/System32/drivers/etc/hosts');
+    assert.equal(traversalRes.success, false);
+    assert.match(traversalRes.error, /ERR_PATH_TRAVERSAL/);
+
+    // Search files
+    const searchRes = await toolHost.searchFiles('tool-host.cjs');
+    assert.equal(searchRes.success, true);
+    assert.ok(searchRes.count >= 1);
+    assert.ok(searchRes.results.some(r => r.path.includes('tool-host.cjs')));
+  });
+
+  it('MCPService provides capability negotiation and safe zero-cost tools (P5-008, P5-009)', async () => {
+    const { MCPService } = require('../src/mcp-service.cjs');
+    const tempCasDir = path.resolve(__dirname, '../.tmp-test-cas');
+    if (!fs.existsSync(tempCasDir)) fs.mkdirSync(tempCasDir, { recursive: true });
+
+    const mcp = new MCPService(tempCasDir, path.resolve(__dirname, '../../..'));
+
+    // Capabilities
+    const caps = mcp.negotiateCapabilities();
+    assert.equal(caps.serverInfo.name, 'union-bot-local-mcp-host');
+    assert.equal(caps.protocolVersion, '2024-11-05');
+
+    // List tools
+    const tools = mcp.listTools();
+    assert.ok(tools.some(t => t.name === 'calculator'));
+    assert.ok(tools.some(t => t.name === 'artifact_inspect'));
+    assert.ok(tools.some(t => t.name === 'workspace_summary'));
+
+    // Safe calculator evaluation
+    const calcRes = await mcp.callTool('calculator', { expression: '2 + 3 * (4 ^ 2) - 10 / 2' });
+    assert.equal(calcRes.isError, false);
+    assert.equal(calcRes.data.value, 45);
+
+    // Calculator error handling: division by zero
+    const divZeroRes = await mcp.callTool('calculator', { expression: '100 / 0' });
+    assert.equal(divZeroRes.isError, true);
+    assert.match(divZeroRes.content[0].text, /Division by zero/);
+
+    // Calculator security: disallowed chars / code injection rejection
+    const injectRes = await mcp.callTool('calculator', { expression: 'process.exit(1)' });
+    assert.equal(injectRes.isError, true);
+    assert.match(injectRes.content[0].text, /disallowed characters/);
+
+    // Artifact inspector path traversal rejection
+    const badShaRes = await mcp.callTool('artifact_inspect', { sha256: '../etc/passwd' });
+    assert.equal(badShaRes.isError, true);
+
+    // Workspace summary
+    const summaryRes = await mcp.callTool('workspace_summary');
+    assert.equal(summaryRes.isError, false);
+    assert.ok(summaryRes.data.directories.length > 0);
+
+    try { fs.rmSync(tempCasDir, { recursive: true, force: true }); } catch {}
+  });
 });

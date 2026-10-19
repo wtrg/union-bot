@@ -174,6 +174,32 @@ const api = {
       ipcRenderer.removeListener('union-bot:browser-state-updated', subscription);
     };
   },
+
+  // Phase P5: Artifact Store, Previews & Local MCP Host APIs
+  artifactSaveAs: async (payload) => {
+    return ipcRenderer.invoke('union-bot:artifact-save-as', payload);
+  },
+  artifactShowInFolder: async (sha256) => {
+    return ipcRenderer.invoke('union-bot:artifact-show-in-folder', sha256);
+  },
+  artifactOpenOriginal: async (sha256) => {
+    return ipcRenderer.invoke('union-bot:artifact-open-original', sha256);
+  },
+  artifactInspect: async (sha256) => {
+    return ipcRenderer.invoke('union-bot:artifact-inspect', sha256);
+  },
+  toolHostExecute: async (payload) => {
+    return ipcRenderer.invoke('union-bot:tool-host-execute', payload);
+  },
+  mcpCall: async (payload) => {
+    return ipcRenderer.invoke('union-bot:mcp-call', payload);
+  },
+  mcpListTools: async () => {
+    return ipcRenderer.invoke('union-bot:mcp-list-tools');
+  },
+  exportTranscriptBundle: async (options) => {
+    return ipcRenderer.invoke('union-bot:export-transcript-bundle', options);
+  },
 };
 
 // UB-P2-R06-003 / R07-A03: Strictly isolate test mutation channels.
@@ -209,6 +235,9 @@ if (process.env.UNION_BOT_E2E_HARNESS === '1' && process.env.NODE_ENV === 'test'
   };
   api.testVerifyOAuthPopup = async (providerId) => {
     return ipcRenderer.invoke('union-bot:test-verify-oauth-popup', providerId);
+  };
+  api.testQueueSavePath = async (filePath) => {
+    return ipcRenderer.invoke('union-bot:test-queue-save-path', filePath);
   };
 }
 
