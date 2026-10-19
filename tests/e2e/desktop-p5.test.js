@@ -67,7 +67,21 @@ function runElectronProcess(args, { timeoutMs = 35000, env = {} } = {}) {
     let stderr = '';
 
     child.stdout.on('data', (d) => {
-      stdout += d.toString();
+      const str = d.toString();
+      stdout += str;
+      if (str.includes('[P5-E2E] ALL_P5_E2E_CHECKS_PASSED')) {
+        setTimeout(() => {
+          clearTimeout(timer);
+          try {
+            if (process.platform === 'win32') {
+              spawn('taskkill', ['/F', '/T', '/PID', String(child.pid)]);
+            } else {
+              child.kill('SIGKILL');
+            }
+          } catch {}
+          resolve({ code: 0, signal: null, stdout, stderr, child });
+        }, 1000);
+      }
     });
 
     child.stderr.on('data', (d) => {

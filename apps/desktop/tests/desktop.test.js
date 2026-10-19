@@ -315,7 +315,7 @@ describe('Union Bot Desktop Security & Shell Verification', () => {
   });
 
   it('P5-R02-T02: ToolHost canonical realpath check, 5MB limit, and unapproved script denial', async () => {
-    const { ToolHost } = require('../src/tool-host.cjs');
+    const { ToolHost, ApprovalRegistry } = require('../src/tool-host.cjs');
     const toolHost = new ToolHost(path.resolve(__dirname, '../../..'));
 
     // 1. Unapproved script execution must be rejected with ERR_APPROVAL_REQUIRED
@@ -324,29 +324,58 @@ describe('Union Bot Desktop Security & Shell Verification', () => {
     assert.equal(runRes.code, 'ERR_APPROVAL_REQUIRED');
 
     // 2. Approval token validation tests (Technical Leader Gate Verification)
-    // 2a. Missing token ID
-    const noIdVal = toolHost.validateApprovalToken({ status: 'APPROVED' }, 'test');
+    // 2a. Self-crafted / forged token strictly rejected fail-closed
+    const forgedToken = { id: 'forged', status: 'APPROVED' };
+    const forgedVal = toolHost.validateApprovalToken(forgedToken, 'test');
+    assert.equal(forgedVal.valid, false);
+    assert.match(forgedVal.reason, /mandatory boundCommand/);
+
+    // 2b. Missing token ID
+    const noIdVal = toolHost.validateApprovalToken({ status: 'APPROVED', boundCommand: 'test', expiresAt: Date.now() + 60000 }, 'test');
     assert.equal(noIdVal.valid, false);
-    assert.match(noIdVal.reason, /Invalid or missing token ID/);
+    assert.equal(noIdVal.code, 'ERR_INVALID_TOKEN_ID');
 
-    // 2b. Status mismatch
-    const rejectedVal = toolHost.validateApprovalToken({ id: 'tok_1', status: 'PENDING' }, 'test');
+    // 2c. Status mismatch
+    const pendingToken = toolHost.issueApprovalToken({ command: 'test' });
+    pendingToken.status = 'PENDING';
+    const rejectedVal = toolHost.validateApprovalToken(pendingToken, 'test');
     assert.equal(rejectedVal.valid, false);
-    assert.match(rejectedVal.reason, /Invalid token status/);
+    assert.equal(rejectedVal.code, 'ERR_TOKEN_STATUS_INVALID');
 
-    // 2c. Command binding mismatch
-    const cmdMismatchVal = toolHost.validateApprovalToken({ id: 'tok_1', status: 'APPROVED', boundCommand: 'typecheck' }, 'test');
+    // 2d. Command binding mismatch
+    const typecheckToken = toolHost.issueApprovalToken({ command: 'typecheck' });
+    const cmdMismatchVal = toolHost.validateApprovalToken(typecheckToken, 'test');
     assert.equal(cmdMismatchVal.valid, false);
-    assert.match(cmdMismatchVal.reason, /bound to command 'typecheck', not 'test'/);
+    assert.equal(cmdMismatchVal.code, 'ERR_COMMAND_MISMATCH');
 
-    // 2d. Expired token
-    const expiredVal = toolHost.validateApprovalToken({ id: 'tok_1', status: 'APPROVED', expiresAt: Date.now() - 5000 }, 'test');
+    // 2e. Expired token
+    const expiredToken = toolHost.issueApprovalToken({ command: 'test', expiresInMs: 10 });
+    await new Promise(r => setTimeout(r, 25));
+    const expiredVal = toolHost.validateApprovalToken(expiredToken, 'test');
     assert.equal(expiredVal.valid, false);
-    assert.match(expiredVal.reason, /Approval token has expired/);
+    assert.equal(expiredVal.code, 'ERR_TOKEN_EXPIRED');
 
-    // 2e. Valid non-expired bound token
-    const validVal = toolHost.validateApprovalToken({ id: 'tok_valid', status: 'APPROVED', boundCommand: 'test', expiresAt: Date.now() + 60000 }, 'test');
+    // 2f. Forged signature / untrusted issuer
+    const fakeSigToken = {
+      id: 'tok_fake_123',
+      status: 'APPROVED',
+      boundCommand: 'test',
+      expiresAt: Date.now() + 60000,
+      signature: 'deadbeef'.repeat(8),
+    };
+    const fakeSigVal = toolHost.validateApprovalToken(fakeSigToken, 'test');
+    assert.equal(fakeSigVal.valid, false);
+    assert.equal(fakeSigVal.code, 'ERR_TOKEN_FORGED');
+
+    // 2g. Valid issued token validates successfully
+    const validToken = toolHost.issueApprovalToken({ command: 'test', expiresInMs: 60000 });
+    const validVal = toolHost.validateApprovalToken(validToken, 'test');
     assert.equal(validVal.valid, true);
+
+    // 2h. Anti-replay defense: Re-using the same consumed token is strictly denied!
+    const replayVal = toolHost.validateApprovalToken(validToken, 'test');
+    assert.equal(replayVal.valid, false);
+    assert.equal(replayVal.code, 'ERR_TOKEN_REPLAY');
 
     // 3. Path traversal & boundary isolation (same-prefix attack defense via path.relative)
     const escapeRes = await toolHost.readFile('../../../Windows/win.ini');

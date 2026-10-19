@@ -12,12 +12,138 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { execFile } = require('node:child_process');
+const crypto = require('node:crypto');
 
 const ABSOLUTE_MAX_READ_BYTES = 5 * 1024 * 1024; // 5 MB hard cap (P5-R02-T02)
 
+/**
+ * Cryptographically trusted approval registry for native script execution.
+ * Enforces:
+ * - HMAC-SHA256 signatures over id:command:expiresAt:status.
+ * - Mandatory non-empty ID and APPROVED status.
+ * - Mandatory command binding (fail-closed if missing or mismatched).
+ * - Mandatory expiration (fail-closed if missing or expired).
+ * - Anti-forgery: self-crafted/unregistered tokens strictly rejected.
+ * - Anti-replay: single-use atomic consumption.
+ */
+class ApprovalRegistry {
+  constructor(secret) {
+    this.secret = secret || crypto.randomBytes(32).toString('hex');
+    this.tokens = new Map(); // tokenId -> tokenRecord
+  }
+
+  /**
+   * Issues a cryptographically signed approval token bound to an exact command.
+   */
+  issueToken({ command, expiresInMs = 60000, metadata = {} } = {}) {
+    if (!command || typeof command !== 'string' || !command.trim()) {
+      throw new Error('ERR_INVALID_COMMAND: Approval token must have a valid bound command');
+    }
+    const cleanCommand = command.trim();
+    const id = `tok_th_${Date.now()}_${crypto.randomBytes(8).toString('hex')}`;
+    const issuedAt = Date.now();
+    const expiresAt = issuedAt + Math.max(1, expiresInMs);
+
+    // Cryptographic signature binding id, command, and expiresAt
+    const sigPayload = `${id}:${cleanCommand}:${expiresAt}:APPROVED`;
+    const signature = crypto.createHmac('sha256', this.secret).update(sigPayload).digest('hex');
+
+    const token = {
+      id,
+      status: 'APPROVED',
+      boundCommand: cleanCommand,
+      issuedAt,
+      expiresAt,
+      signature,
+      consumed: false,
+      metadata,
+    };
+
+    this.tokens.set(id, token);
+    return token;
+  }
+
+  /**
+   * Validates and atomically consumes an approval token.
+   * Fail-closed against missing token, invalid status, unbound/mismatched command,
+   * expired timestamp, forged signature, unregistered token, or replayed token.
+   */
+  validateAndConsume(token, command) {
+    if (!token || typeof token !== 'object') {
+      return { valid: false, code: 'ERR_MISSING_TOKEN', reason: 'Missing approval token object' };
+    }
+    const { id, status, boundCommand, expiresAt, signature } = token;
+
+    // 1. Mandatory ID
+    if (!id || typeof id !== 'string' || !id.trim()) {
+      return { valid: false, code: 'ERR_INVALID_TOKEN_ID', reason: 'Invalid or missing token ID' };
+    }
+
+    // 2. Mandatory status
+    if (status !== 'APPROVED') {
+      return { valid: false, code: 'ERR_TOKEN_STATUS_INVALID', reason: `Invalid token status: ${status}` };
+    }
+
+    // 3. Mandatory command binding (fail-closed if missing)
+    if (!boundCommand || typeof boundCommand !== 'string' || !boundCommand.trim()) {
+      return { valid: false, code: 'ERR_UNBOUND_COMMAND', reason: 'Token must have mandatory boundCommand' };
+    }
+    if (boundCommand.trim() !== (command || '').trim()) {
+      return { valid: false, code: 'ERR_COMMAND_MISMATCH', reason: `Token is bound to command '${boundCommand}', not '${command}'` };
+    }
+
+    // 4. Mandatory expiration (fail-closed if missing)
+    if (!expiresAt) {
+      return { valid: false, code: 'ERR_MISSING_EXPIRY', reason: 'Token must have mandatory expiresAt timestamp' };
+    }
+    const expiryNum = typeof expiresAt === 'number' ? expiresAt : Date.parse(expiresAt);
+    if (isNaN(expiryNum) || expiryNum <= Date.now()) {
+      return { valid: false, code: 'ERR_TOKEN_EXPIRED', reason: 'Approval token has expired' };
+    }
+
+    // 5. Anti-forgery check: Signature & Registry verification
+    if (!signature || typeof signature !== 'string') {
+      return { valid: false, code: 'ERR_TOKEN_FORGED', reason: 'Missing cryptographic signature (untrusted/forged token)' };
+    }
+    const expectedSig = crypto.createHmac('sha256', this.secret)
+      .update(`${id}:${boundCommand.trim()}:${expiryNum}:APPROVED`)
+      .digest('hex');
+
+    const sigBuf = Buffer.from(signature, 'hex');
+    const expectedBuf = Buffer.from(expectedSig, 'hex');
+    if (sigBuf.length !== expectedBuf.length || !crypto.timingSafeEqual(sigBuf, expectedBuf)) {
+      return { valid: false, code: 'ERR_TOKEN_FORGED', reason: 'Cryptographic signature mismatch (untrusted/forged token)' };
+    }
+
+    // 6. Registry verification (must be issued by this registry)
+    const recorded = this.tokens.get(id);
+    if (!recorded) {
+      return { valid: false, code: 'ERR_UNREGISTERED_TOKEN', reason: 'Token not issued by trusted authority (unregistered)' };
+    }
+
+    // 7. Anti-replay defense: Once consumed, cannot be reused
+    if (recorded.consumed) {
+      return { valid: false, code: 'ERR_TOKEN_REPLAY', reason: 'Approval token already consumed (replay attack denied)' };
+    }
+
+    // Mark atomically consumed
+    recorded.consumed = true;
+    recorded.consumedAt = Date.now();
+    return { valid: true, token: recorded };
+  }
+}
+
 class ToolHost {
-  constructor(workspaceRoot) {
+  constructor(workspaceRoot, options = {}) {
     this.workspaceRoot = path.resolve(workspaceRoot || process.cwd());
+    this.approvalRegistry = options.approvalRegistry || new ApprovalRegistry(options.secret);
+  }
+
+  /**
+   * Issues a trusted approval token via the internal ApprovalRegistry.
+   */
+  issueApprovalToken(opts) {
+    return this.approvalRegistry.issueToken(opts);
   }
 
   /**
@@ -177,29 +303,11 @@ class ToolHost {
   }
 
   /**
-   * Validates human approval token (UB-P5-R01-002 / Gate Hardening).
-   * Verifies status, non-empty tokenId, command binding, and non-expiration.
+   * Validates human approval token via the trusted ApprovalRegistry (UB-P5-R01-002 / Gate Hardening).
+   * Verifies status, non-empty tokenId, command binding, non-expiration, signature, and anti-replay.
    */
   validateApprovalToken(token, command) {
-    if (!token || typeof token !== 'object') {
-      return { valid: false, reason: 'Missing approval token' };
-    }
-    if (token.status !== 'APPROVED') {
-      return { valid: false, reason: `Invalid token status: ${token.status}` };
-    }
-    if (!token.id || typeof token.id !== 'string' || token.id.trim().length === 0) {
-      return { valid: false, reason: 'Invalid or missing token ID' };
-    }
-    if (token.boundCommand && token.boundCommand !== command) {
-      return { valid: false, reason: `Token is bound to command '${token.boundCommand}', not '${command}'` };
-    }
-    if (token.expiresAt) {
-      const expiry = typeof token.expiresAt === 'number' ? token.expiresAt : Date.parse(token.expiresAt);
-      if (isNaN(expiry) || expiry <= Date.now()) {
-        return { valid: false, reason: 'Approval token has expired' };
-      }
-    }
-    return { valid: true };
+    return this.approvalRegistry.validateAndConsume(token, command);
   }
 
   /**
@@ -247,4 +355,4 @@ class ToolHost {
 
 ToolHost.ABSOLUTE_MAX_READ_BYTES = ABSOLUTE_MAX_READ_BYTES;
 
-module.exports = { ToolHost, ABSOLUTE_MAX_READ_BYTES };
+module.exports = { ToolHost, ApprovalRegistry, ABSOLUTE_MAX_READ_BYTES };
