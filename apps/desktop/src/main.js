@@ -2126,7 +2126,7 @@ function createWindow() {
               metadataNav?.success === false
             );
 
-            // UB-P4-R02-001 / P4-R03-A01: Provider auth HTTPS allowed, insecure HTTP strictly DENIED
+            // UB-P4-R02-001 / P4-R03-A01: Provider auth HTTPS allowed, insecure HTTP strictly DENIED, and child popup window/redirect verified
             const geminiAuthHttpNav = await window.unionBotAPI.browserNavigate({
               tabId: geminiTab?.id,
               url: 'http://accounts.google.com/signin',
@@ -2135,10 +2135,15 @@ function createWindow() {
               tabId: geminiTab?.id,
               url: 'https://accounts.google.com/signin',
             });
+            const popupVerification = await window.unionBotAPI.testVerifyOAuthPopup('gemini');
+
             results.a01OAuthControlledAndHttpDenied = Boolean(
               geminiAuthHttpNav && geminiAuthHttpNav.success === false &&
-              geminiAuthHttpsNav && geminiAuthHttpsNav.success === true
+              geminiAuthHttpsNav && geminiAuthHttpsNav.success === true &&
+              popupVerification && popupVerification.success === true &&
+              popupVerification.evidence?.allChecksPassed === true
             );
+            results.a01PopupEvidence = popupVerification?.evidence;
             results.t04ProviderAuthAllowed = results.a01OAuthControlledAndHttpDenied;
 
             // UB-P4-R02-001 / P4-R03-A04: Cross-boundary navigation routes to search partition, leaving provider tab unpolluted
@@ -2249,6 +2254,12 @@ function createWindow() {
             );
 
             // UB-P4-R02-002 / P4-R03-A02: Strict SQLite storage write fault injection (throw and return_false)
+            // Listen for envelope broadcast to strictly prove 0 phantom broadcasts
+            let broadcastEventsCount = 0;
+            const unsubBroadcast = window.unionBotAPI.onEnvelopeReceived(() => {
+              broadcastEventsCount++;
+            });
+
             // Test Case 1: Storage throws exception
             await window.unionBotAPI.testSetStorageShareMode('throw');
             const throwShareRes = await window.unionBotAPI.browserShareSelection({
@@ -2286,11 +2297,15 @@ function createWindow() {
             const noPhantomThrow = !historyAfterFaults.some(e => e.parts?.some(p => p.text?.includes('Throw exception')));
             const noPhantomReturnFalse = !historyAfterFaults.some(e => e.parts?.some(p => p.text?.includes('Return false')));
 
+            if (typeof unsubBroadcast === 'function') unsubBroadcast();
+
+            results.a02BroadcastCount = broadcastEventsCount;
             results.a02StorageFaultInjectedFailClosed = Boolean(
               throwFailedClosed &&
               returnFalseFailedClosed &&
               noPhantomThrow &&
-              noPhantomReturnFalse
+              noPhantomReturnFalse &&
+              broadcastEventsCount === 0
             );
             results.t06FailClosedStorageHandled = results.a02StorageFaultInjectedFailClosed;
 
@@ -2314,19 +2329,34 @@ function createWindow() {
             const geminiTabDom = document.querySelector('[data-testid="browser-tab-gemini"]');
             results.domProviderTabsRendered = Boolean(chatgptTabDom && geminiTabDom);
 
-            // UB-P4-R02-003 / P4-R03-A03: Click "+ Add Tab" DOM button -> Creates Search tab with default DuckDuckGo URL
+            // UB-P4-R02-003 / P4-R03-A03: Click "+ Add Tab" DOM button -> Exactly verifies new tab count and distinct tab ID
             const addTabBtn = document.querySelector('[data-testid="browser-add-tab-btn"]');
             let addTabSuccess = false;
             if (addTabBtn) {
+              const stateBefore = await window.unionBotAPI.browserGetState();
+              const countBefore = stateBefore.tabs.length;
+              const priorTabIds = new Set(stateBefore.tabs.map(t => t.id));
+
               addTabBtn.click();
-              await new Promise(r => setTimeout(r, 400));
-              const stateAfterAdd = await window.unionBotAPI.browserGetState();
-              const addedSearchTab = stateAfterAdd.tabs.find(t => t.providerId === 'search' && t.url === 'https://duckduckgo.com/');
-              addTabSuccess = Boolean(
-                addedSearchTab &&
-                addedSearchTab.partition === 'persist:mcb-web-search' &&
-                addedSearchTab.url === 'https://duckduckgo.com/'
+              await new Promise(r => setTimeout(r, 500));
+
+              const stateAfter = await window.unionBotAPI.browserGetState();
+              const countAfter = stateAfter.tabs.length;
+              const newlyAddedTab = stateAfter.tabs.find(t => !priorTabIds.has(t.id));
+
+              const countIncremented = (countAfter === countBefore + 1);
+              const hasNewId = Boolean(newlyAddedTab && newlyAddedTab.id && !priorTabIds.has(newlyAddedTab.id));
+              const isDefaultSearchTab = Boolean(
+                newlyAddedTab &&
+                newlyAddedTab.providerId === 'search' &&
+                newlyAddedTab.url === 'https://duckduckgo.com/' &&
+                newlyAddedTab.partition === 'persist:mcb-web-search'
               );
+
+              addTabSuccess = Boolean(countIncremented && hasNewId && isDefaultSearchTab);
+              results.a03TabCountBefore = countBefore;
+              results.a03TabCountAfter = countAfter;
+              results.a03NewlyCreatedTabId = newlyAddedTab?.id;
             }
             results.a03AddTabCreatedSearchTab = addTabSuccess;
 
@@ -3589,8 +3619,122 @@ if (isDedicatedTestHarness) {
     return { success: true };
   });
 
+  ipcMain.handle('union-bot:test-verify-oauth-popup', async (event, providerId) => {
+    if (!checkSenderAuthorized(event)) {
+      return { success: false, error: 'Unauthorized IPC sender origin (UB-P2-R01-008)' };
+    }
+    if (!browserService) return { success: false, error: 'No browserService' };
+    const targetProvider = providerId || 'gemini';
+    const targetTab = browserService.getState().tabs.find(t => t.providerId === targetProvider);
+    if (!targetTab) return { success: false, error: 'Target tab not found' };
+
+    const view = browserService.views.get(targetTab.id);
+    if (!view) return { success: false, error: 'View not found' };
+
+    return new Promise(async (resolve) => {
+      const evidence = {
+        childWindowCreated: false,
+        childPartitionPreserved: false,
+        willNavigateHttpAuthBlocked: false,
+        willNavigateExternalBlocked: false,
+        willRedirectExternalBlocked: false,
+        willRedirectHttpsAuthAllowed: false,
+        externalPopupDeniedDirectly: false,
+      };
+
+      const handleChildCreated = (childWindow) => {
+        evidence.childWindowCreated = true;
+        evidence.childPartitionPreserved = (childWindow.webContents.session === view.webContents.session);
+
+        // 1. Verify will-navigate blocks insecure HTTP auth navigation in child popup
+        let httpNavPrevented = false;
+        childWindow.webContents.emit('will-navigate', {
+          preventDefault: () => { httpNavPrevented = true; },
+          defaultPrevented: false
+        }, 'http://accounts.google.com/signin');
+        evidence.willNavigateHttpAuthBlocked = httpNavPrevented;
+
+        // 2. Verify will-navigate blocks non-provider external URL in child popup
+        let extNavPrevented = false;
+        childWindow.webContents.emit('will-navigate', {
+          preventDefault: () => { extNavPrevented = true; },
+          defaultPrevented: false
+        }, 'https://malicious-tracker.com/login');
+        evidence.willNavigateExternalBlocked = extNavPrevented;
+
+        // 3. Verify will-redirect blocks external unauthorized redirect in child popup
+        let extRedirPrevented = false;
+        childWindow.webContents.emit('will-redirect', {
+          preventDefault: () => { extRedirPrevented = true; },
+          defaultPrevented: false
+        }, 'https://malicious-oauth-stealer.com/callback');
+        evidence.willRedirectExternalBlocked = extRedirPrevented;
+
+        // 4. Verify will-redirect allows valid HTTPS auth redirect in child popup
+        let validRedirPrevented = false;
+        childWindow.webContents.emit('will-redirect', {
+          preventDefault: () => { validRedirPrevented = true; },
+          defaultPrevented: false
+        }, 'https://accounts.google.com/signin/oauth/consent');
+        evidence.willRedirectHttpsAuthAllowed = !validRedirPrevented;
+
+        try {
+          childWindow.close();
+        } catch (_) {}
+      };
+
+      view.webContents.once('did-create-window', handleChildCreated);
+
+      // Trigger window.open for valid OAuth HTTPS endpoint
+      try {
+        await view.webContents.executeJavaScript(
+          "window.open('https://accounts.google.com/o/oauth2/v2/auth', '_blank');"
+        );
+      } catch (err) {
+        console.warn('[TestOAuthPopup] executeJavaScript error:', err.message);
+      }
+
+      await new Promise(r => setTimeout(r, 400));
+      view.webContents.removeListener('did-create-window', handleChildCreated);
+
+      // 5. Also verify that opening an external non-auth popup returns action: 'deny' without creating child window
+      let externalPopupCreated = false;
+      const onExternalChild = () => { externalPopupCreated = true; };
+      view.webContents.once('did-create-window', onExternalChild);
+
+      try {
+        await view.webContents.executeJavaScript(
+          "window.open('https://malicious-external-site.com/login', '_blank');"
+        );
+      } catch (_) {}
+
+      await new Promise(r => setTimeout(r, 200));
+      view.webContents.removeListener('did-create-window', onExternalChild);
+      evidence.externalPopupDeniedDirectly = !externalPopupCreated;
+
+      evidence.allChecksPassed = Boolean(
+        evidence.childWindowCreated &&
+        evidence.childPartitionPreserved &&
+        evidence.willNavigateHttpAuthBlocked &&
+        evidence.willNavigateExternalBlocked &&
+        evidence.willRedirectExternalBlocked &&
+        evidence.willRedirectHttpsAuthAllowed &&
+        evidence.externalPopupDeniedDirectly
+      );
+
+      resolve({ success: true, evidence });
+    });
+  });
+
 } else {
   // Production / non-harness mode: fail-closed rejection
+  ipcMain.handle('union-bot:test-verify-oauth-popup', async () => {
+    return {
+      success: false,
+      error: 'ERR_TEST_IPC_DISABLED: Test IPC channels are strictly disabled in production mode (UB-P2-R06-003)',
+    };
+  });
+
   ipcMain.handle('union-bot:test-set-storage-share-mode', async () => {
     return {
       success: false,

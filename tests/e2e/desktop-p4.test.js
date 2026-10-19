@@ -163,8 +163,22 @@ describe('Union Bot Phase P4 Gate: Windows Real Electron E2E Suite', () => {
 
     // Assert Round R03 regression vectors (P4-R03-A01 .. A04)
     assert.equal(evidence.regressionVectors['P4-R03-A01'], true, 'P4-R03-A01: OAuth HTTPS allowed, HTTP denied');
+    assert.equal(evidence.results.a01PopupEvidence?.allChecksPassed, true, 'P4-R03-A01: OAuth popup window & redirect all checks passed');
+    assert.equal(evidence.results.a01PopupEvidence?.childWindowCreated, true, 'P4-R03-A01: OAuth child window created for HTTPS endpoint');
+    assert.equal(evidence.results.a01PopupEvidence?.childPartitionPreserved, true, 'P4-R03-A01: Child popup partition strictly matches parent provider');
+    assert.equal(evidence.results.a01PopupEvidence?.willNavigateHttpAuthBlocked, true, 'P4-R03-A01: Child popup blocks insecure HTTP auth navigation');
+    assert.equal(evidence.results.a01PopupEvidence?.willNavigateExternalBlocked, true, 'P4-R03-A01: Child popup blocks non-provider external navigation');
+    assert.equal(evidence.results.a01PopupEvidence?.willRedirectExternalBlocked, true, 'P4-R03-A01: Child popup blocks external unauthorized redirect');
+    assert.equal(evidence.results.a01PopupEvidence?.willRedirectHttpsAuthAllowed, true, 'P4-R03-A01: Child popup permits HTTPS auth redirect');
+    assert.equal(evidence.results.a01PopupEvidence?.externalPopupDeniedDirectly, true, 'P4-R03-A01: Non-auth external popups denied directly');
+
     assert.equal(evidence.regressionVectors['P4-R03-A02'], true, 'P4-R03-A02: SQLite fault injection fail closed');
+    assert.equal(evidence.results.a02BroadcastCount, 0, 'P4-R03-A02: Zero phantom broadcast events during storage failures');
+
     assert.equal(evidence.regressionVectors['P4-R03-A03'], true, 'P4-R03-A03: Add Tab created search tab with default URL');
+    assert.equal(evidence.results.a03TabCountAfter, evidence.results.a03TabCountBefore + 1, 'P4-R03-A03: Tab count strictly incremented by exactly 1');
+    assert.ok(evidence.results.a03NewlyCreatedTabId, 'P4-R03-A03: Newly created tab ID is distinct and present');
+
     assert.equal(evidence.regressionVectors['P4-R03-A04'], true, 'P4-R03-A04: Cross-boundary navigation leaves provider partition unpolluted');
     assert.equal(evidence.regressionVectors['P4-R02-T01'], true, 'P4-R02-T01: Malicious/private createTab must be denied');
     assert.equal(evidence.regressionVectors['P4-R02-T05'], true, 'P4-R02-T05: Inactive tab share provenance must be exact');

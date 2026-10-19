@@ -207,6 +207,9 @@ if (process.env.UNION_BOT_E2E_HARNESS === '1' && process.env.NODE_ENV === 'test'
   api.testSetStorageShareMode = async (mode) => {
     return ipcRenderer.invoke('union-bot:test-set-storage-share-mode', mode);
   };
+  api.testVerifyOAuthPopup = async (providerId) => {
+    return ipcRenderer.invoke('union-bot:test-verify-oauth-popup', providerId);
+  };
 }
 
 contextBridge.exposeInMainWorld('unionBotAPI', api);
