@@ -382,12 +382,20 @@ describe('Union Bot Phase P6: Native Codex Agent Adapter Suite', () => {
       /ERR_COST_GUARD_REQUIRED/
     );
 
-    // 8. Rejects paid API egress when CostGuard allows paid APIs
-    const paidCostGuard = new CostGuard();
-    (paidCostGuard as any).paidApiEnabled = true;
-    const paidAdapter = new CodexAdapter({ workspaceRoot, costGuard: paidCostGuard });
+    // 8. P9-R04-005: Rejects non-functional guard ({}) fail-closed
+    const emptyGuardAdapter = new CodexAdapter({ workspaceRoot, costGuard: {} as any });
     assert.throws(
-      () => paidAdapter.executeVerification({ files: ['package.json'] }),
+      () => emptyGuardAdapter.executeVerification({ files: ['package.json'] }),
+      /ERR_COST_GUARD_REQUIRED/
+    );
+
+    // 9. P9-R04-005: Rejects guard that permits paid API endpoints
+    const leakyCostGuard = {
+      isUrlAllowed: (url: string) => url.includes('openai.com'),
+    };
+    const leakyAdapter = new CodexAdapter({ workspaceRoot, costGuard: leakyCostGuard as any });
+    assert.throws(
+      () => leakyAdapter.executeVerification({ files: ['package.json'] }),
       /ERR_ZERO_COST_VIOLATION/
     );
 

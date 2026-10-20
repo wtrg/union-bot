@@ -4504,9 +4504,18 @@ function createWindow() {
           costGuardMissingFailedClosed = Boolean(err.message && err.message.includes('ERR_COST_GUARD_REQUIRED'));
         }
 
+        let costGuardEmptyFailedClosed = false;
+        try {
+          const { CodexService: RawCodexService } = require('./codex-service.cjs');
+          const emptyGuardService = new RawCodexService(prodGraph.workspaceRoot, artifactStore, toolHost, {});
+          await emptyGuardService.executeVerification({ files: [prodImplFile], stage: 'VERIFY', targetDigest: prodImplDigest });
+        } catch (err) {
+          costGuardEmptyFailedClosed = Boolean(err.message && err.message.includes('ERR_COST_GUARD_REQUIRED'));
+        }
+
         let costGuardPaidViolationFailedClosed = false;
         try {
-          const fakePaidGuard = { isPaidApiAllowed: () => true, paidApiEnabled: true };
+          const fakePaidGuard = { isUrlAllowed: (u) => u.includes('openai.com') };
           const { CodexService: RawCodexService } = require('./codex-service.cjs');
           const paidGuardService = new RawCodexService(prodGraph.workspaceRoot, artifactStore, toolHost, fakePaidGuard);
           await paidGuardService.executeVerification({ files: [prodImplFile], stage: 'VERIFY', targetDigest: prodImplDigest });
@@ -4523,6 +4532,7 @@ function createWindow() {
           verifyRes.result?.verificationEvidence?.verifiedFiles?.includes(prodImplFile) &&
           verifyRes.result?.nativeService === 'codexService' &&
           costGuardMissingFailedClosed &&
+          costGuardEmptyFailedClosed &&
           costGuardPaidViolationFailedClosed
         );
 

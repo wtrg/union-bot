@@ -234,20 +234,25 @@ class CodexService extends EventEmitter {
       digestVerified = true;
     }
 
-    // 4. Zero-Cost Confirmation: strictly requires an active CostGuard instance fail-closed (P9-R04-005)
-    if (!this.costGuard) {
-      const errNoGuard = new Error('ERR_COST_GUARD_REQUIRED: Codex verification requires an active CostGuard instance fail-closed');
+    // 4. Zero-Cost Confirmation: strictly requires an active, authentic CostGuard instance fail-closed (P9-R04-005)
+    if (!this.costGuard || typeof this.costGuard.isUrlAllowed !== 'function') {
+      const errNoGuard = new Error('ERR_COST_GUARD_REQUIRED: Codex verification requires an active, authentic CostGuard instance implementing isUrlAllowed() fail-closed');
       errNoGuard.code = 'ERR_COST_GUARD_REQUIRED';
       throw errNoGuard;
     }
 
-    const isPaidAllowed = typeof this.costGuard.isPaidApiAllowed === 'function'
-      ? this.costGuard.isPaidApiAllowed()
-      : Boolean(this.costGuard.paidApiEnabled);
-    if (isPaidAllowed) {
-      const errCost = new Error('ERR_ZERO_COST_VIOLATION: Paid API egress is not disabled fail-closed');
-      errCost.code = 'ERR_ZERO_COST_VIOLATION';
-      throw errCost;
+    const testPaidUrls = [
+      'https://api.openai.com/v1/chat/completions',
+      'https://api.anthropic.com/v1/messages',
+      'https://generativelanguage.googleapis.com/v1beta/models',
+    ];
+
+    for (const paidUrl of testPaidUrls) {
+      if (this.costGuard.isUrlAllowed(paidUrl)) {
+        const errCost = new Error(`ERR_ZERO_COST_VIOLATION: CostGuard permits paid API endpoint '${paidUrl}' fail-closed`);
+        errCost.code = 'ERR_ZERO_COST_VIOLATION';
+        throw errCost;
+      }
     }
     const zeroCostConfirmed = true;
 
