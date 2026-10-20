@@ -339,4 +339,43 @@ describe('Phase P9: 6-AI Collaborative Workflow Engine Tests', () => {
     assert.equal(reviewNode.votes.length, 1);
     assert.equal(reviewNode.votes[0].voterId, 'wps_codex_live');
   });
+
+  it('P9-6AI-08 & P9-R04-001: WAITING_INPUT node preserves state, transitions graph to WAITING_INPUT, and blocks downstream execution', async () => {
+    const pipeline = TaskGraphEngine.create6AIPipeline({
+      id: 'pipeline-waiting-input',
+      name: 'Waiting Input Test',
+      workspaceRoot: process.cwd(),
+      taskPrompt: 'Waiting input test',
+    });
+
+    const engine = new TaskGraphEngine();
+    const graph = engine.createGraph(pipeline);
+
+    // Register scope node handler returning WAITING_INPUT
+    const handlers = {
+      'node-scope': async () => ({
+        status: 'WAITING_INPUT' as const,
+        error: 'ERR_PROVIDER_AWAITING_RESPONSE: No authentic live response',
+        provenance: 'UNVERIFIED' as const,
+        result: { awaitingInput: true },
+      }),
+      'node-research': async () => ({ result: { research: 'should not run' } }),
+    };
+
+    const resultGraph = await engine.runGraph(graph.id, handlers);
+
+    // 1. Scope node preserved as WAITING_INPUT (not FAILED or COMPLETED)
+    const scopeNode = resultGraph.nodes.get('node-scope')!;
+    assert.equal(scopeNode.status, 'WAITING_INPUT');
+    assert.match(scopeNode.error || '', /ERR_PROVIDER_AWAITING_RESPONSE/);
+    assert.equal(scopeNode.result?.provenance, 'UNVERIFIED');
+
+    // 2. Downstream research node is blocked from running (still PENDING)
+    const researchNode = resultGraph.nodes.get('node-research')!;
+    assert.equal(researchNode.status, 'PENDING');
+
+    // 3. Graph status is WAITING_INPUT (not FAILED with deadlock)
+    assert.equal(resultGraph.status, 'WAITING_INPUT');
+    assert.match(resultGraph.error || '', /ERR_PROVIDER_AWAITING_RESPONSE/);
+  });
 });

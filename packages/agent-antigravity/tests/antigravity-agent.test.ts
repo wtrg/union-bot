@@ -13,6 +13,7 @@ import {
   AntigravityDiscovery,
   AntigravityClient,
   MockAntigravityTransport,
+  HangingAntigravityTransport,
   AntigravityAdapter,
 } from '../src/index.ts';
 import { CostGuard } from '../../cost-guard/src/index.ts';
@@ -274,5 +275,22 @@ describe('Phase P7: Antigravity Native Agent Adapter Suite', () => {
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
+  });
+
+  it('P7-009 & P9-R04-002: Hanging transport times out and fails closed with ERR_ANTIGRAVITY_TIMEOUT', async () => {
+    const client = new AntigravityClient();
+    const hangingTransport = new HangingAntigravityTransport();
+
+    let timeoutError: any = null;
+    try {
+      await client.executeTurn('mock-agy', 'hanging task', { timeoutMs: 80 }, hangingTransport);
+    } catch (err) {
+      timeoutError = err;
+    }
+
+    assert.ok(timeoutError, 'Must throw error on timeout');
+    assert.match(timeoutError.message, /ERR_ANTIGRAVITY_TIMEOUT/);
+    assert.equal(hangingTransport.isClosed, true, 'Transport must be closed and subprocess cleaned up');
+    assert.equal(client.executing, false, 'Client must no longer be executing');
   });
 });

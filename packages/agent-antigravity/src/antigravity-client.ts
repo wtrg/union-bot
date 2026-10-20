@@ -175,18 +175,17 @@ export class StdioAntigravityTransport implements AntigravityTransport {
       this.rl = null;
     }
     if (this.child && !this.child.killed) {
+      const pid = this.child.pid;
       try {
-        this.child.kill('SIGTERM');
-        setTimeout(() => {
-          if (this.child && !this.child.killed) {
-            try {
-              this.child.kill('SIGKILL');
-            } catch {}
-          }
-        }, 500);
+        if (process.platform === 'win32' && pid) {
+          const { spawnSync } = require('child_process');
+          spawnSync('taskkill', ['/F', '/T', '/PID', String(pid)]);
+        } else {
+          this.child.kill('SIGTERM');
+        }
       } catch {}
+      this.child = null;
     }
-    this.child = null;
   }
 }
 
@@ -245,6 +244,29 @@ export class MockAntigravityTransport implements AntigravityTransport {
       this.messageHandler(msg);
     } else {
       this.queuedMessages.push(msg);
+    }
+  }
+}
+
+/**
+ * Hanging transport that never emits messages, used to verify timeout fail-closed behavior.
+ */
+export class HangingAntigravityTransport implements AntigravityTransport {
+  public isClosed = false;
+  private messageHandler: ((msg: string) => void) | null = null;
+  private errorHandler: ((err: Error) => void) | null = null;
+  private closeHandler: ((code: number | null) => void) | null = null;
+
+  public start(): void {}
+  public onMessage(handler: (msg: string) => void): void { this.messageHandler = handler; }
+  public onError(handler: (err: Error) => void): void { this.errorHandler = handler; }
+  public onClose(handler: (code: number | null) => void): void { this.closeHandler = handler; }
+  public close(): void {
+    this.isClosed = true;
+    if (this.closeHandler) {
+      const handler = this.closeHandler;
+      this.closeHandler = null;
+      handler(null);
     }
   }
 }
@@ -400,9 +422,12 @@ export class AntigravityClient extends EventEmitter {
         totalTokens: 0,
       };
 
+      let hasSettled = false;
       let timer: NodeJS.Timeout | null = null;
       if (options.timeoutMs && options.timeoutMs > 0) {
         timer = setTimeout(() => {
+          if (hasSettled) return;
+          hasSettled = true;
           turnStatus = 'ERROR';
           const timeoutErr = new Error(`ERR_ANTIGRAVITY_TIMEOUT: Native Antigravity execution timed out after ${options.timeoutMs}ms`);
           cleanup();
@@ -484,6 +509,8 @@ export class AntigravityClient extends EventEmitter {
 
       activeTransport.onClose((code) => {
         cleanup();
+        if (hasSettled) return;
+        hasSettled = true;
         if (code !== 0 && turnStatus === 'SUCCESS') {
           // Soft failure or process termination
           if (code === null) {

@@ -331,4 +331,51 @@ describe('Union Bot Phase P6: Native Codex Agent Adapter Suite', () => {
     assert.equal(costGuard.isUrlAllowed('https://api.openai.com/v1/chat/completions'), false);
     assert.equal(costGuard.isUrlAllowed('https://api.anthropic.com/v1/messages'), false);
   });
+
+  // P9-R03-003 & P9-R04-003: Authentic Codex QA Verification Suite
+  it('P9-R04-003: CodexAdapter executeVerification enforces strict fail-closed validation', () => {
+    const costGuard = new CostGuard({ allowLocalhost: true });
+    const adapter = new CodexAdapter({ workspaceRoot, costGuard });
+
+    // 1. Rejects empty file list
+    assert.throws(
+      () => adapter.executeVerification({ files: [] }),
+      /ERR_VERIFICATION_NO_FILES/
+    );
+
+    // 2. Rejects non-existent file
+    assert.throws(
+      () => adapter.executeVerification({ files: ['non-existent-file-xyz.ts'] }),
+      /ERR_VERIFICATION_FILE_NOT_FOUND/
+    );
+
+    // 3. Validates real package.json
+    const validRes = adapter.executeVerification({ files: ['package.json'] });
+    assert.equal(validRes.success, true);
+    assert.equal(validRes.syntaxVerified, true);
+    assert.equal(validRes.securityBoundaryVerified, true);
+    assert.equal(validRes.zeroCostConfirmed, true);
+
+    // 4. Rejects corrupt JSON
+    const scratchDir = path.join(workspaceRoot, 'scratch/codex-verify-test');
+    fs.mkdirSync(scratchDir, { recursive: true });
+    try {
+      const corruptJson = path.join(scratchDir, 'bad.json');
+      fs.writeFileSync(corruptJson, '{ invalid json: true, ', 'utf8');
+      assert.throws(
+        () => adapter.executeVerification({ files: ['scratch/codex-verify-test/bad.json'], workspaceRoot }),
+        /ERR_SYNTAX_VERIFICATION_FAILED/
+      );
+
+      // 5. Rejects corrupt JS
+      const corruptJs = path.join(scratchDir, 'bad.js');
+      fs.writeFileSync(corruptJs, 'function ( { invalid syntax;', 'utf8');
+      assert.throws(
+        () => adapter.executeVerification({ files: ['scratch/codex-verify-test/bad.js'], workspaceRoot }),
+        /ERR_SYNTAX_VERIFICATION_FAILED/
+      );
+    } finally {
+      fs.rmSync(scratchDir, { recursive: true, force: true });
+    }
+  });
 });

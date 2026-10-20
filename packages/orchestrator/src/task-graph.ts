@@ -1188,20 +1188,29 @@ export class TaskGraphEngine extends EventEmitter {
             completedAt: graph.completedAt,
           });
         } else {
-          // Any failed nodes?
-          const anyFailed = Array.from(graph.nodes.values()).some((n) => n.status === 'FAILED');
-          if (anyFailed) {
-            graph.status = 'FAILED';
-            if (!graph.error) {
-              const failedNode = Array.from(graph.nodes.values()).find((n) => n.status === 'FAILED' && n.error);
-              graph.error = failedNode?.error || 'Task graph stalled with failed node(s)';
-            }
-            this.recordHistory(graph, 'TASK_GRAPH_FAILED', undefined, { error: graph.error });
+          // Check if any node is awaiting input
+          const anyWaitingInput = Array.from(graph.nodes.values()).some((n) => n.status === 'WAITING_INPUT');
+          if (anyWaitingInput) {
+            graph.status = 'WAITING_INPUT';
+            const waitingNode = Array.from(graph.nodes.values()).find((n) => n.status === 'WAITING_INPUT');
+            graph.error = waitingNode?.error || 'Task graph awaiting provider response or authentication';
+            this.recordHistory(graph, 'TASK_GRAPH_WAITING_INPUT', waitingNode?.id, { error: graph.error });
           } else {
-            // Stalled without runnable nodes
-            graph.status = 'FAILED';
-            graph.error = 'Task graph deadlocked without runnable nodes';
-            this.recordHistory(graph, 'TASK_GRAPH_FAILED', undefined, { error: graph.error });
+            // Any failed nodes?
+            const anyFailed = Array.from(graph.nodes.values()).some((n) => n.status === 'FAILED');
+            if (anyFailed) {
+              graph.status = 'FAILED';
+              if (!graph.error) {
+                const failedNode = Array.from(graph.nodes.values()).find((n) => n.status === 'FAILED' && n.error);
+                graph.error = failedNode?.error || 'Task graph stalled with failed node(s)';
+              }
+              this.recordHistory(graph, 'TASK_GRAPH_FAILED', undefined, { error: graph.error });
+            } else {
+              // Stalled without runnable nodes
+              graph.status = 'FAILED';
+              graph.error = 'Task graph deadlocked without runnable nodes';
+              this.recordHistory(graph, 'TASK_GRAPH_FAILED', undefined, { error: graph.error });
+            }
           }
         }
         break;

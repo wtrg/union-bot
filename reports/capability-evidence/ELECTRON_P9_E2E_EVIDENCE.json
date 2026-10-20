@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-10-20T10:15:57.238Z",
+  "timestamp": "2026-10-20T10:40:26.956Z",
   "environment": "Real Windows Electron (Phase P9 Web Provider Extensions & 6-AI Collaboration)",
   "nodeEnv": "test",
   "results": {
@@ -65,7 +65,7 @@
           "id": "node-implement",
           "stage": "IMPLEMENT",
           "status": "COMPLETED",
-          "outputDigest": "9c72ae7813371bec76cc975ccd19dbb7569ecfb848d947d375733d03939e919b"
+          "outputDigest": "c84eb137c6570443d7581485d3eb09db7d2599c14d4f120439d708c4317f9a7c"
         }
       }
     },
@@ -76,7 +76,7 @@
       "success": true,
       "status": "COMPLETED",
       "graphId": "p9-e2e-6ai-pipeline",
-      "completedAt": 1792491357235,
+      "completedAt": 1792492826954,
       "nodes": [
         {
           "id": "node-scope",
@@ -86,7 +86,7 @@
             "scope": "Desktop Workspace 6-AI Collaborative Integration",
             "taskPrompt": "Build production zero-cost collaborative workspace",
             "threadId": "/c/e2e-chatgpt-scope",
-            "sessionId": "wps_chatgpt_4290e8fca209",
+            "sessionId": "wps_chatgpt_cbfd3d29f1ba",
             "providerId": "chatgpt",
             "role": "LEADER",
             "provenance": "LIVE_WEB"
@@ -103,7 +103,7 @@
               "https://gemini.google.com/app"
             ],
             "threadId": "/app/e2e-gemini-research",
-            "sessionId": "wps_gemini_e2e63bd745af",
+            "sessionId": "wps_gemini_b9dae382d677",
             "providerId": "gemini",
             "role": "RESEARCHER",
             "provenance": "LIVE_WEB"
@@ -117,7 +117,7 @@
           "result": {
             "architectureSpec": "6-Node DAG with cryptographic session identity binding and anti-spoofing.",
             "threadId": "/chat/e2e-claude-arch",
-            "sessionId": "wps_claude_964df5da13bc",
+            "sessionId": "wps_claude_5ae8a7b87688",
             "providerId": "claude",
             "role": "ARCHITECT",
             "provenance": "LIVE_WEB"
@@ -130,9 +130,9 @@
           "status": "COMPLETED",
           "result": {
             "artifactPath": "scratch/p9-e2e-output.ts",
-            "digest": "9c72ae7813371bec76cc975ccd19dbb7569ecfb848d947d375733d03939e919b",
+            "digest": "c84eb137c6570443d7581485d3eb09db7d2599c14d4f120439d708c4317f9a7c",
             "bytesWritten": 204,
-            "sessionId": "wps_antigravity_3d795bc82396",
+            "sessionId": "wps_antigravity_6d0d065b6153",
             "providerId": "antigravity",
             "role": "IMPLEMENTER",
             "provenance": "LOCAL_AGENT"
@@ -146,27 +146,27 @@
           "result": {
             "reviewStatus": "APPROVED",
             "algorithmAudit": "Algorithmic efficiency verified: zero unnecessary iterations, O(1) hash validations.",
-            "sessionId": "wps_deepseek_beb4a49f2936",
+            "sessionId": "wps_deepseek_cdaf8d7523ed",
             "providerId": "deepseek",
             "role": "REVIEWER",
             "provenance": "LIVE_WEB"
           },
           "votes": [
             {
-              "voterId": "wps_deepseek_beb4a49f2936",
+              "voterId": "wps_deepseek_cdaf8d7523ed",
               "voterRole": "REVIEWER",
               "decision": "APPROVE",
               "rationale": "Algorithm efficiency approved by live DeepSeek session",
-              "reviewedDigest": "9c72ae7813371bec76cc975ccd19dbb7569ecfb848d947d375733d03939e919b",
-              "timestamp": 1792491357234
+              "reviewedDigest": "c84eb137c6570443d7581485d3eb09db7d2599c14d4f120439d708c4317f9a7c",
+              "timestamp": 1792492826951
             },
             {
-              "voterId": "wps_codex_3d22f12a2111",
+              "voterId": "wps_codex_5309d56c4376",
               "voterRole": "QA_SECURITY",
               "decision": "APPROVE",
               "rationale": "Security boundary and zero-cost verified by live Codex session",
-              "reviewedDigest": "9c72ae7813371bec76cc975ccd19dbb7569ecfb848d947d375733d03939e919b",
-              "timestamp": 1792491357234
+              "reviewedDigest": "c84eb137c6570443d7581485d3eb09db7d2599c14d4f120439d708c4317f9a7c",
+              "timestamp": 1792492826952
             }
           ]
         },
@@ -177,17 +177,17 @@
           "result": {
             "testsPassed": true,
             "auditStatus": "ALL_SECURITY_CHECKS_PASSED",
-            "sessionId": "wps_codex_3d22f12a2111",
+            "sessionId": "wps_codex_5309d56c4376",
             "providerId": "codex",
             "role": "QA_SECURITY",
             "provenance": "LOCAL_AGENT",
             "verified": true,
             "verificationEvidence": {
-              "verifierSessionId": "wps_codex_3d22f12a2111",
+              "verifierSessionId": "wps_codex_5309d56c4376",
               "syntaxVerified": true,
               "securityBoundaryVerified": true,
               "zeroCostConfirmed": true,
-              "timestamp": 1792491357235
+              "timestamp": 1792492826953
             }
           },
           "votes": []

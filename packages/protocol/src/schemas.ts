@@ -345,6 +345,7 @@ export type StageType = z.infer<typeof StageTypeSchema>;
 export const TaskGraphStatusSchema = z.enum([
   'PENDING',
   'RUNNING',
+  'WAITING_INPUT',
   'COMPLETED',
   'FAILED',
   'CANCELLED',

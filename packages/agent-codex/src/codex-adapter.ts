@@ -16,6 +16,8 @@
 
 import path from 'node:path';
 import fs from 'node:fs';
+import crypto from 'node:crypto';
+import vm from 'node:vm';
 import { EventEmitter } from 'node:events';
 import { CodexDiscovery, type CodexDiscoveryResult } from './codex-discovery.ts';
 import {
@@ -259,34 +261,107 @@ export class CodexAdapter extends EventEmitter {
     const files = params.files || [];
     const root = params.workspaceRoot || this.workspaceRoot;
 
-    for (const f of files) {
-      if (typeof f === 'string') {
-        this.verifyWorkspaceBoundary(f);
-      }
+    if (!Array.isArray(files) || files.length === 0) {
+      const err = new Error('ERR_VERIFICATION_NO_FILES: Verification requires at least one target artifact file');
+      (err as any).code = 'ERR_VERIFICATION_NO_FILES';
+      throw err;
     }
 
     for (const f of files) {
-      if (typeof f === 'string') {
-        const absPath = path.resolve(root, f);
-        if (fs.existsSync(absPath)) {
-          const content = fs.readFileSync(absPath, 'utf8');
-          if (f.endsWith('.json')) {
-            try {
-              JSON.parse(content);
-            } catch (err: any) {
-              const errSyntax = new Error(`ERR_SYNTAX_VERIFICATION_FAILED: Corrupt JSON syntax in '${f}': ${err.message}`);
+      if (typeof f !== 'string' || !f.trim()) {
+        const err = new Error('ERR_INVALID_FILE_PATH: File path must be a non-empty string');
+        (err as any).code = 'ERR_INVALID_FILE_PATH';
+        throw err;
+      }
+      this.verifyWorkspaceBoundary(f);
+    }
+
+    let syntaxVerifiedCount = 0;
+    for (const f of files) {
+      const absPath = path.resolve(root, f);
+      if (!fs.existsSync(absPath)) {
+        const errNotFound = new Error(`ERR_VERIFICATION_FILE_NOT_FOUND: Target artifact file '${f}' does not exist on disk`);
+        (errNotFound as any).code = 'ERR_VERIFICATION_FILE_NOT_FOUND';
+        throw errNotFound;
+      }
+
+      const content = fs.readFileSync(absPath, 'utf8');
+      if (f.endsWith('.json')) {
+        try {
+          JSON.parse(content);
+          syntaxVerifiedCount++;
+        } catch (err: any) {
+          const errSyntax = new Error(`ERR_SYNTAX_VERIFICATION_FAILED: Corrupt JSON syntax in '${f}': ${err.message}`);
+          (errSyntax as any).code = 'ERR_SYNTAX_VERIFICATION_FAILED';
+          throw errSyntax;
+        }
+      } else if (f.endsWith('.js') || f.endsWith('.cjs') || f.endsWith('.mjs')) {
+        try {
+          new vm.Script(content);
+          syntaxVerifiedCount++;
+        } catch (err: any) {
+          const errSyntax = new Error(`ERR_SYNTAX_VERIFICATION_FAILED: Corrupt JS syntax in '${f}': ${err.message}`);
+          (errSyntax as any).code = 'ERR_SYNTAX_VERIFICATION_FAILED';
+          throw errSyntax;
+        }
+      } else if (f.endsWith('.ts') || f.endsWith('.tsx')) {
+        try {
+          // Dynamic ts module transpile
+          let tsModule: any = null;
+          try { tsModule = require('typescript'); } catch {}
+          if (tsModule && typeof tsModule.transpileModule === 'function') {
+            const transpileRes = tsModule.transpileModule(content, { reportDiagnostics: true });
+            if (transpileRes.diagnostics && transpileRes.diagnostics.length > 0) {
+              const diagMsgs = transpileRes.diagnostics.map((d: any) => typeof d.messageText === 'string' ? d.messageText : d.messageText.messageText).join('; ');
+              const errSyntax = new Error(`ERR_SYNTAX_VERIFICATION_FAILED: Corrupt TS syntax in '${f}': ${diagMsgs}`);
               (errSyntax as any).code = 'ERR_SYNTAX_VERIFICATION_FAILED';
               throw errSyntax;
             }
+          } else {
+            new vm.Script(content.replace(/:\s*[a-zA-Z0-9_<>[\]|&]+/g, ''));
           }
+          syntaxVerifiedCount++;
+        } catch (tsErr: any) {
+          if (tsErr.code === 'ERR_SYNTAX_VERIFICATION_FAILED') throw tsErr;
+          const errSyntax = new Error(`ERR_SYNTAX_VERIFICATION_FAILED: Corrupt TS syntax in '${f}': ${tsErr.message}`);
+          (errSyntax as any).code = 'ERR_SYNTAX_VERIFICATION_FAILED';
+          throw errSyntax;
         }
+      } else {
+        if (content.length === 0) {
+          const errEmpty = new Error(`ERR_EMPTY_ARTIFACT: Artifact '${f}' is empty`);
+          (errEmpty as any).code = 'ERR_EMPTY_ARTIFACT';
+          throw errEmpty;
+        }
+        syntaxVerifiedCount++;
+      }
+    }
+
+    if (params.targetDigest) {
+      const primaryFile = path.resolve(root, files[0]);
+      const actualDigest = crypto.createHash('sha256').update(fs.readFileSync(primaryFile)).digest('hex');
+      if (actualDigest !== params.targetDigest) {
+        const errDigest = new Error(`ERR_DIGEST_MISMATCH: Target digest '${params.targetDigest}' does not match file digest '${actualDigest}'`);
+        (errDigest as any).code = 'ERR_DIGEST_MISMATCH';
+        throw errDigest;
+      }
+    }
+
+    if (this.costGuard) {
+      const paidAllowed = typeof (this.costGuard as any).isPaidApiAllowed === 'function'
+        ? (this.costGuard as any).isPaidApiAllowed()
+        : Boolean((this.costGuard as any).paidApiEnabled);
+      if (paidAllowed) {
+        const errCost = new Error('ERR_ZERO_COST_VIOLATION: Paid API egress is not disabled');
+        (errCost as any).code = 'ERR_ZERO_COST_VIOLATION';
+        throw errCost;
       }
     }
 
     return {
       success: true,
-      syntaxVerified: true,
-      securityBoundaryVerified: true,
+      syntaxVerified: syntaxVerifiedCount > 0,
+      securityBoundaryVerified: files.length > 0,
       zeroCostConfirmed: true,
       nativeService: 'codexService',
       verifiedFiles: files,

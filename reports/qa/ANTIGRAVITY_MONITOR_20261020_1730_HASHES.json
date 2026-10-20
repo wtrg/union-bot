@@ -1,0 +1,26 @@
+[
+  {
+    "Path": "D:\\WORK-TEAM\\apps\\desktop\\src\\main.js",
+    "Hash": "4AD8A273770A84E2A10C3222571472E1179849EB2A1BD3B2C25C008E4B76602C"
+  },
+  {
+    "Path": "D:\\WORK-TEAM\\apps\\desktop\\src\\codex-service.cjs",
+    "Hash": "54C2B004981975866842B7B1677224ACD8C63D380BCEE820047D85A13E39CA25"
+  },
+  {
+    "Path": "D:\\WORK-TEAM\\apps\\desktop\\src\\task-graph-service.cjs",
+    "Hash": "C616D8CB0990BA5CE46574F7F070F22E6E197C1B70B5E3C817AAEC9B4226AFD2"
+  },
+  {
+    "Path": "D:\\WORK-TEAM\\packages\\orchestrator\\src\\task-graph.ts",
+    "Hash": "37F88F37EC5872ACC39B968F79D08F1482CC6BC084AC3E6A9485886B7D59796C"
+  },
+  {
+    "Path": "D:\\WORK-TEAM\\packages\\protocol\\src\\schemas.ts",
+    "Hash": "FD05BDDBD54EA815A44142F4D9D8C9B05D25CA7969AC0A026CB3EDFCD5689C52"
+  },
+  {
+    "Path": "D:\\WORK-TEAM\\tests\\e2e\\desktop-p9.test.js",
+    "Hash": "F5F4A2BE669AFEA5005A1FA820D805F77E158BBD1A4BBC562C4F30A97141FA33"
+  }
+]

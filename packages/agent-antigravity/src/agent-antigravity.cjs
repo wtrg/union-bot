@@ -254,18 +254,38 @@ class StdioAntigravityTransport {
       this.rl = null;
     }
     if (this.child && !this.child.killed) {
+      const pid = this.child.pid;
       try {
-        this.child.kill('SIGTERM');
-        setTimeout(() => {
-          if (this.child && !this.child.killed) {
-            try {
-              this.child.kill('SIGKILL');
-            } catch {}
-          }
-        }, 500);
+        if (process.platform === 'win32' && pid) {
+          const { spawnSync } = require('child_process');
+          spawnSync('taskkill', ['/F', '/T', '/PID', String(pid)]);
+        } else {
+          this.child.kill('SIGTERM');
+        }
       } catch {}
+      this.child = null;
     }
-    this.child = null;
+  }
+}
+
+class HangingAntigravityTransport {
+  constructor() {
+    this.isClosed = false;
+    this.messageHandler = null;
+    this.errorHandler = null;
+    this.closeHandler = null;
+  }
+  start() {}
+  onMessage(h) { this.messageHandler = h; }
+  onError(h) { this.errorHandler = h; }
+  onClose(h) { this.closeHandler = h; }
+  close() {
+    this.isClosed = true;
+    if (this.closeHandler) {
+      const h = this.closeHandler;
+      this.closeHandler = null;
+      h(null);
+    }
   }
 }
 
@@ -438,9 +458,12 @@ class AntigravityClient extends EventEmitter {
         totalTokens: 0,
       };
 
+      let hasSettled = false;
       let timer = null;
       if (options.timeoutMs && options.timeoutMs > 0) {
         timer = setTimeout(() => {
+          if (hasSettled) return;
+          hasSettled = true;
           turnStatus = 'ERROR';
           const timeoutErr = new Error(`ERR_ANTIGRAVITY_TIMEOUT: Native Antigravity execution timed out after ${options.timeoutMs}ms`);
           cleanup();
@@ -515,6 +538,8 @@ class AntigravityClient extends EventEmitter {
 
       this.transport.onClose((code) => {
         cleanup();
+        if (hasSettled) return;
+        hasSettled = true;
         if (code !== 0 && turnStatus === 'SUCCESS') {
           if (code === null) {
             turnStatus = 'CANCELLED';
@@ -571,7 +596,7 @@ class AntigravityAdapter {
   }
 
   async execute(params) {
-    const { prompt, workspaceRoot, targetDir, customExecutablePath, conversationId, forbiddenFlags, mockTransport } = params;
+    const { prompt, workspaceRoot, targetDir, customExecutablePath, conversationId, forbiddenFlags, mockTransport, timeoutMs } = params;
 
     const effectiveDir = targetDir || workspaceRoot;
     if (!AntigravityClient.verifyWorkspaceBoundary(workspaceRoot, effectiveDir)) {
@@ -629,7 +654,7 @@ class AntigravityAdapter {
           workspaceRoot,
           conversationId,
           forbiddenFlags,
-          timeoutMs: options.timeoutMs,
+          timeoutMs,
         },
         mockTransport
       );
@@ -703,6 +728,7 @@ module.exports = {
   AntigravityDiscovery,
   StdioAntigravityTransport,
   MockAntigravityTransport,
+  HangingAntigravityTransport,
   AntigravityClient,
   AntigravityAdapter,
 };
