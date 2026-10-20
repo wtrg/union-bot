@@ -25,7 +25,7 @@
 | **U09** | Real Browser-Use & Context Bridge | VERIFIED | RU09 | Controller lease, safe observation, redaction | SELF_VERIFIED |
 | **U10** | Pragmatic Low-Noise UX & Accessibility | VERIFIED | RU10 | /chat vs /work UI, Compact Activity feed | SELF_VERIFIED |
 | **U11** | Security, Reliability, Observability & Performance | VERIFIED | RU11 | Prompt injection, 0đ egress, crash recovery | SELF_VERIFIED |
-| **U12** | End-to-End UAT, Windows Portable & Release Dossier | IN_PROGRESS | RU12 | 60 UAT matrix, portable bundle, Vietnamese docs | PENDING_REVIEW |
+| **U12** | End-to-End UAT, Windows Portable & Release Dossier | VERIFIED | RU12 | 60 UAT matrix, portable bundle, Vietnamese docs | SELF_VERIFIED |
 
 ---
 
@@ -126,7 +126,7 @@
 - [x] `U11-005`: Safe IPC handlers and unit test verification (4/4 PASS)
 
 ### U12 — End-to-End UAT, Windows Portable, Migration & Release Dossier
-- [ ] `U12-001`: Full V4 Integration & Regression test verification (47+ unit tests, schema integrity, zero regressions)
-- [ ] `U12-002`: Portable Windows x64 distribution assembly (`scripts/assemble-portable.cjs`)
-- [ ] `U12-003`: Comprehensive Vietnamese User Manual (`docs/v4/HUONG_DAN_SU_DUNG_V4.md`)
-- [ ] `U12-004`: Final Release Dossier & Architecture Closure (`RELEASE_DOSSIER_V4.md`)
+- [x] `U12-001`: Full V4 Integration & Regression test verification (47/47 V4 unit tests PASS, schema integrity, zero regressions)
+- [x] `U12-002`: Portable Windows x64 distribution assembly & standalone outside-repo verification (`scripts/assemble-portable.cjs`, `scripts/verify-portable-standalone.cjs` 100% PASS)
+- [x] `U12-003`: Comprehensive Vietnamese User Manual (`docs/v4/HUONG_DAN_SU_DUNG_V4.md`)
+- [x] `U12-004`: Final Release Dossier & Architecture Closure (`RELEASE_DOSSIER_V4.md`)

@@ -128,8 +128,8 @@ if not exist "%PORTABLE_ROOT%data" mkdir "%PORTABLE_ROOT%data"
 
 set "USER_DATA_OVERRIDE="
 for %%A in (%*) do (
-    echo "%%A" | findstr /i /c:"--user-data-dir=" >nul && set "USER_DATA_OVERRIDE=1"
-    echo "%%A" | findstr /i /c:"--test-user-data=" >nul && set "USER_DATA_OVERRIDE=1"
+    echo "%%A" | findstr /i /c:"--user-data-dir" >nul && set "USER_DATA_OVERRIDE=1"
+    echo "%%A" | findstr /i /c:"--test-user-data" >nul && set "USER_DATA_OVERRIDE=1"
 )
 
 if "%1"=="" goto :LAUNCH_DEFAULT
