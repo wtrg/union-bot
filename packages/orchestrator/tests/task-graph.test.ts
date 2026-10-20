@@ -734,4 +734,24 @@ describe('Phase P8: Multi-Agent Task Graph & Consensus Engine', () => {
       }
     );
   });
+
+  it('P8-R04-001: enforces getRunnableNodes() and prevents premature step on node with unsatisfied dependencies', () => {
+    const pipeline = TaskGraphEngine.createStandard5StagePipeline({
+      id: 'graph-runnable-check-test',
+      name: 'Runnable Check Test',
+      workspaceRoot: tempWorkspace,
+      planPrompt: 'Build feature',
+    });
+
+    const graph = engine.createGraph(pipeline);
+    const runnable = engine.getRunnableNodes(graph);
+
+    // Only PLAN has no dependencies and is runnable initially
+    assert.equal(runnable.length, 1);
+    assert.equal(runnable[0].id, 'node-plan');
+
+    // IMPLEMENT, REVIEW, FIX, VERIFY are not runnable because dependencies are unsatisfied
+    const implementNode = graph.nodes.get('node-implement')!;
+    assert.equal(runnable.some(n => n.id === implementNode.id), false);
+  });
 });

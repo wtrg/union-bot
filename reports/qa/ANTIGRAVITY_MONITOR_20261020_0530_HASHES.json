@@ -1,0 +1,22 @@
+[
+  {
+    "Path": "D:\\WORK-TEAM\\apps\\desktop\\src\\main.js",
+    "Hash": "6A7E124CD0FABC38C6321524C7A23D3365C07782C5AD56D7664ABC04DA6D4866"
+  },
+  {
+    "Path": "D:\\WORK-TEAM\\apps\\desktop\\src\\orchestrator.cjs",
+    "Hash": "23D13B38B6E9CA64628EB955F6023E9270A0BE6994F265DD593BC167475B094F"
+  },
+  {
+    "Path": "D:\\WORK-TEAM\\apps\\desktop\\src\\preload.cjs",
+    "Hash": "FDE00B0F1F54FF75BB6336B2A82875DA3E215FF3D5F0A7AEB94D7E86DEF76DE4"
+  },
+  {
+    "Path": "D:\\WORK-TEAM\\packages\\protocol\\src\\schemas.ts",
+    "Hash": "989DADF005879E79CAE03862F0DB4044321109ED381B02FC8FBFC63161E5FAA4"
+  },
+  {
+    "Path": "D:\\WORK-TEAM\\packages\\orchestrator\\tests\\task-graph.test.ts",
+    "Hash": "C606C56E1DA67BF7BD87CCB974DEED7E0BBC4DAB2BE3A1D0230C41C66C5F1C55"
+  }
+]

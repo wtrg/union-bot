@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-10-19T20:35:42.673Z",
+  "timestamp": "2026-10-20T06:48:36.990Z",
   "environment": "Real Windows Electron (Phase P8 Multi-Agent Task Graph & Consensus Engine)",
   "nodeEnv": "test",
   "results": {
@@ -17,6 +17,7 @@
     "fakeQaRegistrationDenied": true,
     "preApprovalDenied": true,
     "forgedVoteDenied": true,
+    "prematureStepDenied": true,
     "staleDigestVoteDenied": true,
     "authenticVoteAccepted": true,
     "duplicateVoteDeduplicated": true,

@@ -1,11 +1,13 @@
 {
   "suite": "UNION_BOT_ELECTRON_R07_PROD_EVIDENCE",
-  "timestamp": "2026-10-19T20:37:13.282Z",
-  "userDataDir": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\ub-test-r07-prod-1792442232096",
+  "timestamp": "2026-10-20T06:49:28.178Z",
+  "userDataDir": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\ub-test-r07-prod-1792478967540",
   "vectors": {
     "R07-A03": {
       "productionTestKillDisabled": true,
-      "productionConfirmationDisabled": true
+      "productionConfirmationDisabled": true,
+      "productionTaskGraphStepDisabled": true,
+      "productionTaskGraphRegisterReviewerDisabled": true
     }
   },
   "result": "PASS"

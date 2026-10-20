@@ -189,6 +189,8 @@ describe('Union Bot Phase P2 Gate R07: Windows Real Electron E2E Suite', () => {
     assert.equal(evidence.result, 'PASS', 'Evidence result must be PASS');
     assert.equal(evidence.vectors['R07-A03'].productionTestKillDisabled, true);
     assert.equal(evidence.vectors['R07-A03'].productionConfirmationDisabled, true);
+    assert.equal(evidence.vectors['R07-A03'].productionTaskGraphStepDisabled, true);
+    assert.equal(evidence.vectors['R07-A03'].productionTaskGraphRegisterReviewerDisabled, true);
 
     try {
       fs.rmSync(tempUserData, { recursive: true, force: true });

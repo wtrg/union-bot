@@ -1365,20 +1365,28 @@ function createWindow() {
           (async () => {
             const hasTestKill = typeof window.unionBotAPI.testKillWorker === 'function';
             const hasTestConfirmation = typeof window.unionBotAPI.testSetConfirmationMode === 'function';
+            const hasTaskGraphStep = typeof window.unionBotAPI.taskGraphStep === 'function' || typeof window.unionBotAPI.testTaskGraphStep === 'function';
+            const hasTaskGraphRegisterReviewer = typeof window.unionBotAPI.taskGraphRegisterReviewer === 'function' || typeof window.unionBotAPI.testTaskGraphRegisterReviewer === 'function';
             return {
               hasTestKill,
               hasTestConfirmation,
+              hasTaskGraphStep,
+              hasTaskGraphRegisterReviewer,
             };
           })()
         `);
 
         const testKillDisabled = prodResult.hasTestKill === false;
         const testConfirmationDisabled = prodResult.hasTestConfirmation === false;
+        const taskGraphStepDisabled = prodResult.hasTaskGraphStep === false;
+        const taskGraphRegisterReviewerDisabled = prodResult.hasTaskGraphRegisterReviewer === false;
 
         console.log('[R07-PROD-E2E] testKillWorker strictly undefined in production:', testKillDisabled);
         console.log('[R07-PROD-E2E] testSetConfirmationMode strictly undefined in production:', testConfirmationDisabled);
+        console.log('[R07-PROD-E2E] taskGraphStep strictly undefined in production:', taskGraphStepDisabled);
+        console.log('[R07-PROD-E2E] taskGraphRegisterReviewer strictly undefined in production:', taskGraphRegisterReviewerDisabled);
 
-        const allPassed = testKillDisabled && testConfirmationDisabled;
+        const allPassed = testKillDisabled && testConfirmationDisabled && taskGraphStepDisabled && taskGraphRegisterReviewerDisabled;
 
         const report = {
           suite: 'UNION_BOT_ELECTRON_R07_PROD_EVIDENCE',
@@ -1388,6 +1396,8 @@ function createWindow() {
             'R07-A03': {
               productionTestKillDisabled: testKillDisabled,
               productionConfirmationDisabled: testConfirmationDisabled,
+              productionTaskGraphStepDisabled: taskGraphStepDisabled,
+              productionTaskGraphRegisterReviewerDisabled: taskGraphRegisterReviewerDisabled,
             },
           },
           result: allPassed ? 'PASS' : 'FAIL',
@@ -3182,7 +3192,7 @@ function createWindow() {
 
             // 4. P8-R03 Voter Authentication, Anti-Pre-Approval, Privilege Protection & Deduplication
             // A. Attempt self-registering fake privileged QA_SECURITY reviewer via renderer IPC (P8-R02-002)
-            const fakeRegRes = await window.unionBotAPI.taskGraphRegisterReviewer({
+            const fakeRegRes = await window.unionBotAPI.testTaskGraphRegisterReviewer({
               graphId: 'p8-e2e-pipeline',
               reviewer: { voterId: 'fake-qa-agent', role: 'QA_SECURITY' },
             });
@@ -3223,9 +3233,16 @@ function createWindow() {
               forgedRes?.code === 'ERR_UNAUTHORIZED_VOTER'
             );
 
+            // D0. P8-R03-004: Premature step on node-implement (dependencies not satisfied) strictly blocked
+            const prematureStepRes = await window.unionBotAPI.testTaskGraphStep({ graphId: 'p8-e2e-pipeline', nodeId: 'node-implement' });
+            results.prematureStepDenied = Boolean(
+              prematureStepRes?.success === false &&
+              prematureStepRes?.code === 'ERR_NODE_NOT_RUNNABLE'
+            );
+
             // D. Step PLAN and IMPLEMENT so that targetDigest is produced and locked legitimately
-            await window.unionBotAPI.taskGraphStep({ graphId: 'p8-e2e-pipeline', nodeId: 'node-plan' });
-            const implementStepRes = await window.unionBotAPI.taskGraphStep({ graphId: 'p8-e2e-pipeline', nodeId: 'node-implement' });
+            await window.unionBotAPI.testTaskGraphStep({ graphId: 'p8-e2e-pipeline', nodeId: 'node-plan' });
+            const implementStepRes = await window.unionBotAPI.testTaskGraphStep({ graphId: 'p8-e2e-pipeline', nodeId: 'node-implement' });
             const activeDigest = implementStepRes?.node?.outputDigest;
 
             // E. Attempt vote with stale / mismatched digest against active review targetDigest
@@ -3324,6 +3341,7 @@ function createWindow() {
           'cycleDetectionEnforced',
           'fakeQaRegistrationDenied',
           'preApprovalDenied',
+          'prematureStepDenied',
           'forgedVoteDenied',
           'authenticVoteAccepted',
           'staleDigestVoteDenied',
@@ -4855,6 +4873,14 @@ ipcMain.handle('union-bot:task-graph-register-reviewer', async (event, payload) 
   if (!checkSenderAuthorized(event)) {
     return { success: false, error: 'Unauthorized IPC sender origin' };
   }
+  // P8-R03-005: Strictly block renderer registration in production
+  if (process.env.NODE_ENV !== 'test' || process.env.UNION_BOT_E2E_HARNESS !== '1') {
+    return {
+      success: false,
+      code: 'ERR_UNAUTHORIZED_ACTION',
+      error: 'ERR_UNAUTHORIZED_ACTION: Mutating authorizedReviewers from renderer IPC is strictly forbidden in production. Reviewers must be pre-configured in trusted backend policies.',
+    };
+  }
   try {
     const { graphId, reviewer } = payload || {};
     if (!reviewer || !reviewer.role || !reviewer.voterId) {
@@ -4880,12 +4906,31 @@ ipcMain.handle('union-bot:task-graph-step', async (event, payload) => {
   if (!checkSenderAuthorized(event)) {
     return { success: false, error: 'Unauthorized IPC sender origin' };
   }
+  // P8-R03-004: Strictly block taskGraphStep in production
+  if (process.env.NODE_ENV !== 'test' || process.env.UNION_BOT_E2E_HARNESS !== '1') {
+    return {
+      success: false,
+      code: 'ERR_UNAUTHORIZED_ACTION',
+      error: 'ERR_UNAUTHORIZED_ACTION: taskGraphStep is a test-only capability and strictly forbidden in production mode.',
+    };
+  }
   try {
     const { graphId, nodeId } = payload || {};
     const graph = taskGraphService.getGraph(graphId);
     if (!graph) return { success: false, error: 'Graph not found' };
     const node = graph.nodes.get(nodeId);
     if (!node) return { success: false, error: 'Node not found' };
+
+    // P8-R03-004: Enforce node is genuinely runnable according to DAG scheduler
+    const runnableNodes = taskGraphService.engine.getRunnableNodes(graph);
+    if (!runnableNodes.some(n => n.id === node.id)) {
+      return {
+        success: false,
+        code: 'ERR_NODE_NOT_RUNNABLE',
+        error: `ERR_NODE_NOT_RUNNABLE: Node '${node.id}' cannot be stepped because its dependencies are not satisfied or its status is '${node.status}'.`,
+      };
+    }
+
     const resultNode = await taskGraphService.engine.executeNode(graph, node);
     return {
       success: true,

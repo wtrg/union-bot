@@ -277,12 +277,6 @@ const api = {
   taskGraphSubmitVote: async (payload) => {
     return ipcRenderer.invoke('union-bot:task-graph-submit-vote', payload);
   },
-  taskGraphRegisterReviewer: async (payload) => {
-    return ipcRenderer.invoke('union-bot:task-graph-register-reviewer', payload);
-  },
-  taskGraphStep: async (payload) => {
-    return ipcRenderer.invoke('union-bot:task-graph-step', payload);
-  },
   taskGraphVerifyBoundary: async (targetPath) => {
     return ipcRenderer.invoke('union-bot:task-graph-verify-boundary', targetPath);
   },
@@ -339,6 +333,15 @@ if (process.env.UNION_BOT_E2E_HARNESS === '1' && process.env.NODE_ENV === 'test'
   api.testSetAntigravityMock = async (messages) => {
     return ipcRenderer.invoke('union-bot:test-set-antigravity-mock', messages);
   };
+  // P8-R03-004 & P8-R03-005: Strictly isolate task-graph stepping and reviewer registration to test harness
+  api.testTaskGraphStep = async (payload) => {
+    return ipcRenderer.invoke('union-bot:task-graph-step', payload);
+  };
+  api.testTaskGraphRegisterReviewer = async (payload) => {
+    return ipcRenderer.invoke('union-bot:task-graph-register-reviewer', payload);
+  };
+  api.taskGraphStep = api.testTaskGraphStep;
+  api.taskGraphRegisterReviewer = api.testTaskGraphRegisterReviewer;
 }
 
 contextBridge.exposeInMainWorld('unionBotAPI', api);
