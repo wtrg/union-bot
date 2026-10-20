@@ -70,21 +70,47 @@ function handleRequest(msg) {
         break;
       }
       case 'getProjects': {
+        try {
+          const prjCols = db.prepare('PRAGMA table_info(projects)').all();
+          if (!prjCols.some((c) => c.name === 'workspace_root')) {
+            db.exec('ALTER TABLE projects ADD COLUMN workspace_root TEXT;');
+          }
+        } catch {}
         const includeArchived = args && args.includeArchived === true;
         const q = includeArchived
-          ? 'SELECT id, name, description, created_at, updated_at, archived FROM projects ORDER BY created_at ASC'
-          : 'SELECT id, name, description, created_at, updated_at, archived FROM projects WHERE archived = 0 ORDER BY created_at ASC';
+          ? 'SELECT id, name, description, workspace_root, created_at, updated_at, archived FROM projects ORDER BY created_at ASC'
+          : 'SELECT id, name, description, workspace_root, created_at, updated_at, archived FROM projects WHERE archived = 0 ORDER BY created_at ASC';
         const rows = db.prepare(q).all();
-        process.send({ id, result: rows });
+        const mapped = rows.map((r) => ({ ...r, workspaceRoot: r.workspace_root || r.workspaceRoot }));
+        process.send({ id, result: mapped });
         break;
       }
       case 'createProject': {
         const now = new Date().toISOString();
+        try {
+          const prjCols = db.prepare('PRAGMA table_info(projects)').all();
+          if (!prjCols.some((c) => c.name === 'workspace_root')) {
+            db.exec('ALTER TABLE projects ADD COLUMN workspace_root TEXT;');
+          }
+        } catch {}
+        const workspaceRoot = args.workspaceRoot || args.workspace_root || null;
         db.prepare(`
-          INSERT INTO projects (id, name, description, created_at, updated_at, archived)
-          VALUES (?, ?, ?, ?, ?, 0)
-        `).run(args.id, args.name, args.description || null, now, now);
-        process.send({ id, result: { id: args.id, name: args.name, description: args.description, created_at: now, updated_at: now, archived: 0 } });
+          INSERT INTO projects (id, name, description, workspace_root, created_at, updated_at, archived)
+          VALUES (?, ?, ?, ?, ?, ?, 0)
+        `).run(args.id, args.name, args.description || null, workspaceRoot, now, now);
+        process.send({
+          id,
+          result: {
+            id: args.id,
+            name: args.name,
+            description: args.description,
+            workspaceRoot,
+            workspace_root: workspaceRoot,
+            created_at: now,
+            updated_at: now,
+            archived: 0
+          }
+        });
         break;
       }
       case 'renameProject': {
@@ -141,13 +167,17 @@ function handleRequest(msg) {
           query += ' AND status = ?';
           params.push(args.status);
         }
-        if (args && args.roomId) {
+        if (args && (args.roomId || args.room_id)) {
           query += ' AND room_id = ?';
-          params.push(args.roomId);
+          params.push(args.roomId || args.room_id);
         }
-        if (args && args.taskId) {
+        if (args && (args.taskId || args.id)) {
           query += ' AND id = ?';
-          params.push(args.taskId);
+          params.push(args.taskId || args.id);
+        }
+        if (args && args.projectId) {
+          query += " AND (room_id IN (SELECT id FROM rooms WHERE project_id = ?) OR (room_id IS NULL AND json_extract(metadata_json, '$.projectId') = ?))";
+          params.push(args.projectId, args.projectId);
         }
         query += ' ORDER BY created_at DESC LIMIT ?';
         params.push(limit);
@@ -160,8 +190,11 @@ function handleRequest(msg) {
             status: r.status,
             progress: r.progress,
             roomId: r.room_id || undefined,
+            room_id: r.room_id || undefined,
             createdAt: r.created_at,
+            created_at: r.created_at,
             updatedAt: r.updated_at,
+            updated_at: r.updated_at,
             metadata: r.metadata_json ? JSON.parse(r.metadata_json) : undefined
           }))
         });

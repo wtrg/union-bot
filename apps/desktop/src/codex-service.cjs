@@ -47,10 +47,19 @@ class CodexService extends EventEmitter {
    * Updates workspace root (e.g. for isolated test harness).
    */
   setWorkspaceRoot(newRoot) {
-    this.workspaceRoot = path.resolve(newRoot);
+    const resolved = path.resolve(newRoot);
+    if (this.workspaceRoot === resolved) return;
+    this.workspaceRoot = resolved;
     if (this.adapter) {
-      this.adapter.close();
-      this.adapter = null;
+      if (typeof this.adapter.setWorkspaceRoot === 'function') {
+        this.adapter.setWorkspaceRoot(resolved);
+      } else {
+        this.adapter.workspaceRoot = resolved;
+      }
+      this.adapter.activeThreadCwd = null;
+      if (this.adapter.client) {
+        this.adapter.client.currentThreadId = null;
+      }
     }
   }
 

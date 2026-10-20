@@ -183,22 +183,6 @@ function performGracefulExit(exitCode = 0) {
     app.releaseSingleInstanceLock();
   } catch {}
 
-  // Explicitly terminate all child renderer processes to prevent Windows zombie handles on DLLs/EXEs
-  try {
-    const { webContents } = require('electron');
-    if (webContents && typeof webContents.getAllWebContents === 'function') {
-      const allWcs = webContents.getAllWebContents();
-      for (const wc of allWcs) {
-        try {
-          const pid = wc.getOSProcessId();
-          if (pid && pid !== process.pid) {
-            try { process.kill(pid); } catch {}
-          }
-        } catch {}
-      }
-    }
-  } catch {}
-
   try {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.destroy();
@@ -5289,8 +5273,41 @@ ipcMain.handle('union-bot:create-project', async (event, payload) => {
       ? id.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '-')
       : `proj_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
     const cleanName = String(name).trim();
-    const result = await storage.createProject(cleanId, cleanName, description || '');
+    let cleanWorkspaceRoot = String(payload?.workspaceRoot || payload?.workspace_root || '').trim();
+    if (cleanWorkspaceRoot) {
+      cleanWorkspaceRoot = path.resolve(cleanWorkspaceRoot);
+      if (!fs.existsSync(cleanWorkspaceRoot)) {
+        try { fs.mkdirSync(cleanWorkspaceRoot, { recursive: true }); } catch {}
+      }
+    }
+    const result = await storage.createProject(cleanId, cleanName, description || '', cleanWorkspaceRoot);
     return { success: true, project: result };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('union-bot:select-directory', async (event, options = {}) => {
+  if (!checkSenderAuthorized(event)) {
+    return { success: false, error: 'Unauthorized IPC sender origin' };
+  }
+  try {
+    if (isDedicatedTestHarness && testQueuedFileDialogPaths.length > 0) {
+      const selectedPath = testQueuedFileDialogPaths.shift();
+      return { success: true, path: selectedPath };
+    }
+    if (isDedicatedTestHarness && process.argv.includes('--headless')) {
+      return { success: false, error: 'No queued directory dialog path in headless test harness' };
+    }
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: options.title || 'Chọn thư mục dự án (Project Workspace)',
+      defaultPath: options.defaultPath || os.homedir(),
+      properties: ['openDirectory', 'createDirectory'],
+    });
+    if (result.canceled || !result.filePaths || result.filePaths.length === 0) {
+      return { success: false, canceled: true };
+    }
+    return { success: true, path: result.filePaths[0] };
   } catch (err) {
     return { success: false, error: err.message };
   }
@@ -5482,11 +5499,76 @@ ipcMain.handle('union-bot:task-execute', async (event, payload) => {
       return { success: true, taskId, status: 'completed', alreadyCompleted: true, result: task.metadata?.executionResult };
     }
 
-    const targetWorkspace = workspaceRoot
-      ? path.resolve(workspaceRoot)
-      : (process.argv.includes('--p10-uat')
-          ? path.join(app.getPath('userData'), 'isolated-uat-workspace')
-          : path.resolve(__dirname, '../../..'));
+    const taskRoomId = task.roomId || task.room_id;
+    let taskProjectId = null;
+    if (taskRoomId) {
+      try {
+        const rooms = await storage.getRooms();
+        const room = rooms?.find((r) => r.id === taskRoomId);
+        if (room?.project_id) {
+          taskProjectId = room.project_id;
+        }
+      } catch {}
+    }
+    if (!taskProjectId && task.metadata?.projectId) {
+      taskProjectId = task.metadata.projectId;
+    }
+
+    let projectWorkspaceRoot = null;
+    if (taskProjectId) {
+      try {
+        const projects = await storage.getProjects({ includeArchived: true });
+        const proj = projects?.find((p) => p.id === taskProjectId);
+        if (proj?.workspaceRoot || proj?.workspace_root) {
+          projectWorkspaceRoot = proj.workspaceRoot || proj.workspace_root;
+        }
+      } catch {}
+    }
+
+    let resolvedWorkspace = null;
+    if (projectWorkspaceRoot) {
+      const canonicalProjectRoot = path.resolve(projectWorkspaceRoot);
+      if (workspaceRoot) {
+        const payloadRoot = path.resolve(workspaceRoot);
+        if (payloadRoot.toLowerCase() !== canonicalProjectRoot.toLowerCase()) {
+          const errRootMismatch = `ERR_WORKSPACE_ROOT_MISMATCH: Payload root '${workspaceRoot}' does not match project canonical root '${projectWorkspaceRoot}'`;
+          await storage.updateTask(taskId, {
+            status: 'failed',
+            progress: 0,
+            metadata: {
+              ...(task.metadata || {}),
+              error: errRootMismatch,
+              failedAt: new Date().toISOString()
+            }
+          });
+          broadcastTaskUpdate(taskId, { status: 'failed', progress: 0, error: errRootMismatch });
+          return { success: false, code: 'ERR_WORKSPACE_ROOT_MISMATCH', error: errRootMismatch };
+        }
+      }
+      resolvedWorkspace = canonicalProjectRoot;
+    } else if (workspaceRoot) {
+      resolvedWorkspace = path.resolve(workspaceRoot);
+    } else if (task.metadata?.workspaceRoot) {
+      resolvedWorkspace = path.resolve(task.metadata.workspaceRoot);
+    } else {
+      if (process.argv.includes('--p10-uat')) {
+        resolvedWorkspace = path.join(app.getPath('userData'), 'isolated-uat-workspace');
+      } else {
+        resolvedWorkspace = path.join(app.getPath('userData'), 'workspaces', taskProjectId || 'default');
+      }
+    }
+    const targetWorkspace = path.resolve(resolvedWorkspace);
+    if (!fs.existsSync(targetWorkspace)) {
+      try { fs.mkdirSync(targetWorkspace, { recursive: true }); } catch {}
+    }
+    try {
+      if (typeof antigravityService?.setWorkspaceRoot === 'function') {
+        antigravityService.setWorkspaceRoot(targetWorkspace);
+      }
+      if (typeof codexService?.setWorkspaceRoot === 'function') {
+        codexService.setWorkspaceRoot(targetWorkspace);
+      }
+    } catch {}
 
     const assignedRole = task.metadata?.role || task.role || 'IMPLEMENTER';
     const isLocalUtility = (task.metadata?.provider === 'LOCAL_UTILITY' || assignedRole === 'LOCAL_UTILITY');
@@ -6822,16 +6904,296 @@ ipcMain.handle('union-bot:export-transcript-bundle', async (event, options = {})
 
     fs.writeFileSync(path.join(bundleDir, 'transcript.md'), transcriptMd, 'utf8');
 
-    const manifest = artifactStore.generateManifest(shaList);
-    fs.writeFileSync(path.join(bundleDir, 'manifest.json'), JSON.stringify(manifest, null, 2), 'utf8');
+    // Also persist full structured envelopes for lossless roundtrip (UAT-021)
+    try {
+      fs.writeFileSync(path.join(bundleDir, 'envelopes.json'), JSON.stringify(history, null, 2), 'utf8');
+    } catch {}
+
+    const manifestItems = artifactStore ? artifactStore.generateManifest(shaList) : [];
+    const artifactsDir = path.join(bundleDir, 'artifacts');
+    if (!fs.existsSync(artifactsDir)) {
+      fs.mkdirSync(artifactsDir, { recursive: true });
+    }
+
+    const exportedArtifacts = [];
+    for (const item of manifestItems) {
+      const sha = String(item.sha256 || '').toLowerCase().trim();
+      if (!/^[a-f0-9]{64}$/.test(sha)) continue;
+
+      let filename = sha;
+      for (const env of history) {
+        if (Array.isArray(env.parts)) {
+          const part = env.parts.find(p => (p.kind === 'attachment' || p.kind === 'artifact') && String(p.sha256 || '').toLowerCase().trim() === sha);
+          if (part && part.filename) {
+            filename = path.basename(part.filename);
+            break;
+          }
+        }
+      }
+
+      if (artifactStore && typeof artifactStore.inspectArtifact === 'function') {
+        const info = artifactStore.inspectArtifact(sha);
+        if (info && info.storedPath && fs.existsSync(info.storedPath)) {
+          // Store strictly as SHA256-named files to prevent traversal and same-name overwrite
+          const targetInArtifacts = path.join(artifactsDir, sha);
+          const targetInBundleRoot = path.join(bundleDir, sha);
+          fs.copyFileSync(info.storedPath, targetInArtifacts);
+          fs.copyFileSync(info.storedPath, targetInBundleRoot);
+        }
+      }
+
+      exportedArtifacts.push({
+        sha256: sha,
+        filename: path.basename(filename),
+        byteSize: item.byteSize,
+        exists: item.exists,
+      });
+    }
+
+    const manifestPayload = {
+      version: 1,
+      roomId: cleanRoomId,
+      exportedAt: new Date().toISOString(),
+      artifacts: exportedArtifacts,
+    };
+    fs.writeFileSync(path.join(bundleDir, 'manifest.json'), JSON.stringify(manifestPayload, null, 2), 'utf8');
 
     return {
       success: true,
       bundleDir,
       transcriptPath: path.join(bundleDir, 'transcript.md'),
       manifestPath: path.join(bundleDir, 'manifest.json'),
-      artifactCount: shaList.length,
-      manifest,
+      artifactCount: exportedArtifacts.length,
+      manifest: manifestPayload,
+    };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('union-bot:import-transcript-bundle', async (event, options = {}) => {
+  if (!checkSenderAuthorized(event)) {
+    return { success: false, error: 'Unauthorized IPC sender origin' };
+  }
+  try {
+    const { bundleDir, targetRoomId = 'orchestration' } = options;
+    if (!bundleDir || typeof bundleDir !== 'string' || !fs.existsSync(bundleDir)) {
+      return { success: false, code: 'ERR_BUNDLE_NOT_FOUND', error: 'Bundle directory not found' };
+    }
+
+    const realBundleDir = fs.realpathSync(bundleDir);
+    const manifestPath = path.resolve(realBundleDir, 'manifest.json');
+    const transcriptPath = path.resolve(realBundleDir, 'transcript.md');
+
+    if (!manifestPath.startsWith(realBundleDir + path.sep) || !transcriptPath.startsWith(realBundleDir + path.sep)) {
+      return { success: false, code: 'ERR_PATH_TRAVERSAL', error: 'Manifest or transcript escapes bundle directory' };
+    }
+    if (!fs.existsSync(manifestPath)) {
+      return { success: false, code: 'ERR_MANIFEST_MISSING', error: 'manifest.json missing in bundle' };
+    }
+    if (!fs.existsSync(transcriptPath)) {
+      return { success: false, code: 'ERR_TRANSCRIPT_MISSING', error: 'transcript.md missing in bundle' };
+    }
+
+    const manifestContent = fs.readFileSync(manifestPath, 'utf8');
+    const rawManifest = JSON.parse(manifestContent);
+    const artifactList = Array.isArray(rawManifest) ? rawManifest : (rawManifest.artifacts || []);
+    const transcriptText = fs.readFileSync(transcriptPath, 'utf8');
+
+    // PHASE 1: FAIL-CLOSED PRE-VALIDATION BEFORE ANY WRITE
+    const validatedArtifacts = [];
+    for (const item of artifactList) {
+      const sha = String(item.sha256 || '').toLowerCase().trim();
+      if (!/^[a-f0-9]{64}$/.test(sha)) {
+        return {
+          success: false,
+          code: 'ERR_INVALID_SHA256',
+          error: `Invalid artifact SHA256 in manifest: '${item.sha256}'`
+        };
+      }
+
+      const candidates = [
+        path.resolve(realBundleDir, 'artifacts', sha),
+        path.resolve(realBundleDir, sha),
+      ];
+      if (item.filename && typeof item.filename === 'string') {
+        const safeBase = path.basename(item.filename);
+        candidates.push(path.resolve(realBundleDir, 'artifacts', safeBase));
+        candidates.push(path.resolve(realBundleDir, safeBase));
+      }
+
+      let foundPath = null;
+      for (const cand of candidates) {
+        if (cand.startsWith(realBundleDir + path.sep) && fs.existsSync(cand)) {
+          const realCand = fs.realpathSync(cand);
+          if (realCand.startsWith(realBundleDir + path.sep) && fs.statSync(realCand).isFile()) {
+            foundPath = realCand;
+            break;
+          }
+        }
+      }
+
+      if (!foundPath) {
+        return {
+          success: false,
+          code: 'ERR_ARTIFACT_MISSING',
+          error: `Artifact missing in bundle: ${sha} (${item.filename || 'no filename'})`
+        };
+      }
+
+      const fileStat = fs.statSync(foundPath);
+      const expectedSize = item.byteSize ?? item.sizeBytes;
+      if (expectedSize !== undefined && fileStat.size !== expectedSize) {
+        return {
+          success: false,
+          code: 'ERR_SIZE_MISMATCH',
+          error: `Artifact ${sha} size mismatch. Expected ${expectedSize} bytes, got ${fileStat.size} bytes`
+        };
+      }
+
+      const fileBytes = fs.readFileSync(foundPath);
+      const computedHash = crypto.createHash('sha256').update(fileBytes).digest('hex');
+      if (computedHash !== sha) {
+        return {
+          success: false,
+          code: 'ERR_CHECKSUM_MISMATCH',
+          error: `Artifact ${sha} checksum mismatch. Expected ${sha}, got ${computedHash}`
+        };
+      }
+
+      validatedArtifacts.push({
+        sha256: sha,
+        filename: path.basename(item.filename || sha),
+        bytes: fileBytes,
+      });
+    }
+
+    // PHASE 1B: FAIL-CLOSED ENVELOPES PRE-VALIDATION BEFORE ANY WRITE (UAT-021)
+    const envelopesJsonPath = path.resolve(realBundleDir, 'envelopes.json');
+    let validatedEnvelopes = null;
+    if (fs.existsSync(envelopesJsonPath)) {
+      let rawEnvelopes;
+      try {
+        rawEnvelopes = JSON.parse(fs.readFileSync(envelopesJsonPath, 'utf8'));
+      } catch (err) {
+        return {
+          success: false,
+          code: 'ERR_MALFORMED_HISTORY',
+          error: `Malformed envelopes.json: ${err.message}`
+        };
+      }
+      if (!Array.isArray(rawEnvelopes)) {
+        return {
+          success: false,
+          code: 'ERR_MALFORMED_HISTORY',
+          error: 'envelopes.json must be an array of envelopes'
+        };
+      }
+      for (const env of rawEnvelopes) {
+        if (!env || typeof env !== 'object') {
+          return {
+            success: false,
+            code: 'ERR_MALFORMED_HISTORY',
+            error: 'Invalid envelope entry in envelopes.json'
+          };
+        }
+        if (!env.id || typeof env.id !== 'string') {
+          return {
+            success: false,
+            code: 'ERR_MALFORMED_HISTORY',
+            error: 'Envelope missing id in envelopes.json'
+          };
+        }
+        if (!env.sender || typeof env.sender !== 'object' || !env.sender.kind) {
+          return {
+            success: false,
+            code: 'ERR_MALFORMED_HISTORY',
+            error: 'Envelope missing sender or sender.kind in envelopes.json'
+          };
+        }
+        if (!Array.isArray(env.parts)) {
+          return {
+            success: false,
+            code: 'ERR_MALFORMED_HISTORY',
+            error: 'Envelope parts must be an array in envelopes.json'
+          };
+        }
+      }
+      validatedEnvelopes = rawEnvelopes;
+    }
+
+    // PHASE 2: ATOMIC RESTORATION (Only executes after 100% of artifacts AND envelopes verified cleanly)
+    let restoredArtifactsCount = 0;
+    for (const art of validatedArtifacts) {
+      if (artifactStore) {
+        if (typeof artifactStore.storeBytes === 'function') {
+          artifactStore.storeBytes(art.bytes, art.filename);
+        } else if (typeof artifactStore.put === 'function') {
+          await artifactStore.put(art.bytes, art.filename);
+        }
+      }
+      restoredArtifactsCount++;
+    }
+
+    let restoredEnvelopes = 0;
+    if (validatedEnvelopes && storage) {
+      for (const env of validatedEnvelopes) {
+        const restoredEnv = {
+          ...env,
+          id: `env_restored_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+          traceId: env.traceId || `trace_restore_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+          roomId: targetRoomId,
+          recipient: { kind: 'room', id: targetRoomId },
+        };
+        await storage.insertEnvelope(restoredEnv);
+        if (orchestrator && typeof orchestrator.recordEnvelopeAsync === 'function') {
+          try { await orchestrator.recordEnvelopeAsync(restoredEnv); } catch {}
+        }
+        restoredEnvelopes++;
+      }
+    } else if (storage) {
+      const now = new Date().toISOString();
+      const importedEnvelope = {
+        id: `env_import_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+        traceId: `trace_import_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+        roomId: targetRoomId,
+        timestamp: now,
+        sender: {
+          id: 'system_import',
+          name: 'System Import',
+          role: 'SYSTEM',
+          kind: 'system'
+        },
+        recipient: {
+          kind: 'room',
+          id: targetRoomId
+        },
+        parts: [
+          {
+            kind: 'text',
+            text: transcriptText
+          }
+        ],
+        fidelity: 'L0_RAW_TEXT',
+        isDemo: false
+      };
+      await storage.insertEnvelope(importedEnvelope);
+      if (orchestrator && typeof orchestrator.recordEnvelopeAsync === 'function') {
+        try { await orchestrator.recordEnvelopeAsync(importedEnvelope); } catch {}
+      }
+      restoredEnvelopes = 1;
+    }
+
+    return {
+      success: true,
+      verified: true,
+      manifest: rawManifest,
+      transcriptPath,
+      manifestPath,
+      artifactCount: artifactList.length,
+      verifiedArtifactCount: restoredArtifactsCount,
+      restoredEnvelopesCount: restoredEnvelopes,
+      targetRoomId,
     };
   } catch (err) {
     return { success: false, error: err.message };

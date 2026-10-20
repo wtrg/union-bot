@@ -6,7 +6,8 @@ node_modules/
 dist/
 build/
 out/
-release/
+/release/
+!reports/release/
 *.exe
 *.dmg
 *.AppImage

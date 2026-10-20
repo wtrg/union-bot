@@ -43,7 +43,9 @@ export interface CodexExecutionOptions {
   threadId?: string;
   timeoutMs?: number;
   approvalToken?: any;
+  cwd?: string;
   onDelta?: (delta: string) => void;
+  metadata?: any;
 }
 
 export interface CodexExecutionResult {
@@ -183,13 +185,20 @@ export class CodexAdapter extends EventEmitter {
     const client = await this.ensureClient();
 
     // Ensure active thread scoped to approved workspace (P6-003, P6-007)
-    let threadId = options.threadId || client.currentThreadId;
+    const targetCwd = options.cwd ? path.resolve(options.cwd) : this.workspaceRoot;
+    let threadId = options.threadId;
     if (!threadId) {
-      this.verifyWorkspaceBoundary(this.workspaceRoot);
-      threadId = await client.startThread({
-        cwd: this.workspaceRoot,
-        approvalPolicy: 'on-request',
-      });
+      if ((this as any).activeThreadCwd !== targetCwd || !client.currentThreadId) {
+        this.verifyWorkspaceBoundary(targetCwd);
+        threadId = await client.startThread({
+          cwd: targetCwd,
+          approvalPolicy: 'on-request',
+        });
+        (this as any).activeThreadCwd = targetCwd;
+        client.currentThreadId = threadId;
+      } else {
+        threadId = client.currentThreadId;
+      }
     }
 
     const turnRes: CodexTurnResult = await client.runTurn(prompt.trim(), {

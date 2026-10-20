@@ -23,8 +23,8 @@ const INITIAL_ROOMS: RoomInfo[] = [
 
 const INITIAL_AGENTS: AgentInfo[] = [
   { id: 'chatgpt_web', name: 'ChatGPT Web', role: 'Leader / Architect', provider: 'chatgpt', status: 'ready' },
-  { id: 'antigravity', name: 'Antigravity', role: 'Implementer', provider: 'antigravity', status: 'active' },
-  { id: 'codex', name: 'Codex', role: 'QA & Security', provider: 'codex', status: 'active' },
+  { id: 'antigravity', name: 'Antigravity', role: 'Implementer', provider: 'antigravity', status: 'idle' },
+  { id: 'codex', name: 'Codex', role: 'QA & Security', provider: 'codex', status: 'idle' },
   { id: 'gemini_web', name: 'Gemini Web', role: 'Researcher', provider: 'gemini', status: 'ready' },
   { id: 'claude_web', name: 'Claude Web', role: 'Standby Member', provider: 'claude', status: 'auth_required' },
   { id: 'deepseek_web', name: 'DeepSeek Web', role: 'Standby Member', provider: 'deepseek', status: 'auth_required' },
@@ -69,6 +69,7 @@ export const App: React.FC = () => {
     isDesktop ? EMPTY_ROOMS : INITIAL_DEMO_ENVELOPES
   );
   const [isDemoMode, setIsDemoMode] = useState<boolean>(!isDesktop);
+  const [agents, setAgents] = useState<AgentInfo[]>(INITIAL_AGENTS);
   const [pendingApprovalsCount, setPendingApprovalsCount] = useState<number>(0);
   const [isCreateRoomOpen, setIsCreateRoomOpen] = useState<boolean>(false);
   const [isCreateProjectOpen, setIsCreateProjectOpen] = useState<boolean>(false);
@@ -108,6 +109,28 @@ export const App: React.FC = () => {
       document.body.className = '';
     }
   }, [theme]);
+
+  // Capability truth: dynamically update agent execution status on live task events
+  useEffect(() => {
+    if (window.unionBotAPI && typeof window.unionBotAPI.onTaskUpdated === 'function') {
+      const unsub = window.unionBotAPI.onTaskUpdated((data) => {
+        if (data.status === 'running') {
+          setAgents((prev) =>
+            prev.map((a) => (a.id === 'antigravity' ? { ...a, status: 'active' } : a))
+          );
+        } else if (
+          data.status === 'completed' ||
+          data.status === 'failed' ||
+          data.status === 'cancelled'
+        ) {
+          setAgents((prev) =>
+            prev.map((a) => (a.id === 'antigravity' ? { ...a, status: 'idle' } : a))
+          );
+        }
+      });
+      return unsub;
+    }
+  }, []);
 
   const toggleTheme = () => {
     setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
@@ -278,10 +301,10 @@ export const App: React.FC = () => {
   };
 
   // Project CRUD Handlers (UB-P3-R01-002)
-  const handleCreateProject = async (name: string, description?: string): Promise<boolean> => {
+  const handleCreateProject = async (name: string, description?: string, workspaceRoot?: string): Promise<boolean> => {
     if (window.unionBotAPI && typeof window.unionBotAPI.createProject === 'function') {
       try {
-        const res = await window.unionBotAPI.createProject({ name, description });
+        const res = await window.unionBotAPI.createProject({ name, description, workspaceRoot });
         if (res && res.success && res.project) {
           await loadProjects();
           setSelectedProjectId(res.project.id);
@@ -293,7 +316,7 @@ export const App: React.FC = () => {
         return false;
       }
     } else {
-      const newP: ProjectInfo = { id: `proj_${Date.now()}`, name, description };
+      const newP: ProjectInfo = { id: `proj_${Date.now()}`, name, description, workspaceRoot };
       setProjects((prev) => [...prev, newP]);
       setSelectedProjectId(newP.id);
       return true;
@@ -410,7 +433,7 @@ export const App: React.FC = () => {
         rooms={rooms}
         activeRoomId={activeRoomId}
         onSelectRoom={setActiveRoomId}
-        agents={INITIAL_AGENTS}
+        agents={agents}
         activeView={activeView}
         onSelectView={setActiveView}
         pendingApprovalsCount={pendingApprovalsCount}
@@ -453,7 +476,12 @@ export const App: React.FC = () => {
             <ApprovalInbox onTokenStatusChanged={refreshApprovalsCount} />
           )}
 
-          {activeView === 'tasks' && <TasksInbox />}
+          {activeView === 'tasks' && (
+            <TasksInbox
+              activeProject={projects.find((p) => p.id === selectedProjectId) || null}
+              activeRoomId={activeRoomId}
+            />
+          )}
         </main>
 
         <BrowserPanel

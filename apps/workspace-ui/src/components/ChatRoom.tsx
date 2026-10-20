@@ -435,6 +435,36 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ roomName, envelopes, onSendM
     setTimeout(() => setExportStatus(null), 4000);
   };
 
+  const handleImportBundle = async () => {
+    if (!window.unionBotAPI?.importTranscriptBundle) return;
+    try {
+      let bundlePath = '';
+      if (typeof window.unionBotAPI.selectDirectory === 'function') {
+        const dirRes = await window.unionBotAPI.selectDirectory({ title: 'Select Transcript Bundle Directory' });
+        if (dirRes && dirRes.success && dirRes.path) {
+          bundlePath = dirRes.path;
+        } else {
+          return;
+        }
+      }
+      if (!bundlePath) return;
+
+      setExportStatus('Importing bundle...');
+      const res = await window.unionBotAPI.importTranscriptBundle({
+        bundleDir: bundlePath,
+        targetRoomId: roomName || 'orchestration'
+      });
+      if (res && res.success) {
+        setExportStatus(`Imported ${res.artifactCount || 0} artifacts & restored transcript!`);
+      } else {
+        setExportStatus(`Import failed: ${res?.error || 'Unknown error'}`);
+      }
+    } catch (err: any) {
+      setExportStatus(`Import error: ${err.message}`);
+    }
+    setTimeout(() => setExportStatus(null), 5000);
+  };
+
   const handleSubmit = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     const textToSend = inputText.trim();
@@ -652,6 +682,23 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ roomName, envelopes, onSendM
           title="Export complete room transcript and CAS manifest bundle (P5-011)"
         >
           📦 Export Bundle
+        </button>
+        <button
+          onClick={handleImportBundle}
+          data-testid="import-transcript-bundle-btn"
+          style={{
+            padding: '3px 8px',
+            borderRadius: 4,
+            border: '1px solid var(--border-color)',
+            background: 'var(--bg-tertiary)',
+            color: 'var(--text-secondary)',
+            cursor: 'pointer',
+            fontSize: 12,
+            whiteSpace: 'nowrap',
+          }}
+          title="Import and restore a transcript backup bundle (UAT-021)"
+        >
+          📥 Import Bundle
         </button>
         {exportStatus && (
           <span style={{ fontSize: 11, color: '#4ade80', whiteSpace: 'nowrap' }}>{exportStatus}</span>

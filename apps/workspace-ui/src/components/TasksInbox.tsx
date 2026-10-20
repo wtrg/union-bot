@@ -1,41 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import { TaskItem } from '../types.ts';
+import { TaskItem, ProjectInfo } from '../types.ts';
 
-const SAMPLE_TASKS: TaskItem[] = [
-  {
-    id: 'task-001',
-    title: 'Zero-Cost Local Egress Audit',
-    status: 'completed',
-    role: 'QA_SECURITY',
-    step: 3,
-    progress: 100,
-    retries: 0,
-    updatedAt: new Date(Date.now() - 1200000).toLocaleTimeString(),
-  },
-  {
-    id: 'task-002',
-    title: 'SQLite WAL Transaction Check',
-    status: 'completed',
-    role: 'IMPLEMENTER',
-    step: 2,
-    progress: 100,
-    retries: 0,
-    updatedAt: new Date(Date.now() - 600000).toLocaleTimeString(),
-  },
-  {
-    id: 'task-003',
-    title: 'CAS Attachment Integrity Validation',
-    status: 'running',
-    role: 'IMPLEMENTER',
-    step: 1,
-    progress: 65,
-    retries: 0,
-    updatedAt: new Date().toLocaleTimeString(),
-  },
-];
+interface TasksInboxProps {
+  activeProject?: ProjectInfo | null;
+  activeRoomId?: string;
+}
 
-export const TasksInbox: React.FC = () => {
-  const [tasks, setTasks] = useState<TaskItem[]>(SAMPLE_TASKS);
+export const TasksInbox: React.FC<TasksInboxProps> = ({ activeProject, activeRoomId }) => {
+  const [tasks, setTasks] = useState<TaskItem[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [filter, setFilter] = useState<'ALL' | 'ACTIVE' | 'COMPLETED'>('ALL');
   const [isCreating, setIsCreating] = useState(false);
@@ -50,12 +22,19 @@ export const TasksInbox: React.FC = () => {
     }
     setIsLoading(true);
     try {
-      const realTasks = await window.unionBotAPI.listTasks({ limit: 100 });
+      const listParams: any = { limit: 100 };
+      if (activeProject?.id) {
+        listParams.projectId = activeProject.id;
+      }
+      const realTasks = await window.unionBotAPI.listTasks(listParams);
       if (Array.isArray(realTasks)) {
         setTasks(realTasks);
+      } else {
+        setTasks([]);
       }
     } catch (err: any) {
       console.error('[TasksInbox] Failed to list tasks from SQLite:', err);
+      setTasks([]);
     } finally {
       setIsLoading(false);
     }
@@ -86,7 +65,7 @@ export const TasksInbox: React.FC = () => {
       clearInterval(interval);
       if (unsubscribe) unsubscribe();
     };
-  }, []);
+  }, [activeProject?.id]);
 
   const handleCreateTask = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -99,7 +78,13 @@ export const TasksInbox: React.FC = () => {
           title,
           status: 'pending',
           progress: 0,
-          metadata: { role: newRole, createdVia: 'TasksInbox' },
+          roomId: activeRoomId || undefined,
+          metadata: {
+            role: newRole,
+            createdVia: 'TasksInbox',
+            projectId: activeProject?.id || 'default',
+            workspaceRoot: activeProject?.workspaceRoot || activeProject?.workspace_root || undefined
+          },
         });
         if (res && res.success) {
           setActionFeedback(`Task "${title}" created and persisted to SQLite WAL.`);
@@ -136,7 +121,8 @@ export const TasksInbox: React.FC = () => {
 
     if (window.unionBotAPI && typeof window.unionBotAPI.executeTask === 'function') {
       try {
-        const res = await window.unionBotAPI.executeTask({ taskId });
+        const workspaceRoot = activeProject?.workspaceRoot || activeProject?.workspace_root || undefined;
+        const res = await window.unionBotAPI.executeTask({ taskId, workspaceRoot });
         if (res && res.success) {
           if (res.status === 'completed') {
             setActionFeedback(`Task ${taskId} completed successfully.`);

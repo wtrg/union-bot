@@ -3,7 +3,7 @@ export interface AgentInfo {
   name: string;
   role: string;
   provider: string;
-  status: 'active' | 'ready' | 'auth_required' | 'standby';
+  status: 'active' | 'ready' | 'auth_required' | 'standby' | 'idle';
 }
 
 export interface RoomInfo {
@@ -100,6 +100,8 @@ export interface ProjectInfo {
   id: string;
   name: string;
   description?: string;
+  workspaceRoot?: string;
+  workspace_root?: string;
   created_at?: string;
   updated_at?: string;
   archived?: number;
@@ -155,7 +157,8 @@ export interface UnionBotAPI {
   dispatchEnvelope: (envelope: any) => Promise<{ success: boolean; envelopeId?: string; deduplicated?: boolean; error?: string; code?: string }>;
   getRoomHistory: (roomId: string) => Promise<EnvelopeView[]>;
   getProjects: (options?: { includeArchived?: boolean }) => Promise<ProjectInfo[]>;
-  createProject: (payload: { id?: string; name: string; description?: string }) => Promise<{ success: boolean; project?: ProjectInfo; error?: string }>;
+  createProject: (payload: { id?: string; name: string; description?: string; workspaceRoot?: string; workspace_root?: string }) => Promise<{ success: boolean; project?: ProjectInfo; error?: string }>;
+  selectDirectory?: (options?: { title?: string; defaultPath?: string }) => Promise<{ success: boolean; path?: string; canceled?: boolean; error?: string }>;
   renameProject: (id: string, newName: string) => Promise<{ success: boolean; result?: any; error?: string }>;
   archiveProject: (id: string) => Promise<{ success: boolean; result?: any; error?: string }>;
   deleteProject: (id: string) => Promise<{ success: boolean; result?: any; error?: string }>;
@@ -203,6 +206,7 @@ export interface UnionBotAPI {
   mcpCall?: (payload: { toolName: string; args?: any }) => Promise<any>;
   mcpListTools?: () => Promise<{ success: boolean; tools: any[] }>;
   exportTranscriptBundle?: (options?: { roomId?: string; includeArtifacts?: boolean }) => Promise<any>;
+  importTranscriptBundle?: (options?: { bundleDir: string; targetRoomId?: string }) => Promise<any>;
 
   testKillWorker?: () => Promise<any>;
   testSetConfirmationMode?: (mode: string) => Promise<any>;

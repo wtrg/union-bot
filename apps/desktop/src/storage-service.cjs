@@ -256,7 +256,17 @@ class StorageServiceClient extends EventEmitter {
       }
       case 'createProject': {
         const now = new Date().toISOString();
-        const proj = { id: args.id, name: args.name, description: args.description || '', created_at: now, updated_at: now, archived: 0 };
+        const workspaceRoot = args.workspaceRoot || args.workspace_root || null;
+        const proj = {
+          id: args.id,
+          name: args.name,
+          description: args.description || '',
+          workspaceRoot,
+          workspace_root: workspaceRoot,
+          created_at: now,
+          updated_at: now,
+          archived: 0
+        };
         this.fallbackProjects.set(args.id, proj);
         return Promise.resolve(proj);
       }
@@ -312,13 +322,30 @@ class StorageServiceClient extends EventEmitter {
       case 'listTasks': {
         const limit = (args && args.limit) || 50;
         const status = args && args.status;
-        const roomId = args && args.roomId;
-        const taskId = args && args.taskId;
+        const roomId = args && (args.roomId || args.room_id);
+        const taskId = args && (args.taskId || args.id);
+        const projectId = args && args.projectId;
         let tasks = Array.from(this.fallbackTasks.values()).reverse();
         if (taskId) tasks = tasks.filter(t => t.id === taskId);
         if (status) tasks = tasks.filter(t => t.status === status);
-        if (roomId) tasks = tasks.filter(t => t.room_id === roomId);
-        return Promise.resolve(tasks.slice(0, limit));
+        if (roomId) tasks = tasks.filter(t => (t.room_id === roomId || t.roomId === roomId));
+        if (projectId) {
+          const projectRoomIds = new Set(
+            Array.from(this.fallbackRooms?.values() || [])
+              .filter(r => r.project_id === projectId || r.projectId === projectId)
+              .map(r => r.id)
+          );
+          tasks = tasks.filter(t => {
+            const rId = t.room_id || t.roomId;
+            if (rId) return projectRoomIds.has(rId);
+            return t.metadata?.projectId === projectId;
+          });
+        }
+        return Promise.resolve(tasks.slice(0, limit).map(t => ({
+          ...t,
+          roomId: t.room_id || t.roomId,
+          room_id: t.room_id || t.roomId,
+        })));
       }
       case 'createTask': {
         const now = new Date().toISOString();
@@ -484,20 +511,43 @@ class StorageServiceClient extends EventEmitter {
       try {
         switch (method) {
           case 'getProjects': {
+            try {
+              const prjCols = this.nativeDb.prepare('PRAGMA table_info(projects)').all();
+              if (!prjCols.some((c) => c.name === 'workspace_root')) {
+                this.nativeDb.exec('ALTER TABLE projects ADD COLUMN workspace_root TEXT;');
+              }
+            } catch {}
             const includeArchived = args && args.includeArchived === true;
             const q = includeArchived
-              ? 'SELECT id, name, description, created_at, updated_at, archived FROM projects ORDER BY created_at ASC'
-              : 'SELECT id, name, description, created_at, updated_at, archived FROM projects WHERE archived = 0 ORDER BY created_at ASC';
+              ? 'SELECT id, name, description, workspace_root, created_at, updated_at, archived FROM projects ORDER BY created_at ASC'
+              : 'SELECT id, name, description, workspace_root, created_at, updated_at, archived FROM projects WHERE archived = 0 ORDER BY created_at ASC';
             const rows = this.nativeDb.prepare(q).all();
-            return Promise.resolve(rows);
+            const mapped = rows.map((r) => ({ ...r, workspaceRoot: r.workspace_root || r.workspaceRoot }));
+            return Promise.resolve(mapped);
           }
           case 'createProject': {
             const now = new Date().toISOString();
+            try {
+              const prjCols = this.nativeDb.prepare('PRAGMA table_info(projects)').all();
+              if (!prjCols.some((c) => c.name === 'workspace_root')) {
+                this.nativeDb.exec('ALTER TABLE projects ADD COLUMN workspace_root TEXT;');
+              }
+            } catch {}
+            const workspaceRoot = args.workspaceRoot || args.workspace_root || null;
             this.nativeDb.prepare(`
-              INSERT INTO projects (id, name, description, created_at, updated_at, archived)
-              VALUES (?, ?, ?, ?, ?, 0)
-            `).run(args.id, args.name, args.description || null, now, now);
-            return Promise.resolve({ id: args.id, name: args.name, description: args.description, created_at: now, updated_at: now, archived: 0 });
+              INSERT INTO projects (id, name, description, workspace_root, created_at, updated_at, archived)
+              VALUES (?, ?, ?, ?, ?, ?, 0)
+            `).run(args.id, args.name, args.description || null, workspaceRoot, now, now);
+            return Promise.resolve({
+              id: args.id,
+              name: args.name,
+              description: args.description,
+              workspaceRoot,
+              workspace_root: workspaceRoot,
+              created_at: now,
+              updated_at: now,
+              archived: 0
+            });
           }
           case 'renameProject': {
             const now = new Date().toISOString();
@@ -547,13 +597,17 @@ class StorageServiceClient extends EventEmitter {
               query += ' AND status = ?';
               params.push(args.status);
             }
-            if (args && args.roomId) {
+            if (args && (args.roomId || args.room_id)) {
               query += ' AND room_id = ?';
-              params.push(args.roomId);
+              params.push(args.roomId || args.room_id);
             }
-            if (args && args.taskId) {
+            if (args && (args.taskId || args.id)) {
               query += ' AND id = ?';
-              params.push(args.taskId);
+              params.push(args.taskId || args.id);
+            }
+            if (args && args.projectId) {
+              query += " AND (room_id IN (SELECT id FROM rooms WHERE project_id = ?) OR (room_id IS NULL AND json_extract(metadata_json, '$.projectId') = ?))";
+              params.push(args.projectId, args.projectId);
             }
             query += ' ORDER BY created_at DESC LIMIT ?';
             params.push(limit);
@@ -564,8 +618,11 @@ class StorageServiceClient extends EventEmitter {
               status: r.status,
               progress: r.progress,
               roomId: r.room_id || undefined,
+              room_id: r.room_id || undefined,
               createdAt: r.created_at,
+              created_at: r.created_at,
               updatedAt: r.updated_at,
+              updated_at: r.updated_at,
               metadata: r.metadata_json ? JSON.parse(r.metadata_json) : undefined
             })));
           }
@@ -1094,8 +1151,8 @@ class StorageServiceClient extends EventEmitter {
     return this.sendRequest('getProjects', { includeArchived });
   }
 
-  async createProject(id, name, description) {
-    return this.sendRequest('createProject', { id, name, description });
+  async createProject(id, name, description, workspaceRoot) {
+    return this.sendRequest('createProject', { id, name, description, workspaceRoot });
   }
 
   async renameProject(id, newName) {

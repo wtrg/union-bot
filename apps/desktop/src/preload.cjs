@@ -98,6 +98,10 @@ const api = {
     return ipcRenderer.invoke('union-bot:open-file-dialog');
   },
 
+  selectDirectory: async (options) => {
+    return ipcRenderer.invoke('union-bot:select-directory', options);
+  },
+
   exportWorkspace: async (options) => {
     return ipcRenderer.invoke('union-bot:export-workspace', options);
   },
@@ -235,6 +239,9 @@ const api = {
   },
   exportTranscriptBundle: async (options) => {
     return ipcRenderer.invoke('union-bot:export-transcript-bundle', options);
+  },
+  importTranscriptBundle: async (options) => {
+    return ipcRenderer.invoke('union-bot:import-transcript-bundle', options);
   },
 
   // Phase P6: Native Codex Agent API

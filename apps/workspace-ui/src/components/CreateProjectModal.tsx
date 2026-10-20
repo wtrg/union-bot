@@ -4,7 +4,7 @@ import { ProjectInfo } from '../types.ts';
 interface CreateProjectModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onCreateProject: (name: string, description?: string) => Promise<boolean>;
+  onCreateProject: (name: string, description?: string, workspaceRoot?: string) => Promise<boolean>;
   onRenameProject?: (id: string, name: string) => Promise<boolean>;
   editingProject?: ProjectInfo | null;
 }
@@ -18,6 +18,7 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
 }) => {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
+  const [workspaceRoot, setWorkspaceRoot] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -25,14 +26,32 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
     if (editingProject) {
       setName(editingProject.name || '');
       setDescription(editingProject.description || '');
+      setWorkspaceRoot(editingProject.workspaceRoot || editingProject.workspace_root || '');
     } else {
       setName('');
       setDescription('');
+      setWorkspaceRoot('');
     }
     setError(null);
   }, [editingProject, isOpen]);
 
   if (!isOpen) return null;
+
+  const handleBrowseFolder = async () => {
+    if (window.unionBotAPI && typeof window.unionBotAPI.selectDirectory === 'function') {
+      try {
+        const res = await window.unionBotAPI.selectDirectory({
+          title: 'Chọn thư mục dự án (Project Workspace)',
+          defaultPath: workspaceRoot || undefined,
+        });
+        if (res && res.success && res.path) {
+          setWorkspaceRoot(res.path);
+        }
+      } catch (err: any) {
+        console.warn('Folder selection error:', err);
+      }
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -49,12 +68,13 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
       if (editingProject && onRenameProject) {
         success = await onRenameProject(editingProject.id, trimmedName);
       } else {
-        success = await onCreateProject(trimmedName, description.trim() || undefined);
+        success = await onCreateProject(trimmedName, description.trim() || undefined, workspaceRoot.trim() || undefined);
       }
 
       if (success) {
         setName('');
         setDescription('');
+        setWorkspaceRoot('');
         onClose();
       } else {
         setError('Failed to save project. Please check if the name is unique.');
@@ -168,38 +188,95 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
           </div>
 
           {!editingProject && (
-            <div style={{ marginBottom: 18 }}>
-              <label
-                style={{
-                  display: 'block',
-                  fontSize: 12,
-                  fontWeight: 600,
-                  color: 'var(--text-secondary)',
-                  marginBottom: 6,
-                }}
-              >
-                Description (Optional)
-              </label>
-              <textarea
-                data-testid="project-desc-input"
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                placeholder="Workspace scope, goals, and team isolation boundary"
-                rows={3}
-                disabled={isSubmitting}
-                style={{
-                  width: '100%',
-                  padding: '8px 12px',
-                  borderRadius: 4,
-                  border: '1px solid var(--border-color)',
-                  background: 'var(--bg-tertiary)',
-                  color: 'var(--text-primary)',
-                  fontSize: 13,
-                  outline: 'none',
-                  resize: 'vertical',
-                }}
-              />
-            </div>
+            <>
+              <div style={{ marginBottom: 14 }}>
+                <label
+                  style={{
+                    display: 'block',
+                    fontSize: 12,
+                    fontWeight: 600,
+                    color: 'var(--text-secondary)',
+                    marginBottom: 6,
+                  }}
+                >
+                  Workspace Folder (Canonical Root)
+                </label>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <input
+                    type="text"
+                    data-testid="project-workspace-input"
+                    value={workspaceRoot}
+                    onChange={(e) => setWorkspaceRoot(e.target.value)}
+                    placeholder="e.g. D:\Projects\MyWorkspace hoặc để trống để dùng thư mục an toàn"
+                    disabled={isSubmitting}
+                    style={{
+                      flex: 1,
+                      padding: '8px 12px',
+                      borderRadius: 4,
+                      border: '1px solid var(--border-color)',
+                      background: 'var(--bg-tertiary)',
+                      color: 'var(--text-primary)',
+                      fontSize: 13,
+                      outline: 'none',
+                    }}
+                  />
+                  <button
+                    type="button"
+                    data-testid="project-browse-btn"
+                    onClick={handleBrowseFolder}
+                    disabled={isSubmitting}
+                    style={{
+                      padding: '8px 12px',
+                      borderRadius: 4,
+                      border: '1px solid var(--border-color)',
+                      background: 'var(--bg-tertiary)',
+                      color: 'var(--text-primary)',
+                      fontSize: 12,
+                      cursor: 'pointer',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    📁 Browse...
+                  </button>
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
+                  Thư mục làm việc cục bộ của dự án (hỗ trợ tiếng Việt có dấu và khoảng trắng).
+                </div>
+              </div>
+
+              <div style={{ marginBottom: 18 }}>
+                <label
+                  style={{
+                    display: 'block',
+                    fontSize: 12,
+                    fontWeight: 600,
+                    color: 'var(--text-secondary)',
+                    marginBottom: 6,
+                  }}
+                >
+                  Description (Optional)
+                </label>
+                <textarea
+                  data-testid="project-desc-input"
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  placeholder="Workspace scope, goals, and team isolation boundary"
+                  rows={3}
+                  disabled={isSubmitting}
+                  style={{
+                    width: '100%',
+                    padding: '8px 12px',
+                    borderRadius: 4,
+                    border: '1px solid var(--border-color)',
+                    background: 'var(--bg-tertiary)',
+                    color: 'var(--text-primary)',
+                    fontSize: 13,
+                    outline: 'none',
+                    resize: 'vertical',
+                  }}
+                />
+              </div>
+            </>
           )}
 
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>

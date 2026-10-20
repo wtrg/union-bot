@@ -260,6 +260,10 @@ class ArtifactStore {
       };
     });
   }
+
+  put(buffer, filename, mimeType) {
+    return this.storeBytes(buffer, filename, { mimeType });
+  }
 }
 
 ArtifactStore.DEFAULT_MAX_ARTIFACT_SIZE_BYTES = DEFAULT_MAX_ARTIFACT_SIZE_BYTES;
