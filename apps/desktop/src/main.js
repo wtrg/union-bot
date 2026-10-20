@@ -86,6 +86,13 @@ codexService.on('turnCompleted', (turn, params) => {
   }
 });
 
+codexService.on('error', (err) => {
+  console.warn('[CodexService] Agent warning/error:', err?.message || err);
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('union-bot:codex-error', { error: err?.message || String(err) });
+  }
+});
+
 const antigravityService = new AntigravityService(path.resolve(__dirname, '../../..'), artifactStore, costGuard);
 
 antigravityService.on('delta', (delta) => {
@@ -97,6 +104,13 @@ antigravityService.on('delta', (delta) => {
 antigravityService.on('turn_completed', (result) => {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('union-bot:antigravity-turn-completed', { result });
+  }
+});
+
+antigravityService.on('error', (err) => {
+  console.warn('[AntigravityService] Agent warning/stderr:', err?.message || err);
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('union-bot:antigravity-error', { error: err?.message || String(err) });
   }
 });
 
@@ -165,19 +179,39 @@ function registerProduction6AITransports(taskGraphService, browserService, codex
     const session = browserService?.sessionRegistry?.getSessionByProvider('chatgpt');
     if (!session) throw new Error('ERR_PROVIDER_SESSION_NOT_FOUND: chatgpt session not registered in ProviderSessionRegistry');
     const health = await browserService.checkProviderHealth(session.tabId);
-    if (health.status === 'CHALLENGE_REQUIRED') throw new Error(`ERR_PROVIDER_CAPTCHA: ${health.message || 'Captcha challenge required'}`);
-    if (health.status === 'LOGIN_REQUIRED') throw new Error(`ERR_PROVIDER_AUTH_REQUIRED: ${health.message || 'Login required'}`);
     if (health.status === 'QUOTA_EXCEEDED') throw new Error(`ERR_PROVIDER_QUOTA_EXCEEDED: ${health.message || 'Quota exceeded'}`);
 
     const captured = await captureWebSessionResponse(browserService, session.tabId);
     const threadRef = browserService.captureThreadReference(session.tabId);
+
+    // P9-R03-001: When no authentic live response is captured or session requires user input/auth,
+    // the node MUST NOT be marked COMPLETED. It transitions to WAITING_INPUT.
+    if (!captured.text || health.status === 'LOGIN_REQUIRED' || health.status === 'CHALLENGE_REQUIRED') {
+      return {
+        sessionId: session.sessionId,
+        providerId: 'chatgpt',
+        role: 'LEADER',
+        status: 'WAITING_INPUT',
+        error: `ERR_PROVIDER_AWAITING_RESPONSE: ${!captured.text ? `No authentic live response captured from chatgpt WebContentsView session ${session.sessionId}` : health.message || 'Session awaiting authentication or input'}`,
+        provenance: 'LIVE_WEB',
+        result: {
+          transport: 'BrowserService_Production_WebContentsView',
+          threadId: threadRef.threadId || session.threadId || (threadRef.canonicalUrl ? new URL(threadRef.canonicalUrl).pathname : '/'),
+          canonicalUrl: threadRef.canonicalUrl || session.threadUrl,
+          captureMode: captured.mode,
+          awaitingInput: true,
+          authStatus: health.status,
+        },
+      };
+    }
+
     return {
       sessionId: session.sessionId,
       providerId: 'chatgpt',
       role: 'LEADER',
       provenance: 'LIVE_WEB',
       result: {
-        scope: captured.text || `Task scope for node '${node.name || node.id}' attached to ChatGPT live session ${session.sessionId}`,
+        scope: captured.text,
         taskPrompt: node.actionPayload?.prompt || 'Collaborative workflow execution',
         threadId: threadRef.threadId || session.threadId || (threadRef.canonicalUrl ? new URL(threadRef.canonicalUrl).pathname : '/'),
         canonicalUrl: threadRef.canonicalUrl || session.threadUrl,
@@ -193,19 +227,38 @@ function registerProduction6AITransports(taskGraphService, browserService, codex
     const session = browserService?.sessionRegistry?.getSessionByProvider('gemini');
     if (!session) throw new Error('ERR_PROVIDER_SESSION_NOT_FOUND: gemini session not registered in ProviderSessionRegistry');
     const health = await browserService.checkProviderHealth(session.tabId);
-    if (health.status === 'CHALLENGE_REQUIRED') throw new Error(`ERR_PROVIDER_CAPTCHA: ${health.message || 'Captcha challenge required'}`);
-    if (health.status === 'LOGIN_REQUIRED') throw new Error(`ERR_PROVIDER_AUTH_REQUIRED: ${health.message || 'Login required'}`);
     if (health.status === 'QUOTA_EXCEEDED') throw new Error(`ERR_PROVIDER_QUOTA_EXCEEDED: ${health.message || 'Quota exceeded'}`);
 
     const captured = await captureWebSessionResponse(browserService, session.tabId);
     const threadRef = browserService.captureThreadReference(session.tabId);
+
+    // P9-R03-001: Web provider transitions to WAITING_INPUT if no response
+    if (!captured.text || health.status === 'LOGIN_REQUIRED' || health.status === 'CHALLENGE_REQUIRED') {
+      return {
+        sessionId: session.sessionId,
+        providerId: 'gemini',
+        role: 'RESEARCHER',
+        status: 'WAITING_INPUT',
+        error: `ERR_PROVIDER_AWAITING_RESPONSE: ${!captured.text ? `No authentic live response captured from gemini WebContentsView session ${session.sessionId}` : health.message || 'Session awaiting authentication or input'}`,
+        provenance: 'LIVE_WEB',
+        result: {
+          transport: 'BrowserService_Production_WebContentsView',
+          threadId: threadRef.threadId || session.threadId || (threadRef.canonicalUrl ? new URL(threadRef.canonicalUrl).pathname : '/'),
+          canonicalUrl: threadRef.canonicalUrl || session.threadUrl,
+          captureMode: captured.mode,
+          awaitingInput: true,
+          authStatus: health.status,
+        },
+      };
+    }
+
     return {
       sessionId: session.sessionId,
       providerId: 'gemini',
       role: 'RESEARCHER',
       provenance: 'LIVE_WEB',
       result: {
-        research: captured.text || `Research context for node '${node.name || node.id}' attached to Gemini live session ${session.sessionId}`,
+        research: captured.text,
         taskPrompt: node.actionPayload?.prompt || 'Grounding research execution',
         threadId: threadRef.threadId || session.threadId || (threadRef.canonicalUrl ? new URL(threadRef.canonicalUrl).pathname : '/'),
         canonicalUrl: threadRef.canonicalUrl || session.threadUrl,
@@ -221,19 +274,38 @@ function registerProduction6AITransports(taskGraphService, browserService, codex
     const session = browserService?.sessionRegistry?.getSessionByProvider('claude');
     if (!session) throw new Error('ERR_PROVIDER_SESSION_NOT_FOUND: claude session not registered in ProviderSessionRegistry');
     const health = await browserService.checkProviderHealth(session.tabId);
-    if (health.status === 'CHALLENGE_REQUIRED') throw new Error(`ERR_PROVIDER_CAPTCHA: ${health.message || 'Captcha challenge required'}`);
-    if (health.status === 'LOGIN_REQUIRED') throw new Error(`ERR_PROVIDER_AUTH_REQUIRED: ${health.message || 'Login required'}`);
     if (health.status === 'QUOTA_EXCEEDED') throw new Error(`ERR_PROVIDER_QUOTA_EXCEEDED: ${health.message || 'Quota exceeded'}`);
 
     const captured = await captureWebSessionResponse(browserService, session.tabId);
     const threadRef = browserService.captureThreadReference(session.tabId);
+
+    // P9-R03-001: Web provider transitions to WAITING_INPUT if no response
+    if (!captured.text || health.status === 'LOGIN_REQUIRED' || health.status === 'CHALLENGE_REQUIRED') {
+      return {
+        sessionId: session.sessionId,
+        providerId: 'claude',
+        role: 'ARCHITECT',
+        status: 'WAITING_INPUT',
+        error: `ERR_PROVIDER_AWAITING_RESPONSE: ${!captured.text ? `No authentic live response captured from claude WebContentsView session ${session.sessionId}` : health.message || 'Session awaiting authentication or input'}`,
+        provenance: 'LIVE_WEB',
+        result: {
+          transport: 'BrowserService_Production_WebContentsView',
+          threadId: threadRef.threadId || session.threadId || (threadRef.canonicalUrl ? new URL(threadRef.canonicalUrl).pathname : '/'),
+          canonicalUrl: threadRef.canonicalUrl || session.threadUrl,
+          captureMode: captured.mode,
+          awaitingInput: true,
+          authStatus: health.status,
+        },
+      };
+    }
+
     return {
       sessionId: session.sessionId,
       providerId: 'claude',
       role: 'ARCHITECT',
       provenance: 'LIVE_WEB',
       result: {
-        architecture: captured.text || `Architecture specification for node '${node.name || node.id}' attached to Claude live session ${session.sessionId}`,
+        architecture: captured.text,
         taskPrompt: node.actionPayload?.prompt || 'Architecture specification execution',
         threadId: threadRef.threadId || session.threadId || (threadRef.canonicalUrl ? new URL(threadRef.canonicalUrl).pathname : '/'),
         canonicalUrl: threadRef.canonicalUrl || session.threadUrl,
@@ -249,19 +321,38 @@ function registerProduction6AITransports(taskGraphService, browserService, codex
     const session = browserService?.sessionRegistry?.getSessionByProvider('deepseek');
     if (!session) throw new Error('ERR_PROVIDER_SESSION_NOT_FOUND: deepseek session not registered in ProviderSessionRegistry');
     const health = await browserService.checkProviderHealth(session.tabId);
-    if (health.status === 'CHALLENGE_REQUIRED') throw new Error(`ERR_PROVIDER_CAPTCHA: ${health.message || 'Captcha challenge required'}`);
-    if (health.status === 'LOGIN_REQUIRED') throw new Error(`ERR_PROVIDER_AUTH_REQUIRED: ${health.message || 'Login required'}`);
     if (health.status === 'QUOTA_EXCEEDED') throw new Error(`ERR_PROVIDER_QUOTA_EXCEEDED: ${health.message || 'Quota exceeded'}`);
 
     const captured = await captureWebSessionResponse(browserService, session.tabId);
     const threadRef = browserService.captureThreadReference(session.tabId);
+
+    // P9-R03-001: Web provider transitions to WAITING_INPUT if no response
+    if (!captured.text || health.status === 'LOGIN_REQUIRED' || health.status === 'CHALLENGE_REQUIRED') {
+      return {
+        sessionId: session.sessionId,
+        providerId: 'deepseek',
+        role: 'REVIEWER',
+        status: 'WAITING_INPUT',
+        error: `ERR_PROVIDER_AWAITING_RESPONSE: ${!captured.text ? `No authentic live response captured from deepseek WebContentsView session ${session.sessionId}` : health.message || 'Session awaiting authentication or input'}`,
+        provenance: 'LIVE_WEB',
+        result: {
+          transport: 'BrowserService_Production_WebContentsView',
+          threadId: threadRef.threadId || session.threadId || (threadRef.canonicalUrl ? new URL(threadRef.canonicalUrl).pathname : '/'),
+          canonicalUrl: threadRef.canonicalUrl || session.threadUrl,
+          captureMode: captured.mode,
+          awaitingInput: true,
+          authStatus: health.status,
+        },
+      };
+    }
+
     return {
       sessionId: session.sessionId,
       providerId: 'deepseek',
       role: 'REVIEWER',
       provenance: 'LIVE_WEB',
       result: {
-        audit: captured.text || `Review audit for node '${node.name || node.id}' attached to DeepSeek live session ${session.sessionId}`,
+        audit: captured.text,
         taskPrompt: node.actionPayload?.prompt || 'Review audit execution',
         threadId: threadRef.threadId || session.threadId || (threadRef.canonicalUrl ? new URL(threadRef.canonicalUrl).pathname : '/'),
         canonicalUrl: threadRef.canonicalUrl || session.threadUrl,
@@ -277,17 +368,14 @@ function registerProduction6AITransports(taskGraphService, browserService, codex
     const session = browserService?.sessionRegistry?.getSessionByProvider('antigravity');
     if (!session) throw new Error('ERR_PROVIDER_SESSION_NOT_FOUND: antigravity session not registered in ProviderSessionRegistry');
 
+    if (!antigravityService || typeof antigravityService.executePrompt !== 'function') {
+      throw new Error('ERR_ANTIGRAVITY_EXECUTION_FAILED: Native antigravityService is not available');
+    }
+
     if (node.stage === 'PLAN') {
-      let planOutput = 'Architectural specification formulated by Antigravity Native Service';
-      if (antigravityService && typeof antigravityService.executePrompt === 'function') {
-        try {
-          const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('TIMEOUT')), 1000));
-          const runRes = await Promise.race([
-            antigravityService.executePrompt(node.actionPayload?.prompt || 'Formulate plan', { cwd: ctx.workspaceRoot }),
-            timeoutPromise
-          ]);
-          if (runRes?.response) planOutput = runRes.response;
-        } catch {}
+      const runRes = await antigravityService.executePrompt(node.actionPayload?.prompt || 'Formulate architectural plan', { cwd: ctx.workspaceRoot });
+      if (!runRes?.success || !runRes?.response) {
+        throw new Error(`ERR_ANTIGRAVITY_EXECUTION_FAILED: Antigravity plan execution failed: ${runRes?.error || 'Empty response'}`);
       }
       return {
         sessionId: session.sessionId,
@@ -295,33 +383,32 @@ function registerProduction6AITransports(taskGraphService, browserService, codex
         role: node.assignedRole || 'ARCHITECT',
         provenance: 'LOCAL_AGENT',
         result: {
-          plan: planOutput,
-          prompt: node.actionPayload?.prompt || 'Plan execution',
+          plan: runRes.response,
+          prompt: node.actionPayload?.prompt || 'Formulate architectural plan',
           nativeService: 'antigravityService',
+          conversationId: runRes.conversationId,
         },
       };
     }
 
-    // IMPLEMENT stage: Writes authentic implementation within canonical workspace
+    // IMPLEMENT stage: Real code written by Antigravity native agent
     const targetRelFile = (node.actionPayload?.files?.[0]) || 'scratch/p9-prod-output.ts';
     const targetAbsFile = path.resolve(ctx.workspaceRoot, targetRelFile);
+
+    // Call native Antigravity execution
+    const promptText = node.actionPayload?.prompt || `Implement production code for ${targetRelFile}`;
+    const turnRes = await antigravityService.executePrompt(promptText, { cwd: ctx.workspaceRoot });
+
+    // P9-R03-002: Must FAIL-CLOSED if Antigravity native call fails. NEVER write template fallback code!
+    if (!turnRes?.success || !turnRes?.response || !turnRes.response.trim()) {
+      throw new Error(`ERR_ANTIGRAVITY_EXECUTION_FAILED: Native Antigravity execution failed or returned empty: ${turnRes?.error || 'No output produced'}`);
+    }
+
     const parentDir = path.dirname(targetAbsFile);
     if (!fs.existsSync(parentDir)) fs.mkdirSync(parentDir, { recursive: true });
 
-    let codeContent = `// Autogenerated by Antigravity Local Agent Session ${session.sessionId}\nexport const UNION_BOT_P9_STATUS = 'ACTIVE_COLLABORATION';\nexport function getEngineVersion() { return '9.0.0-verified'; }\n`;
-    if (antigravityService && typeof antigravityService.executePrompt === 'function') {
-      try {
-        const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('TIMEOUT')), 1000));
-        const turnRes = await Promise.race([
-          antigravityService.executePrompt(node.actionPayload?.prompt || 'Implement core task', { cwd: ctx.workspaceRoot }),
-          timeoutPromise
-        ]);
-        if (turnRes?.response && turnRes.response.trim()) {
-          codeContent = `// Executed via Antigravity Native Service (${session.sessionId})\n${turnRes.response}\n`;
-        }
-      } catch {}
-    }
-
+    // Write authentic code returned by Antigravity native agent
+    const codeContent = turnRes.response;
     fs.writeFileSync(targetAbsFile, codeContent, 'utf8');
     const outputDigest = crypto.createHash('sha256').update(codeContent).digest('hex');
 
@@ -337,6 +424,7 @@ function registerProduction6AITransports(taskGraphService, browserService, codex
         digest: outputDigest,
         bytesWritten: Buffer.byteLength(codeContent),
         nativeService: 'antigravityService',
+        conversationId: turnRes.conversationId,
       },
     };
   });
@@ -345,6 +433,10 @@ function registerProduction6AITransports(taskGraphService, browserService, codex
   taskGraphService.engine.registerProviderHandler('codex', async (node, ctx) => {
     const session = browserService?.sessionRegistry?.getSessionByProvider('codex');
     if (!session) throw new Error('ERR_PROVIDER_SESSION_NOT_FOUND: codex session not registered in ProviderSessionRegistry');
+
+    if (!codexService || typeof codexService.executeVerification !== 'function') {
+      throw new Error('ERR_CODEX_HANDLER_UNAVAILABLE: Native codexService is not available');
+    }
 
     if (node.stage === 'IMPLEMENT' || node.stage === 'FIX') {
       const targetRelFile = (node.actionPayload?.files?.[0]) || 'scratch/p8-codex-output.ts';
@@ -370,14 +462,37 @@ function registerProduction6AITransports(taskGraphService, browserService, codex
       };
     }
 
-    // VERIFY stage: Produces authentic verification evidence
+    // VERIFY stage: Executes authentic verification through codexService (P9-R03-003)
+    const filesToVerify = [];
+    if (Array.isArray(node.actionPayload?.files)) {
+      filesToVerify.push(...node.actionPayload.files);
+    }
+    for (const depId of node.dependencies) {
+      const dep = ctx.graph.nodes.get(depId);
+      if (dep?.modifiedFiles) {
+        filesToVerify.push(...dep.modifiedFiles);
+      }
+    }
+
+    const verifyResult = await codexService.executeVerification({
+      files: filesToVerify,
+      workspaceRoot: ctx.workspaceRoot,
+      targetDigest: node.targetDigest,
+      prompt: node.actionPayload?.prompt || undefined,
+    });
+
+    if (!verifyResult || !verifyResult.success) {
+      throw new Error(`ERR_CODEX_VERIFICATION_FAILED: Native Codex verification failed: ${verifyResult?.error || 'Verification rejected'}`);
+    }
+
     const evidence = {
       verifierSessionId: session.sessionId,
-      syntaxVerified: true,
-      securityBoundaryVerified: true,
-      zeroCostConfirmed: true,
+      syntaxVerified: Boolean(verifyResult.syntaxVerified),
+      securityBoundaryVerified: Boolean(verifyResult.securityBoundaryVerified),
+      zeroCostConfirmed: Boolean(verifyResult.zeroCostConfirmed),
       nativeService: 'codexService',
-      timestamp: Date.now(),
+      verifiedFiles: verifyResult.verifiedFiles || filesToVerify,
+      timestamp: verifyResult.timestamp || Date.now(),
     };
 
     return {
@@ -387,8 +502,9 @@ function registerProduction6AITransports(taskGraphService, browserService, codex
       provenance: 'LOCAL_AGENT',
       verificationEvidence: evidence,
       result: {
-        testsPassed: true,
+        testsPassed: verifyResult.success === true && verifyResult.syntaxVerified === true,
         auditStatus: 'ALL_SECURITY_CHECKS_PASSED',
+        verificationEvidence: evidence,
         nativeService: 'codexService',
       },
     };
@@ -4222,11 +4338,13 @@ function createWindow() {
 
         const results = {};
 
-        // 1. Verify production transports are registered for all 6 providers in TaskGraphEngine
+        console.log('[P9-PROD-E2E] Step 1: checking production transports...');
         const requiredProviders = ['chatgpt', 'gemini', 'claude', 'deepseek', 'antigravity', 'codex'];
         results.productionTransportsRegistered = requiredProviders.every(p => taskGraphService.hasProviderHandler(p));
+        console.log('[P9-PROD-E2E] Step 1 result:', results.productionTransportsRegistered);
 
         // 2. Missing handler fails closed with ERR_PROVIDER_HANDLER_UNAVAILABLE
+        console.log('[P9-PROD-E2E] Step 2: checking missing handler fail-closed...');
         const unregDef = {
           id: 'test-unreg-graph',
           name: 'Unregistered Provider Test',
@@ -4243,15 +4361,19 @@ function createWindow() {
           unregFailedClosed = Boolean(err.code === 'ERR_PROVIDER_HANDLER_UNAVAILABLE' || (err.message && err.message.includes('ERR_PROVIDER_HANDLER_UNAVAILABLE')));
         }
         results.missingHandlerFailsClosed = unregFailedClosed;
+        console.log('[P9-PROD-E2E] Step 2 result:', results.missingHandlerFailsClosed);
 
         // Wait briefly for browserService to initialize default sessions if not already present
+        console.log('[P9-PROD-E2E] Step 2.5: waiting for browser sessions...');
         let initAttempts = 0;
         while (!browserService?.sessionRegistry?.getSessionByProvider('chatgpt') && initAttempts < 30) {
           await new Promise(r => setTimeout(r, 100));
           initAttempts++;
         }
+        console.log('[P9-PROD-E2E] Step 2.5 done, chatgpt session:', Boolean(browserService?.sessionRegistry?.getSessionByProvider('chatgpt')));
 
-        // 3. Web provider execution routes through BrowserService & live session
+        // 3. Web provider awaiting response transitions to WAITING_INPUT (P9-R03-001)
+        console.log('[P9-PROD-E2E] Step 3: executing scope node...');
         const p9PipelineDef = taskGraphService.create6AIPipeline({
           id: 'p9-prod-pipeline',
           name: 'Production 6-AI Pipeline',
@@ -4261,45 +4383,86 @@ function createWindow() {
         const scopeNode = prodGraph.nodes.get('node-scope');
         const scopeRes = await taskGraphService.engine.executeNode(prodGraph, scopeNode);
         const chatgptSession = browserService.sessionRegistry.getSessionByProvider('chatgpt');
+        console.log('[P9-PROD-E2E] Step 3 scopeRes status:', scopeRes?.status, 'error:', scopeRes?.error);
 
-        results.webProviderRoutesThroughBrowserSession = Boolean(
-          scopeRes.status === 'COMPLETED' &&
+        results.webProviderAwaitingResponseTransitionsToWaitingInput = Boolean(
+          scopeRes.status === 'WAITING_INPUT' &&
           scopeRes.result?.sessionId === chatgptSession?.sessionId &&
           scopeRes.result?.providerId === 'chatgpt' &&
           scopeRes.result?.provenance === 'LIVE_WEB' &&
-          scopeRes.result?.transport === 'BrowserService_Production_WebContentsView'
+          scopeRes.result?.awaitingInput === true &&
+          scopeRes.error && scopeRes.error.includes('ERR_PROVIDER_AWAITING_RESPONSE')
         );
 
-        // 4. Antigravity executes via native service boundary & writes authentic artifact
+        // 4. Antigravity fails closed when native execution fails or returns empty (P9-R03-002)
+        console.log('[P9-PROD-E2E] Step 4: executing antigravity node...');
         const implementNode = prodGraph.nodes.get('node-implement');
         prodGraph.nodes.get('node-research').status = 'COMPLETED';
         prodGraph.nodes.get('node-arch').status = 'COMPLETED';
-        const impRes = await taskGraphService.engine.executeNode(prodGraph, implementNode);
-        const antigravitySession = browserService.sessionRegistry.getSessionByProvider('antigravity');
+        const targetRelFile = (implementNode.actionPayload?.files?.[0]) || 'scratch/p9-prod-output.ts';
+        const targetAbsFile = path.resolve(prodGraph.workspaceRoot, targetRelFile);
+        if (fs.existsSync(targetAbsFile)) {
+          try { fs.unlinkSync(targetAbsFile); } catch {}
+        }
 
-        results.antigravityRoutesThroughNativeService = Boolean(
-          impRes.status === 'COMPLETED' &&
-          impRes.outputDigest &&
-          impRes.outputDigest.length === 64 &&
-          impRes.result?.sessionId === antigravitySession?.sessionId &&
-          impRes.result?.nativeService === 'antigravityService'
-        );
+        let antigravityFailedClosed = false;
+        try {
+          await taskGraphService.engine.executeNode(prodGraph, implementNode);
+          console.log('[P9-PROD-E2E] Step 4 unexpected completion without authentic code');
+        } catch (err) {
+          console.log('[P9-PROD-E2E] Step 4 caught expected error:', err.message);
+          const templateFileWritten = fs.existsSync(targetAbsFile);
+          antigravityFailedClosed = Boolean(
+            implementNode.status === 'FAILED' &&
+            err.message && err.message.includes('ERR_ANTIGRAVITY_EXECUTION_FAILED') &&
+            !templateFileWritten
+          );
+        }
+        results.antigravityNativeFailureFailsClosed = antigravityFailedClosed;
+        console.log('[P9-PROD-E2E] Step 4 result antigravityNativeFailureFailsClosed:', results.antigravityNativeFailureFailsClosed);
 
-        // 5. Codex executes via native service boundary & produces verification evidence
+        // 5. Codex executes authentic verification via native service (P9-R03-003)
+        console.log('[P9-PROD-E2E] Step 5: executing codex verify node...');
         const verifyNode = prodGraph.nodes.get('node-qa-verify');
         prodGraph.nodes.get('node-algo-review').status = 'COMPLETED';
+        verifyNode.actionPayload = { files: ['package.json'] };
         const verifyRes = await taskGraphService.engine.executeNode(prodGraph, verifyNode);
         const codexSession = browserService.sessionRegistry.getSessionByProvider('codex');
 
-        results.codexRoutesThroughNativeService = Boolean(
+        results.codexVerifyExecutesViaNativeService = Boolean(
           verifyRes.status === 'COMPLETED' &&
           verifyRes.result?.verificationEvidence?.verifierSessionId === codexSession?.sessionId &&
           verifyRes.result?.verificationEvidence?.syntaxVerified === true &&
+          verifyRes.result?.verificationEvidence?.securityBoundaryVerified === true &&
           verifyRes.result?.verificationEvidence?.zeroCostConfirmed === true &&
           verifyRes.result?.nativeService === 'codexService'
         );
 
-        // 6. Confirm no test harness / mocks in production mode
+        // 6. Codex verification fails closed on corrupt syntax (P9-R03-003)
+        let corruptSyntaxFailedClosed = false;
+        const corruptRel = 'scratch/corrupt-test.json';
+        const corruptAbs = path.resolve(prodGraph.workspaceRoot, corruptRel);
+        try {
+          const corruptDir = path.dirname(corruptAbs);
+          if (!fs.existsSync(corruptDir)) fs.mkdirSync(corruptDir, { recursive: true });
+          fs.writeFileSync(corruptAbs, '{ bad json: true, ', 'utf8');
+          try {
+            await codexService.executeVerification({
+              files: [corruptRel],
+              workspaceRoot: prodGraph.workspaceRoot,
+            });
+          } catch (err) {
+            corruptSyntaxFailedClosed = Boolean(
+              err.code === 'ERR_SYNTAX_VERIFICATION_FAILED' ||
+              (err.message && err.message.includes('ERR_SYNTAX_VERIFICATION_FAILED'))
+            );
+          }
+        } finally {
+          try { fs.unlinkSync(corruptAbs); } catch {}
+        }
+        results.codexVerifyFailsClosedOnCorruptSyntax = corruptSyntaxFailedClosed;
+
+        // 7. Confirm no test harness / mocks in production mode
         results.noE2EMocksInProduction = Boolean(
           process.env.UNION_BOT_E2E_HARNESS !== '1'
         );
@@ -4309,9 +4472,10 @@ function createWindow() {
         const requiredProdChecks = [
           'productionTransportsRegistered',
           'missingHandlerFailsClosed',
-          'webProviderRoutesThroughBrowserSession',
-          'antigravityRoutesThroughNativeService',
-          'codexRoutesThroughNativeService',
+          'webProviderAwaitingResponseTransitionsToWaitingInput',
+          'antigravityNativeFailureFailsClosed',
+          'codexVerifyExecutesViaNativeService',
+          'codexVerifyFailsClosedOnCorruptSyntax',
           'noE2EMocksInProduction',
         ];
 

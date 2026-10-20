@@ -1,8 +1,8 @@
 {
   "suite": "UNION_BOT_ELECTRON_GUI_SMOKE",
-  "timestamp": "2026-10-20T08:41:04.631Z",
+  "timestamp": "2026-10-20T09:58:04.565Z",
   "windowTitle": "Union Bot",
-  "userDataDir": "C:\\Users\\Lenovo\\AppData\\Roaming\\Electron",
+  "userDataDir": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\union_smoke_1792490283741",
   "costGuardBlockedPaid": true,
   "safeExternalBlockedDangerous": true,
   "singleInstanceLocked": true,

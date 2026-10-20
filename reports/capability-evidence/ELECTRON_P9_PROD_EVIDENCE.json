@@ -1,13 +1,14 @@
 {
-  "timestamp": "2026-10-20T08:44:34.540Z",
+  "timestamp": "2026-10-20T09:57:21.769Z",
   "environment": "Real Windows Electron (Phase P9 Production 6-AI Transports & Native Routing)",
   "nodeEnv": "production",
   "results": {
     "productionTransportsRegistered": true,
     "missingHandlerFailsClosed": true,
-    "webProviderRoutesThroughBrowserSession": true,
-    "antigravityRoutesThroughNativeService": true,
-    "codexRoutesThroughNativeService": true,
+    "webProviderAwaitingResponseTransitionsToWaitingInput": true,
+    "antigravityNativeFailureFailsClosed": true,
+    "codexVerifyExecutesViaNativeService": true,
+    "codexVerifyFailsClosedOnCorruptSyntax": true,
     "noE2EMocksInProduction": true
   },
   "allPassed": true

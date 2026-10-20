@@ -254,17 +254,19 @@ describe('Union Bot Phase P9 Gate: Windows Real Electron E2E Suite', () => {
     // Assert individual production checks
     assert.equal(evidence.results.productionTransportsRegistered, true, 'P9-R02-001: All 6 providers must have production transports registered');
     assert.equal(evidence.results.missingHandlerFailsClosed, true, 'P9-R02-001: Unknown provider must fail closed');
-    assert.equal(evidence.results.webProviderRoutesThroughBrowserSession, true, 'P9-R02-001: Web provider routes through live BrowserService session');
-    assert.equal(evidence.results.antigravityRoutesThroughNativeService, true, 'P9-R02-001: Antigravity routes through native antigravityService');
-    assert.equal(evidence.results.codexRoutesThroughNativeService, true, 'P9-R02-001: Codex routes through native codexService');
+    assert.equal(evidence.results.webProviderAwaitingResponseTransitionsToWaitingInput, true, 'P9-R03-001: Web provider with no live response transitions to WAITING_INPUT');
+    assert.equal(evidence.results.antigravityNativeFailureFailsClosed, true, 'P9-R03-002: Antigravity native failure fails closed');
+    assert.equal(evidence.results.codexVerifyExecutesViaNativeService, true, 'P9-R03-003: Codex executes authentic verification via native service');
+    assert.equal(evidence.results.codexVerifyFailsClosedOnCorruptSyntax, true, 'P9-R03-003: Codex verification rejects corrupt syntax fail-closed');
     assert.equal(evidence.results.noE2EMocksInProduction, true, 'P9-R02-001: Production mode must not contain E2E mocks');
 
     // Verify stdout checks
     assert.match(stdout, /\[P9-PROD-E2E\] Check productionTransportsRegistered: true/);
     assert.match(stdout, /\[P9-PROD-E2E\] Check missingHandlerFailsClosed: true/);
-    assert.match(stdout, /\[P9-PROD-E2E\] Check webProviderRoutesThroughBrowserSession: true/);
-    assert.match(stdout, /\[P9-PROD-E2E\] Check antigravityRoutesThroughNativeService: true/);
-    assert.match(stdout, /\[P9-PROD-E2E\] Check codexRoutesThroughNativeService: true/);
+    assert.match(stdout, /\[P9-PROD-E2E\] Check webProviderAwaitingResponseTransitionsToWaitingInput: true/);
+    assert.match(stdout, /\[P9-PROD-E2E\] Check antigravityNativeFailureFailsClosed: true/);
+    assert.match(stdout, /\[P9-PROD-E2E\] Check codexVerifyExecutesViaNativeService: true/);
+    assert.match(stdout, /\[P9-PROD-E2E\] Check codexVerifyFailsClosedOnCorruptSyntax: true/);
     assert.match(stdout, /\[P9-PROD-E2E\] Check noE2EMocksInProduction: true/);
 
     // Clean up test directory

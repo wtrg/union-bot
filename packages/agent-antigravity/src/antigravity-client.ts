@@ -460,7 +460,9 @@ export class AntigravityClient extends EventEmitter {
       });
 
       activeTransport.onError((err) => {
-        this.emit('error', err);
+        if (this.listenerCount('error') > 0) {
+          this.emit('error', err);
+        }
       });
 
       activeTransport.onClose((code) => {

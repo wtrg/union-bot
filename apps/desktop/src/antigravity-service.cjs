@@ -79,7 +79,11 @@ class AntigravityService extends EventEmitter {
     client.on('session_init', (init) => this.emit('session_init', init));
     client.on('step_update', (update) => this.emit('step_update', update));
     client.on('turn_completed', (result) => this.emit('turn_completed', result));
-    client.on('error', (err) => this.emit('error', err));
+    client.on('error', (err) => {
+      if (this.listenerCount('error') > 0) {
+        this.emit('error', err);
+      }
+    });
     return this.adapter;
   }
 

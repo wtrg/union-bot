@@ -110,6 +110,8 @@ export type TaskNodeHandler = (
   context: TaskExecutionContext
 ) => Promise<{
   result?: unknown;
+  status?: NodeExecutionStatus;
+  role?: string;
   modifiedFiles?: string[];
   outputDigest?: string;
   votes?: ConsensusVote[];
@@ -936,6 +938,27 @@ export class TaskGraphEngine extends EventEmitter {
       const executionResult = activeHandler
         ? await activeHandler(node, context)
         : { result: `Node ${node.id} executed successfully` };
+
+      // Phase P9: When handler transitions to WAITING_INPUT (e.g. web provider awaiting user input/turn response)
+      if (executionResult.status === 'WAITING_INPUT') {
+        node.status = 'WAITING_INPUT';
+        node.error = executionResult.error;
+        if (node.assignedProvider) {
+          const session = this.sessionRegistry?.getSessionByProvider?.(node.assignedProvider);
+          node.result = {
+            ...(typeof executionResult.result === 'object' && executionResult.result !== null ? executionResult.result : { output: executionResult.result }),
+            sessionId: executionResult.sessionId || session?.sessionId,
+            providerId: node.assignedProvider,
+            role: node.assignedRole,
+            provenance: executionResult.provenance || 'LIVE_WEB',
+          };
+        }
+        this.recordHistory(graph, 'TASK_NODE_WAITING_INPUT', node.id, {
+          providerId: node.assignedProvider,
+          reason: node.error,
+        });
+        return node;
+      }
 
       if (executionResult.error) {
         node.status = 'FAILED';

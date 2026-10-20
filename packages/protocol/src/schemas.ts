@@ -355,6 +355,7 @@ export const NodeExecutionStatusSchema = z.enum([
   'PENDING',
   'RUNNING',
   'WAITING_APPROVAL',
+  'WAITING_INPUT',
   'COMPLETED',
   'FAILED',
   'STALE',
