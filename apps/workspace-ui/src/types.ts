@@ -226,6 +226,13 @@ export interface UnionBotAPI {
   releaseBrowserControllerLease?: (payload: { tabId: string; leaseToken: string }) => Promise<boolean>;
   createSafeDomSnapshot?: (payload: { tabId: string; url?: string; title?: string; rawDomText?: string; interactiveElements?: any[]; viewport?: { width: number; height: number } }) => Promise<{ snapshotSha256: string; snapshot: any }>;
   executeBrowserAction?: (payload: { tabId: string; leaseToken: string; actionType: string; coordinates?: { x: number; y: number }; text?: string; url?: string; viewport?: { width: number; height: number } }) => Promise<{ success: boolean; actionType?: string; error?: string; code?: string }>;
+
+  // Phase V4: Security, Reliability, Observability & Performance (UB-V4-U11)
+  inspectContentSecurity?: (text: string) => Promise<{ safe: boolean; riskScore: number; blocked: boolean; flags: any[] }>;
+  sanitizeContentSecurity?: (text: string) => Promise<string>;
+  auditEgressSecurity?: (url: string) => Promise<{ allowed: boolean; cost: number; verifiedZeroCost?: boolean; error?: string }>;
+  getDatabaseHealth?: () => Promise<{ healthy: boolean; integrityCheck?: string; error?: string }>;
+  getSecurityMetrics?: () => Promise<{ totalViolations: number; recentViolations: any[]; totalAuditLogs: number; zeroCostEnforced: boolean }>;
   readAttachment: (sha256: string) => Promise<{ success: boolean; sha256?: string; dataBase64?: string; sizeBytes?: number; error?: string }>;
   openFileDialog: () => Promise<{ success: boolean; canceled?: boolean; attachment?: AttachmentInfo; error?: string }>;
   exportWorkspace: (options?: any) => Promise<{ success: boolean; exportJson?: string; exportMarkdown?: string; projectCount?: number; roomCount?: number; taskCount?: number; totalEnvelopes?: number; error?: string }>;

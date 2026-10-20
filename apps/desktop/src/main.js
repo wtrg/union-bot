@@ -38,6 +38,7 @@ const { PlanRegistryService } = require('./services/plan-registry-service.cjs');
 const { WorkflowSupervisor } = require('./services/workflow-supervisor.cjs');
 const { GitReviewService } = require('./services/git-review-service.cjs');
 const { BrowserUseBridge } = require('./services/browser-use-bridge.cjs');
+const { SecurityGuardService } = require('./services/security-guard.cjs');
 
 // Custom test userData override for isolated multi-process E2E testing
 const customUserDataArg = process.argv.find((a) => a.startsWith('--test-user-data=') || a.startsWith('--user-data-dir='));
@@ -151,6 +152,7 @@ const planRegistryService = new PlanRegistryService(storage);
 const workflowSupervisor = new WorkflowSupervisor({ storage, planRegistry: planRegistryService, conversationRouter, costGuard });
 const gitReviewService = new GitReviewService({ repoRoot: process.cwd() });
 const browserUseBridge = new BrowserUseBridge({ browserManager });
+const securityGuardService = new SecurityGuardService({ storage, costGuard });
 
 taskGraphService.on('graph-event', (evt) => {
   if (mainWindow && !mainWindow.isDestroyed()) {
@@ -5775,6 +5777,52 @@ ipcMain.handle('union-bot:execute-browser-action', async (event, payload) => {
     return browserUseBridge.executeAction(payload || {});
   } catch (err) {
     return { success: false, error: err.message };
+  }
+});
+
+// Phase V4: Security, Reliability, Observability & Performance (UB-V4-U11)
+ipcMain.handle('union-bot:inspect-content-security', async (event, text) => {
+  if (!checkSenderAuthorized(event)) return { safe: false, riskScore: 100, blocked: true, flags: [] };
+  try {
+    return securityGuardService.inspectContent(text);
+  } catch (err) {
+    return { safe: false, riskScore: 100, blocked: true, flags: [{ type: 'ERROR', description: err.message }] };
+  }
+});
+
+ipcMain.handle('union-bot:sanitize-content-security', async (event, text) => {
+  if (!checkSenderAuthorized(event)) return '';
+  try {
+    return securityGuardService.sanitizeContent(text);
+  } catch (err) {
+    return text || '';
+  }
+});
+
+ipcMain.handle('union-bot:audit-egress-security', async (event, url) => {
+  if (!checkSenderAuthorized(event)) return { allowed: false, cost: 0, reason: 'UNAUTHORIZED_IPC' };
+  try {
+    return securityGuardService.auditEgress(url);
+  } catch (err) {
+    return { allowed: false, cost: 0, error: err.message };
+  }
+});
+
+ipcMain.handle('union-bot:get-database-health', async (event) => {
+  if (!checkSenderAuthorized(event)) return { healthy: false, error: 'Unauthorized IPC' };
+  try {
+    return securityGuardService.performDatabaseHealthCheck();
+  } catch (err) {
+    return { healthy: false, error: err.message };
+  }
+});
+
+ipcMain.handle('union-bot:get-security-metrics', async (event) => {
+  if (!checkSenderAuthorized(event)) return { totalViolations: 0, recentViolations: [], totalAuditLogs: 0, zeroCostEnforced: true };
+  try {
+    return securityGuardService.getSecurityMetrics();
+  } catch (err) {
+    return { totalViolations: 0, recentViolations: [], totalAuditLogs: 0, zeroCostEnforced: true };
   }
 });
 

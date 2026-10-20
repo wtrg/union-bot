@@ -288,6 +288,23 @@ const api = {
     return ipcRenderer.invoke('union-bot:execute-browser-action', payload);
   },
 
+  // Phase V4: Security, Reliability, Observability & Performance (UB-V4-U11)
+  inspectContentSecurity: async (text) => {
+    return ipcRenderer.invoke('union-bot:inspect-content-security', text);
+  },
+  sanitizeContentSecurity: async (text) => {
+    return ipcRenderer.invoke('union-bot:sanitize-content-security', text);
+  },
+  auditEgressSecurity: async (url) => {
+    return ipcRenderer.invoke('union-bot:audit-egress-security', url);
+  },
+  getDatabaseHealth: async () => {
+    return ipcRenderer.invoke('union-bot:get-database-health');
+  },
+  getSecurityMetrics: async () => {
+    return ipcRenderer.invoke('union-bot:get-security-metrics');
+  },
+
   // Phase P4: Embedded Chromium Browser API
   browserGetState: async () => {
     return ipcRenderer.invoke('union-bot:browser-get-state');
