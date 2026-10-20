@@ -23,8 +23,8 @@
 | **U07** | WorkflowSupervisor: Continuous Durable Orchestration | VERIFIED | RU07 | Durable leases, recovery, task progression | SELF_VERIFIED |
 | **U08** | GitHub Push Approval & ChatGPT Code Review Loop | VERIFIED | RU08 | Push consent, SHA binding, review packet intake | SELF_VERIFIED |
 | **U09** | Real Browser-Use & Context Bridge | VERIFIED | RU09 | Controller lease, safe observation, redaction | SELF_VERIFIED |
-| **U10** | Pragmatic Low-Noise UX & Accessibility | IN_PROGRESS | RU10 | /chat vs /work UI, Compact Activity feed | PENDING_REVIEW |
-| **U11** | Security, Reliability, Observability & Performance | QUEUED | RU11 | Prompt injection, 0đ egress, crash recovery | PENDING_REVIEW |
+| **U10** | Pragmatic Low-Noise UX & Accessibility | VERIFIED | RU10 | /chat vs /work UI, Compact Activity feed | SELF_VERIFIED |
+| **U11** | Security, Reliability, Observability & Performance | IN_PROGRESS | RU11 | Prompt injection, 0đ egress, crash recovery | PENDING_REVIEW |
 | **U12** | End-to-End UAT, Windows Portable & Release Dossier | QUEUED | RU12 | 60 UAT matrix, portable bundle, Vietnamese docs | PENDING_REVIEW |
 
 ---
@@ -112,8 +112,15 @@
 - [x] `U09-005`: Safe IPC handlers (`union-bot:acquire-browser-controller-lease`, `union-bot:create-safe-dom-snapshot`, `union-bot:execute-browser-action`) and unit tests (4/4 PASS)
 
 ### U10 — Pragmatic Low-Noise UX & Accessibility
-- [ ] `U10-001`: Workspace UI Dual-Mode routing: clean tab navigation and state management between `/chat` (Discovery) and `/work` (Plan execution)
-- [ ] `U10-002`: Compact Activity Feed component (`ActivityFeedPanel.tsx`): low-noise event filter and drawer
-- [ ] `U10-003`: Keyboard navigation & Command Palette (`Ctrl+K` slash command launcher)
-- [ ] `U10-004`: Workflow & Execution Lease status HUD: visual indicators for active leases, runner status (RUNNING/PAUSED)
-- [ ] `U10-005`: UI build & typecheck verification without warnings
+- [x] `U10-001`: Workspace UI Dual-Mode routing: clean tab navigation and state management between `/chat` (Discovery) and `/work` (Plan execution)
+- [x] `U10-002`: Compact Activity Feed component (`ActivityFeedPanel.tsx`): low-noise event filter and drawer
+- [x] `U10-003`: Keyboard navigation & Command Palette (`CommandPaletteModal.tsx`, `Ctrl+K` slash command launcher)
+- [x] `U10-004`: Workflow & Execution Lease status HUD: visual indicators for active leases, runner status (RUNNING/PAUSED)
+- [x] `U10-005`: UI build & typecheck verification without warnings (`vite build` passed in 717ms)
+
+### U11 — Security, Reliability, Observability & Performance
+- [ ] `U11-001`: Prompt Injection & Malicious Content Sanitizer: detects instruction overrides, jailbreaks, and terminal escapes (`SecurityGuardService`)
+- [ ] `U11-002`: Outbound Egress Cost Monitor: strictly enforces 0 VNĐ cost policy, blocks paid API calls and unauthorized outbound endpoints
+- [ ] `U11-003`: Crash Recovery & DB Self-Healing: WAL checkpointing, clean startup recovery from abrupt halts
+- [ ] `U11-004`: Performance & Memory Guard: bounded heap limits, IPC latency threshold monitoring (<50ms)
+- [ ] `U11-005`: Safe IPC handlers and unit test verification (PASS)
