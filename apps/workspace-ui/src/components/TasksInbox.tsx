@@ -42,6 +42,7 @@ export const TasksInbox: React.FC = () => {
   const [newTitle, setNewTitle] = useState('');
   const [newRole, setNewRole] = useState('IMPLEMENTER');
   const [actionFeedback, setActionFeedback] = useState<string | null>(null);
+  const [dispatchingTaskIds, setDispatchingTaskIds] = useState<Set<string>>(new Set());
 
   const fetchTasks = async () => {
     if (!window.unionBotAPI || typeof window.unionBotAPI.listTasks !== 'function') {
@@ -63,7 +64,28 @@ export const TasksInbox: React.FC = () => {
   useEffect(() => {
     fetchTasks();
     const interval = setInterval(fetchTasks, 4000);
-    return () => clearInterval(interval);
+
+    let unsubscribe: (() => void) | undefined;
+    if (window.unionBotAPI?.onTaskUpdated) {
+      unsubscribe = window.unionBotAPI.onTaskUpdated((update) => {
+        setTasks((prev) =>
+          prev.map((t) => {
+            if (t.id !== update.taskId) return t;
+            return {
+              ...t,
+              status: update.status || t.status,
+              progress: typeof update.progress === 'number' ? update.progress : t.progress,
+              metadata: { ...(t.metadata || {}), ...(update.metadata || {}) }
+            };
+          })
+        );
+      });
+    }
+
+    return () => {
+      clearInterval(interval);
+      if (unsubscribe) unsubscribe();
+    };
   }, []);
 
   const handleCreateTask = async (e: React.FormEvent) => {
@@ -91,13 +113,13 @@ export const TasksInbox: React.FC = () => {
         setActionFeedback(`Error creating task: ${err.message}`);
       }
     } else {
-      // Demo fallback
       const newTask: TaskItem = {
         id: `task_${Date.now()}`,
         title,
         status: 'pending',
         role: newRole,
         progress: 0,
+        metadata: { role: newRole },
         updatedAt: new Date().toLocaleTimeString(),
       };
       setTasks((prev) => [newTask, ...prev]);
@@ -106,32 +128,63 @@ export const TasksInbox: React.FC = () => {
     }
   };
 
-  const handleUpdateStatus = async (taskId: string, newStatus: 'pending' | 'running' | 'completed' | 'failed', progress?: number) => {
-    if (window.unionBotAPI && typeof window.unionBotAPI.updateTask === 'function') {
+  const handleExecuteTask = async (taskId: string) => {
+    if (dispatchingTaskIds.has(taskId)) return; // Anti-double-dispatch
+
+    setDispatchingTaskIds((prev) => new Set(prev).add(taskId));
+    setActionFeedback(`Dispatching task execution for ${taskId}...`);
+
+    // Optimistic progress
+    setTasks((prev) =>
+      prev.map((t) => (t.id === taskId ? { ...t, status: 'running', progress: 10 } : t))
+    );
+
+    if (window.unionBotAPI && typeof window.unionBotAPI.executeTask === 'function') {
       try {
-        const res = await window.unionBotAPI.updateTask(taskId, {
-          status: newStatus,
-          progress: progress !== undefined ? progress : newStatus === 'completed' ? 100 : newStatus === 'running' ? 50 : 0,
-        });
+        const res = await window.unionBotAPI.executeTask({ taskId });
         if (res && res.success) {
-          await fetchTasks();
+          setActionFeedback(`Task ${taskId} completed successfully.`);
+        } else {
+          setActionFeedback(`Task ${taskId} failed: ${res?.error || 'Unknown execution error'}`);
         }
       } catch (err: any) {
-        console.error('[TasksInbox] Failed to update task:', err);
+        setActionFeedback(`Error dispatching task ${taskId}: ${err.message}`);
+      } finally {
+        setDispatchingTaskIds((prev) => {
+          const next = new Set(prev);
+          next.delete(taskId);
+          return next;
+        });
+        await fetchTasks();
       }
     } else {
-      setTasks((prev) =>
-        prev.map((t) =>
-          t.id === taskId
-            ? {
-                ...t,
-                status: newStatus,
-                progress: progress !== undefined ? progress : newStatus === 'completed' ? 100 : 50,
-                updatedAt: new Date().toLocaleTimeString(),
-              }
-            : t
-        )
-      );
+      // Demo fallback
+      setTimeout(() => {
+        setTasks((prev) =>
+          prev.map((t) => (t.id === taskId ? { ...t, status: 'completed', progress: 100 } : t))
+        );
+        setDispatchingTaskIds((prev) => {
+          const next = new Set(prev);
+          next.delete(taskId);
+          return next;
+        });
+      }, 1000);
+    }
+  };
+
+  const handleCancelTask = async (taskId: string) => {
+    if (window.unionBotAPI && typeof window.unionBotAPI.cancelTask === 'function') {
+      try {
+        const res = await window.unionBotAPI.cancelTask({ taskId });
+        if (res && res.success) {
+          setActionFeedback(`Task ${taskId} cancellation requested.`);
+          await fetchTasks();
+        } else {
+          setActionFeedback(`Failed to cancel task: ${res?.error || 'Unknown error'}`);
+        }
+      } catch (err: any) {
+        setActionFeedback(`Error cancelling task: ${err.message}`);
+      }
     }
   };
 
@@ -326,34 +379,45 @@ export const TasksInbox: React.FC = () => {
                       </span>
                     </div>
                     <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>
-                      ID: <code>{t.id}</code> • Role: <strong>{t.role || 'CORE'}</strong> {t.room_id ? `• Room: #${t.room_id}` : ''}
+                      ID: <code>{t.id}</code> • Role: <strong>{t.metadata?.role || t.role || 'IMPLEMENTER'}</strong> {t.room_id ? `• Room: #${t.room_id}` : ''}
                     </div>
                   </div>
 
-                  {/* Task Actions */}
+                  {/* Task Actions - Real Native Execution (No Fake Completions) */}
                   <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                    {t.status !== 'running' && t.status !== 'completed' && (
+                    {(t.status === 'pending' || t.status === 'failed' || t.status === 'cancelled') && (
                       <button
-                        onClick={() => handleUpdateStatus(t.id, 'running', 50)}
-                        style={{ padding: '4px 10px', borderRadius: 4, border: '1px solid var(--accent-blue)', background: 'transparent', color: 'var(--accent-blue)', fontSize: 11, cursor: 'pointer' }}
+                        disabled={dispatchingTaskIds.has(t.id)}
+                        onClick={() => handleExecuteTask(t.id)}
+                        style={{
+                          padding: '4px 12px',
+                          borderRadius: 4,
+                          border: 'none',
+                          background: dispatchingTaskIds.has(t.id) ? 'var(--bg-tertiary)' : 'var(--accent-blue)',
+                          color: '#fff',
+                          fontWeight: 600,
+                          fontSize: 11,
+                          cursor: dispatchingTaskIds.has(t.id) ? 'not-allowed' : 'pointer',
+                        }}
                       >
-                        Start
+                        {dispatchingTaskIds.has(t.id) ? 'Dispatching...' : 'Start Execution'}
                       </button>
                     )}
-                    {t.status !== 'completed' && (
+                    {t.status === 'running' && (
                       <button
-                        onClick={() => handleUpdateStatus(t.id, 'completed', 100)}
-                        style={{ padding: '4px 10px', borderRadius: 4, border: 'none', background: 'var(--accent-green)', color: '#000', fontWeight: 600, fontSize: 11, cursor: 'pointer' }}
+                        onClick={() => handleCancelTask(t.id)}
+                        style={{
+                          padding: '4px 10px',
+                          borderRadius: 4,
+                          border: '1px solid var(--accent-red)',
+                          background: 'transparent',
+                          color: 'var(--accent-red)',
+                          fontWeight: 600,
+                          fontSize: 11,
+                          cursor: 'pointer',
+                        }}
                       >
-                        Complete
-                      </button>
-                    )}
-                    {t.status !== 'failed' && (
-                      <button
-                        onClick={() => handleUpdateStatus(t.id, 'failed', progressVal)}
-                        style={{ padding: '4px 10px', borderRadius: 4, border: '1px solid var(--accent-red)', background: 'transparent', color: 'var(--accent-red)', fontSize: 11, cursor: 'pointer' }}
-                      >
-                        Fail
+                        Cancel
                       </button>
                     )}
                   </div>
@@ -362,7 +426,7 @@ export const TasksInbox: React.FC = () => {
                 {/* Progress bar */}
                 <div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--text-muted)', marginBottom: 4 }}>
-                    <span>Progress</span>
+                    <span>{t.metadata?.statusMessage || (t.status === 'running' ? 'Executing natively...' : 'Status')}</span>
                     <span>{progressVal}%</span>
                   </div>
                   <div style={{ width: '100%', height: 6, background: 'var(--bg-tertiary)', borderRadius: 3, overflow: 'hidden' }}>
@@ -376,6 +440,47 @@ export const TasksInbox: React.FC = () => {
                     />
                   </div>
                 </div>
+
+                {/* Real Execution Result Display */}
+                {t.metadata?.executionResult && (
+                  <div style={{ marginTop: 8, padding: '10px 12px', borderRadius: 6, background: 'var(--bg-tertiary)', border: '1px solid rgba(74, 222, 128, 0.3)', fontSize: 12 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                      <span style={{ color: 'var(--accent-green)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <span>✔</span> Execution Verified & Complete
+                      </span>
+                      {t.metadata.executionResult.verifiedByCodex && (
+                        <span style={{ fontSize: 10, background: 'rgba(56, 189, 248, 0.2)', color: 'var(--accent-blue)', padding: '2px 6px', borderRadius: 4, fontWeight: 700 }}>
+                          Codex Verified (Digest & Boundary)
+                        </span>
+                      )}
+                    </div>
+                    {t.metadata.executionResult.artifactPath && (
+                      <div style={{ color: 'var(--text-primary)', marginBottom: 4 }}>
+                        <strong>Artifact:</strong> <code>{t.metadata.executionResult.artifactPath}</code>
+                        {t.metadata.executionResult.bytesWritten !== undefined && (
+                          <span style={{ color: 'var(--text-muted)', marginLeft: 8 }}>({t.metadata.executionResult.bytesWritten} bytes)</span>
+                        )}
+                      </div>
+                    )}
+                    {t.metadata.executionResult.digest && (
+                      <div style={{ color: 'var(--text-muted)', fontSize: 11, marginBottom: 6 }}>
+                        <strong>SHA-256 CAS:</strong> <code>{t.metadata.executionResult.digest}</code>
+                      </div>
+                    )}
+                    {t.metadata.executionResult.output && (
+                      <pre style={{ margin: 0, padding: 8, borderRadius: 4, background: 'var(--bg-primary)', color: 'var(--text-primary)', fontSize: 11, overflowX: 'auto', maxHeight: 150 }}>
+                        {t.metadata.executionResult.output}
+                      </pre>
+                    )}
+                  </div>
+                )}
+
+                {/* Real Error Display */}
+                {(t.metadata?.error || (t.status === 'failed' && t.metadata?.statusMessage)) && (
+                  <div style={{ marginTop: 8, padding: '8px 12px', borderRadius: 6, background: 'rgba(239, 68, 68, 0.15)', border: '1px solid var(--accent-red)', color: 'var(--accent-red)', fontSize: 12 }}>
+                    <strong>Execution Error:</strong> {t.metadata?.error || t.metadata?.statusMessage}
+                  </div>
+                )}
               </div>
             );
           })

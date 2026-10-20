@@ -300,7 +300,9 @@ class StorageServiceClient extends EventEmitter {
         const limit = (args && args.limit) || 50;
         const status = args && args.status;
         const roomId = args && args.roomId;
+        const taskId = args && args.taskId;
         let tasks = Array.from(this.fallbackTasks.values()).reverse();
+        if (taskId) tasks = tasks.filter(t => t.id === taskId);
         if (status) tasks = tasks.filter(t => t.status === status);
         if (roomId) tasks = tasks.filter(t => t.room_id === roomId);
         return Promise.resolve(tasks.slice(0, limit));
@@ -535,6 +537,10 @@ class StorageServiceClient extends EventEmitter {
             if (args && args.roomId) {
               query += ' AND room_id = ?';
               params.push(args.roomId);
+            }
+            if (args && args.taskId) {
+              query += ' AND id = ?';
+              params.push(args.taskId);
             }
             query += ' ORDER BY created_at DESC LIMIT ?';
             params.push(limit);
@@ -1105,6 +1111,12 @@ class StorageServiceClient extends EventEmitter {
 
   async listTasks(options = {}) {
     return this.sendRequest('listTasks', options);
+  }
+
+  async getTask(taskId) {
+    if (!taskId) return null;
+    const list = await this.listTasks({ taskId, limit: 1 });
+    return list && list.length > 0 ? list[0] : null;
   }
 
   async createTask(taskOrTitle, options = {}) {

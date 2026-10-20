@@ -145,6 +145,10 @@ function handleRequest(msg) {
           query += ' AND room_id = ?';
           params.push(args.roomId);
         }
+        if (args && args.taskId) {
+          query += ' AND id = ?';
+          params.push(args.taskId);
+        }
         query += ' ORDER BY created_at DESC LIMIT ?';
         params.push(limit);
         const rows = db.prepare(query).all(...params);

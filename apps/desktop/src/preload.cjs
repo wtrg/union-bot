@@ -57,6 +57,23 @@ const api = {
     return ipcRenderer.invoke('union-bot:update-task', { taskId, updates });
   },
 
+  executeTask: async (payload) => {
+    return ipcRenderer.invoke('union-bot:task-execute', payload);
+  },
+
+  cancelTask: async (payload) => {
+    return ipcRenderer.invoke('union-bot:task-cancel', payload);
+  },
+
+  onTaskUpdated: (callback) => {
+    if (typeof callback !== 'function') return () => {};
+    const subscription = (_event, data) => callback(data);
+    ipcRenderer.on('union-bot:task-updated', subscription);
+    return () => {
+      ipcRenderer.removeListener('union-bot:task-updated', subscription);
+    };
+  },
+
   getStorageDiagnostics: async () => {
     return ipcRenderer.invoke('union-bot:get-storage-diagnostics');
   },

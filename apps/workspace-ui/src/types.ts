@@ -105,11 +105,38 @@ export interface ProjectInfo {
   archived?: number;
 }
 
+export interface TaskExecutionResult {
+  success: boolean;
+  output?: string;
+  artifactPath?: string;
+  digest?: string;
+  bytesWritten?: number;
+  verifiedByCodex?: boolean;
+  verificationEvidence?: any;
+  provider?: string;
+  role?: string;
+  completedAt?: number;
+  logs?: string[];
+  error?: string;
+}
+
+export interface TaskMetadata {
+  role?: string;
+  provider?: string;
+  createdVia?: string;
+  startedAt?: number;
+  completedAt?: number;
+  statusMessage?: string;
+  executionResult?: TaskExecutionResult;
+  error?: string;
+  [key: string]: any;
+}
+
 export interface TaskItem {
   id: string;
   title: string;
   name?: string;
-  status: 'pending' | 'running' | 'completed' | 'failed';
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled' | 'blocked' | 'waiting_input';
   progress?: number;
   room_id?: string;
   role?: string;
@@ -119,7 +146,7 @@ export interface TaskItem {
   updated_at?: string;
   updatedAt?: string;
   metadata_json?: string;
-  metadata?: any;
+  metadata?: TaskMetadata;
 }
 
 export interface UnionBotAPI {
@@ -137,6 +164,9 @@ export interface UnionBotAPI {
   listTasks: (options?: { status?: string; roomId?: string; limit?: number }) => Promise<TaskItem[]>;
   createTask: (taskData: { title: string; status?: string; progress?: number; roomId?: string; metadata?: any }) => Promise<{ success: boolean; task?: TaskItem; error?: string }>;
   updateTask: (taskId: string, updates: { status?: string; progress?: number; metadata?: any }) => Promise<{ success: boolean; result?: any; error?: string }>;
+  executeTask: (payload: { taskId: string; workspaceRoot?: string }) => Promise<{ success: boolean; taskId?: string; status?: TaskItem['status']; executionResult?: TaskExecutionResult; error?: string }>;
+  cancelTask: (payload: { taskId: string }) => Promise<{ success: boolean; taskId?: string; status?: TaskItem['status']; error?: string }>;
+  onTaskUpdated?: (callback: (data: { taskId: string; status?: TaskItem['status']; progress?: number; error?: string; metadata?: any }) => void) => () => void;
   getStorageDiagnostics: () => Promise<any>;
   listApprovals: (options?: { limit?: number }) => Promise<ApprovalTokenRecord[]>;
   createApprovalToken: (tokenData: any) => Promise<{ success: boolean; token?: ApprovalTokenRecord; error?: string }>;
