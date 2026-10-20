@@ -34,6 +34,7 @@ const { DiscoveryService } = require('./services/discovery-service.cjs');
 const { CapabilityRegistry } = require('./services/capability-registry.cjs');
 const { ConversationRouter } = require('./services/conversation-router.cjs');
 const { ArtifactHandoffService } = require('./services/artifact-handoff-service.cjs');
+const { PlanRegistryService } = require('./services/plan-registry-service.cjs');
 
 // Custom test userData override for isolated multi-process E2E testing
 const customUserDataArg = process.argv.find((a) => a.startsWith('--test-user-data=') || a.startsWith('--user-data-dir='));
@@ -143,6 +144,7 @@ const taskGraphService = new TaskGraphService(path.resolve(__dirname, '../../..'
 const capabilityRegistry = new CapabilityRegistry({ antigravityService, codexService });
 const conversationRouter = new ConversationRouter(storage);
 const artifactHandoffService = new ArtifactHandoffService(storage, artifactStore);
+const planRegistryService = new PlanRegistryService(storage);
 
 taskGraphService.on('graph-event', (evt) => {
   if (mainWindow && !mainWindow.isDestroyed()) {
@@ -5523,6 +5525,72 @@ ipcMain.handle('union-bot:list-milestones', async (event, goalId) => {
     }));
   } catch (err) {
     return [];
+  }
+});
+
+// Phase V4: Plan Registry, Critical Review & Goal Approval (UB-V4-U06)
+ipcMain.handle('union-bot:create-plan-revision', async (event, payload) => {
+  if (!checkSenderAuthorized(event)) return { success: false, error: 'Unauthorized IPC sender' };
+  if (appStatus !== 'READY') return { success: false, error: 'Storage offline' };
+  try {
+    const res = planRegistryService.createPlanRevision(payload);
+    return { success: true, planRevision: res };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('union-bot:approve-plan-revision', async (event, payload) => {
+  if (!checkSenderAuthorized(event)) return { success: false, error: 'Unauthorized IPC sender' };
+  if (appStatus !== 'READY') return { success: false, error: 'Storage offline' };
+  try {
+    const { goalId, revision, approvalRef } = payload || {};
+    return planRegistryService.approvePlanRevision(goalId, revision, approvalRef);
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('union-bot:record-review-finding', async (event, payload) => {
+  if (!checkSenderAuthorized(event)) return { success: false, error: 'Unauthorized IPC sender' };
+  if (appStatus !== 'READY') return { success: false, error: 'Storage offline' };
+  try {
+    const res = planRegistryService.recordReviewFinding(payload);
+    return { success: true, finding: res };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('union-bot:resolve-review-finding', async (event, id) => {
+  if (!checkSenderAuthorized(event)) return { success: false, error: 'Unauthorized IPC sender' };
+  if (appStatus !== 'READY') return { success: false, error: 'Storage offline' };
+  try {
+    const res = planRegistryService.resolveReviewFinding(id);
+    return { success: res };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('union-bot:list-review-findings', async (event, payload) => {
+  if (!checkSenderAuthorized(event)) return [];
+  if (appStatus !== 'READY') return [];
+  try {
+    return planRegistryService.listReviewFindings(payload?.changeSetId, payload?.state);
+  } catch (err) {
+    return [];
+  }
+});
+
+ipcMain.handle('union-bot:update-milestone-state', async (event, payload) => {
+  if (!checkSenderAuthorized(event)) return { success: false, error: 'Unauthorized IPC sender' };
+  if (appStatus !== 'READY') return { success: false, error: 'Storage offline' };
+  try {
+    const res = planRegistryService.updateMilestoneState(payload.milestoneId, payload.state, payload.evidenceRef);
+    return { success: res };
+  } catch (err) {
+    return { success: false, error: err.message };
   }
 });
 

@@ -179,7 +179,7 @@ export interface UnionBotAPI {
   approveToken: (tokenId: string | { tokenId: string; decisionContext?: any }, decisionContext?: any) => Promise<{ success: boolean; error?: string; code?: string }>;
   rejectApproval: (tokenId: string, reason?: string) => Promise<{ success: boolean; tokenId?: string; error?: string }>;
   saveAttachment: (payload: { filename: string; mimeType?: string; dataBase64?: string; textContent?: string }) => Promise<{ success: boolean; attachment?: AttachmentInfo; error?: string }>;
-  // Phase V4: Goal-Driven Multi-Agent API (UB-V4-U01, U02, U03, U04, U05)
+  // Phase V4: Goal-Driven Multi-Agent API (UB-V4-U01, U02, U03, U04, U05, U06)
   getDiscoveryState?: (projectId: string) => Promise<{ success: boolean; session?: any; facts: RequirementFactInfo[]; questions: OpenQuestionInfo[] }>;
   saveRequirementFact?: (fact: any) => Promise<{ success: boolean; error?: string }>;
   saveOpenQuestion?: (question: any) => Promise<{ success: boolean; error?: string }>;
@@ -196,7 +196,12 @@ export interface UnionBotAPI {
   listHandoffs?: (payload?: { projectId?: string; limit?: number }) => Promise<any[]>;
   listGoals?: (projectId: string) => Promise<GoalInfo[]>;
   saveGoal?: (goal: any) => Promise<{ success: boolean; error?: string }>;
-  approvePlanRevision?: (payload: any) => Promise<{ success: boolean; error?: string }>;
+  createPlanRevision?: (payload: { goalId: string; discoveryDigest: string; planMarkdown?: string; milestones?: any[] }) => Promise<{ success: boolean; planRevision?: any; error?: string }>;
+  approvePlanRevision?: (payload: { goalId: string; revision: number; approvalRef?: string }) => Promise<{ success: boolean; goalId?: string; revision?: number; status?: string; error?: string; code?: string; blockingFindings?: any[] }>;
+  recordReviewFinding?: (payload: { changeSetId: string; reviewer?: string; file?: string; line?: number; severity?: string; description: string; reproduction?: string }) => Promise<{ success: boolean; finding?: any; error?: string }>;
+  resolveReviewFinding?: (id: string) => Promise<{ success: boolean; error?: string }>;
+  listReviewFindings?: (payload?: { changeSetId?: string; state?: string }) => Promise<any[]>;
+  updateMilestoneState?: (payload: { milestoneId: string; state: string; evidenceRef?: string }) => Promise<{ success: boolean; error?: string }>;
   listMilestones?: (goalId: string) => Promise<MilestoneInfo[]>;
   listActivityEvents?: (payload: { projectId: string; goalId?: string }) => Promise<ActivityEventInfo[]>;
   readAttachment: (sha256: string) => Promise<{ success: boolean; sha256?: string; dataBase64?: string; sizeBytes?: number; error?: string }>;

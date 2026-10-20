@@ -210,6 +210,21 @@ const api = {
   approvePlanRevision: async (payload) => {
     return ipcRenderer.invoke('union-bot:approve-plan-revision', payload);
   },
+  createPlanRevision: async (payload) => {
+    return ipcRenderer.invoke('union-bot:create-plan-revision', payload);
+  },
+  recordReviewFinding: async (payload) => {
+    return ipcRenderer.invoke('union-bot:record-review-finding', payload);
+  },
+  resolveReviewFinding: async (id) => {
+    return ipcRenderer.invoke('union-bot:resolve-review-finding', id);
+  },
+  listReviewFindings: async (payload) => {
+    return ipcRenderer.invoke('union-bot:list-review-findings', payload);
+  },
+  updateMilestoneState: async (payload) => {
+    return ipcRenderer.invoke('union-bot:update-milestone-state', payload);
+  },
   listMilestones: async (goalId) => {
     return ipcRenderer.invoke('union-bot:list-milestones', goalId);
   },

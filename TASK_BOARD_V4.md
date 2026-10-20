@@ -19,8 +19,8 @@
 | **U03** | Provider Capability & Native Runtime Truth | VERIFIED | RU03 | Capability registry per session, preflight checks | SELF_VERIFIED |
 | **U04** | Two-Way Conversation Router & Thread Receipts | VERIFIED | RU04 | Router, DeliveryAttempt, freshness watermarks | SELF_VERIFIED |
 | **U05** | Artifact Handoff & Multimodal Fidelity | VERIFIED | RU05 | CAS bytes, MIME validation, screenshot fidelity | SELF_VERIFIED |
-| **U06** | `/work`: Plan Registry, Critical Review & Goal Approval | IN_PROGRESS | RU06 | Plan revision, frozen brief digest, approval gate | PENDING_REVIEW |
-| **U07** | WorkflowSupervisor: Continuous Durable Orchestration | QUEUED | RU07 | Durable leases, recovery, task progression | PENDING_REVIEW |
+| **U06** | `/work`: Plan Registry, Critical Review & Goal Approval | VERIFIED | RU06 | Plan revision, frozen brief digest, approval gate | SELF_VERIFIED |
+| **U07** | WorkflowSupervisor: Continuous Durable Orchestration | IN_PROGRESS | RU07 | Durable leases, recovery, task progression | PENDING_REVIEW |
 | **U08** | GitHub Push Approval & ChatGPT Code Review Loop | QUEUED | RU08 | Push consent, SHA binding, review packet intake | PENDING_REVIEW |
 | **U09** | Real Browser-Use & Context Bridge | QUEUED | RU09 | Controller lease, safe observation, redaction | PENDING_REVIEW |
 | **U10** | Pragmatic Low-Noise UX & Accessibility | QUEUED | RU10 | /chat vs /work UI, Compact Activity feed | PENDING_REVIEW |
@@ -80,3 +80,11 @@
 - [x] `U05-004`: Receiver acknowledgment: target provider identity validation and turn evidence persistence (`ackEvidenceRef`)
 - [x] `U05-005`: Rejection and error tracking: mismatched receiver rejection (`ERR_TARGET_MISMATCH`) and explicit checksum rejection (`REJECTED_CHECKSUM`)
 - [x] `U05-006`: Safe IPC exposure (`union-bot:create-handoff`, `union-bot:acknowledge-handoff`, `union-bot:list-handoffs`) and unit tests (6/6 PASS)
+
+### U06 — `/work`: Plan Registry, Critical Review & Goal Approval
+- [x] `U06-001`: `PlanRegistryService`: Goal lifecycle management (`DRAFT` -> `ACTIVE` -> `COMPLETED`) and immutable plan revisions bound to frozen `discovery_digest` and plan `document_sha256`
+- [x] `U06-002`: Milestone DAG: milestone ordering (`order_idx`), dependency management (`depends_on_json`), and state progression (`PENDING` -> `IN_PROGRESS` -> `COMPLETED`)
+- [x] `U06-003`: Critical Review Findings Engine: record review findings across severity levels (`SEV1` through `SEV4`), with file and reproduction details
+- [x] `U06-004`: Owner Approval Gate (`approvePlanRevision`): fail-closed blocking when open SEV1 critical findings exist (`ERR_SEV1_BLOCKING`); transitions goal to `ACTIVE` upon resolution
+- [x] `U06-005`: Milestone Evidence Tracking: append durable execution and commit references to milestones (`evidence_refs_json`)
+- [x] `U06-006`: Safe IPC exposure (`create-plan-revision`, `approve-plan-revision`, `record-review-finding`, `resolve-review-finding`, `list-review-findings`, `update-milestone-state`) and unit tests (4/4 PASS)
