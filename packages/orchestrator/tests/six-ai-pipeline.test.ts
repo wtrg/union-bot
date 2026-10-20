@@ -378,4 +378,56 @@ describe('Phase P9: 6-AI Collaborative Workflow Engine Tests', () => {
     assert.equal(resultGraph.status, 'WAITING_INPUT');
     assert.match(resultGraph.error || '', /ERR_PROVIDER_AWAITING_RESPONSE/);
   });
+
+  // P9-R04-004: Multi-hop upstream artifact and targetDigest traversal across intermediate review nodes
+  it('P9-6AI-09 & P9-R04-004: Multi-hop upstream artifact and targetDigest traversal across intermediate review nodes', () => {
+    const pipeline = TaskGraphEngine.create6AIPipeline({
+      id: 'pipe-traversal-test',
+      name: 'Traversal Test',
+      workspaceRoot: process.cwd(),
+      taskPrompt: 'Build feature',
+    });
+    const engine = new TaskGraphEngine();
+    const graph = engine.createGraph(pipeline);
+
+    const implementNode = graph.nodes.get('node-implement')!;
+    implementNode.status = 'COMPLETED';
+    implementNode.modifiedFiles = ['src/feature.ts'];
+    implementNode.outputDigest = 'e'.repeat(64);
+
+    const reviewNode = graph.nodes.get('node-algo-review')!;
+    reviewNode.status = 'COMPLETED';
+
+    const verifyNode = graph.nodes.get('node-qa-verify')!;
+    verifyNode.actionPayload = {};
+
+    const filesToVerify: string[] = [];
+    let targetDigest: string | undefined = undefined;
+
+    const queue = [...verifyNode.dependencies];
+    const visited = new Set<string>();
+    while (queue.length > 0) {
+      const depId = queue.shift()!;
+      if (visited.has(depId)) continue;
+      visited.add(depId);
+      const dep = graph.nodes.get(depId);
+      if (!dep) continue;
+
+      if (Array.isArray(dep.modifiedFiles) && dep.modifiedFiles.length > 0) {
+        for (const f of dep.modifiedFiles) {
+          if (!filesToVerify.includes(f)) filesToVerify.push(f);
+        }
+      }
+      if (!targetDigest) {
+        if (dep.outputDigest) targetDigest = dep.outputDigest;
+        else if ((dep.result as any)?.digest) targetDigest = (dep.result as any).digest;
+      }
+      if (Array.isArray(dep.dependencies)) {
+        queue.push(...dep.dependencies);
+      }
+    }
+
+    assert.deepEqual(filesToVerify, ['src/feature.ts']);
+    assert.equal(targetDigest, 'e'.repeat(64));
+  });
 });

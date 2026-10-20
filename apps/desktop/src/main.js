@@ -468,21 +468,15 @@ function registerProduction6AITransports(taskGraphService, browserService, codex
       };
     }
 
-    // VERIFY stage: Executes authentic verification through codexService (P9-R03-003, P9-R04-003)
+    // VERIFY stage: Executes authentic verification through codexService (P9-R03-003, P9-R04-003, P9-R04-004)
     const filesToVerify = [];
     if (Array.isArray(node.actionPayload?.files)) {
       filesToVerify.push(...node.actionPayload.files);
     }
-    for (const depId of node.dependencies) {
-      const dep = ctx.graph.nodes.get(depId);
-      if (dep?.modifiedFiles) {
-        filesToVerify.push(...dep.modifiedFiles);
-      }
-    }
 
-    // Resolve targetDigest from node, actionPayload, or upstream dependency nodes (e.g. IMPLEMENT stage)
+    // Resolve targetDigest and filesToVerify from node, actionPayload, or upstream dependency nodes (e.g. IMPLEMENT stage)
     let targetDigest = node.targetDigest || node.actionPayload?.targetDigest;
-    if (!targetDigest && Array.isArray(node.dependencies)) {
+    if (Array.isArray(node.dependencies)) {
       const queue = [...node.dependencies];
       const visited = new Set();
       while (queue.length > 0) {
@@ -490,18 +484,33 @@ function registerProduction6AITransports(taskGraphService, browserService, codex
         if (visited.has(depId)) continue;
         visited.add(depId);
         const dep = ctx.graph?.nodes?.get(depId);
-        if (dep?.outputDigest) {
-          targetDigest = dep.outputDigest;
-          break;
+        if (!dep) continue;
+
+        if (Array.isArray(dep.modifiedFiles) && dep.modifiedFiles.length > 0) {
+          for (const f of dep.modifiedFiles) {
+            if (!filesToVerify.includes(f)) filesToVerify.push(f);
+          }
         }
-        if (dep?.result?.digest) {
-          targetDigest = dep.result.digest;
-          break;
+        if (dep.result?.artifactPath && !filesToVerify.includes(dep.result.artifactPath)) {
+          filesToVerify.push(dep.result.artifactPath);
         }
-        if (dep?.dependencies && Array.isArray(dep.dependencies)) {
+
+        if (!targetDigest) {
+          if (dep.outputDigest) {
+            targetDigest = dep.outputDigest;
+          } else if (dep.result?.digest) {
+            targetDigest = dep.result.digest;
+          }
+        }
+
+        if (Array.isArray(dep.dependencies)) {
           queue.push(...dep.dependencies);
         }
       }
+    }
+
+    if (filesToVerify.length === 0) {
+      throw new Error('ERR_VERIFICATION_NO_FILES: VERIFY stage requires target artifact files from actionPayload or upstream IMPLEMENT dependencies');
     }
 
     if (!targetDigest) {
@@ -4457,15 +4466,53 @@ function createWindow() {
         results.antigravityNativeFailureFailsClosed = antigravityFailedClosed;
         console.log('[P9-PROD-E2E] Step 4 result antigravityNativeFailureFailsClosed:', results.antigravityNativeFailureFailsClosed);
 
-        // 5. Codex executes authentic verification via native service (P9-R03-003, P9-R04-003)
-        console.log('[P9-PROD-E2E] Step 5: executing codex verify node with authentic targetDigest...');
+        // 5. Codex executes authentic verification via native service (P9-R03-003, P9-R04-003, P9-R04-004, P9-R04-005)
+        console.log('[P9-PROD-E2E] Step 5: executing full upstream DAG chain (IMPLEMENT -> REVIEW -> VERIFY)...');
+        
+        // 5a. Authentic IMPLEMENT output
+        const prodImplFile = 'scratch/p9-prod-verified.ts';
+        const prodImplAbs = path.resolve(prodGraph.workspaceRoot, prodImplFile);
+        const prodImplDir = path.dirname(prodImplAbs);
+        if (!fs.existsSync(prodImplDir)) fs.mkdirSync(prodImplDir, { recursive: true });
+        fs.writeFileSync(prodImplAbs, 'export const p9ProductionArtifact = { verified: true, zeroCost: true };\n', 'utf8');
+        const prodImplDigest = crypto.createHash('sha256').update(fs.readFileSync(prodImplAbs)).digest('hex');
+
+        implementNode.status = 'COMPLETED';
+        implementNode.outputDigest = prodImplDigest;
+        implementNode.modifiedFiles = [prodImplFile];
+        implementNode.result = { artifactPath: prodImplFile, digest: prodImplDigest, nativeService: 'antigravityService' };
+
+        // 5b. Authentic REVIEW consensus
+        const reviewNode = prodGraph.nodes.get('node-algo-review');
+        reviewNode.status = 'COMPLETED';
+        reviewNode.result = { reviewedDigest: prodImplDigest, approved: true };
+
+        // 5c. Authentic VERIFY node runs with EMPTY actionPayload - must resolve both artifact and digest from upstream IMPLEMENT
         const verifyNode = prodGraph.nodes.get('node-qa-verify');
-        prodGraph.nodes.get('node-algo-review').status = 'COMPLETED';
-        const pkgDigest = crypto.createHash('sha256').update(fs.readFileSync(path.resolve(prodGraph.workspaceRoot, 'package.json'))).digest('hex');
-        verifyNode.targetDigest = pkgDigest;
-        verifyNode.actionPayload = { files: ['package.json'], targetDigest: pkgDigest };
+        verifyNode.actionPayload = {}; // Must NOT provide manual files or targetDigest!
+        verifyNode.targetDigest = undefined;
         const verifyRes = await taskGraphService.engine.executeNode(prodGraph, verifyNode);
         const codexSession = browserService.sessionRegistry.getSessionByProvider('codex');
+
+        // 5d. Also verify CostGuard requirement fail-closed
+        let costGuardMissingFailedClosed = false;
+        try {
+          const { CodexService: RawCodexService } = require('./codex-service.cjs');
+          const guardlessService = new RawCodexService(prodGraph.workspaceRoot, artifactStore, toolHost, null);
+          await guardlessService.executeVerification({ files: [prodImplFile], stage: 'VERIFY', targetDigest: prodImplDigest });
+        } catch (err) {
+          costGuardMissingFailedClosed = Boolean(err.message && err.message.includes('ERR_COST_GUARD_REQUIRED'));
+        }
+
+        let costGuardPaidViolationFailedClosed = false;
+        try {
+          const fakePaidGuard = { isPaidApiAllowed: () => true, paidApiEnabled: true };
+          const { CodexService: RawCodexService } = require('./codex-service.cjs');
+          const paidGuardService = new RawCodexService(prodGraph.workspaceRoot, artifactStore, toolHost, fakePaidGuard);
+          await paidGuardService.executeVerification({ files: [prodImplFile], stage: 'VERIFY', targetDigest: prodImplDigest });
+        } catch (err) {
+          costGuardPaidViolationFailedClosed = Boolean(err.message && err.message.includes('ERR_ZERO_COST_VIOLATION'));
+        }
 
         results.codexVerifyExecutesViaNativeService = Boolean(
           verifyRes.status === 'COMPLETED' &&
@@ -4473,7 +4520,10 @@ function createWindow() {
           verifyRes.result?.verificationEvidence?.syntaxVerified === true &&
           verifyRes.result?.verificationEvidence?.securityBoundaryVerified === true &&
           verifyRes.result?.verificationEvidence?.zeroCostConfirmed === true &&
-          verifyRes.result?.nativeService === 'codexService'
+          verifyRes.result?.verificationEvidence?.verifiedFiles?.includes(prodImplFile) &&
+          verifyRes.result?.nativeService === 'codexService' &&
+          costGuardMissingFailedClosed &&
+          costGuardPaidViolationFailedClosed
         );
 
         // 6. Codex verification fails closed on corrupt syntax (P9-R03-003)

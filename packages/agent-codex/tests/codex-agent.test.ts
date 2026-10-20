@@ -375,7 +375,14 @@ describe('Union Bot Phase P6: Native Codex Agent Adapter Suite', () => {
     assert.equal(digestRes.success, true);
     assert.equal(digestRes.digestVerified, true);
 
-    // 7. Rejects paid API egress when CostGuard allows paid APIs
+    // 7. P9-R04-005: Rejects verification when CostGuard is missing fail-closed
+    const guardlessAdapter = new CodexAdapter({ workspaceRoot, costGuard: undefined });
+    assert.throws(
+      () => guardlessAdapter.executeVerification({ files: ['package.json'] }),
+      /ERR_COST_GUARD_REQUIRED/
+    );
+
+    // 8. Rejects paid API egress when CostGuard allows paid APIs
     const paidCostGuard = new CostGuard();
     (paidCostGuard as any).paidApiEnabled = true;
     const paidAdapter = new CodexAdapter({ workspaceRoot, costGuard: paidCostGuard });

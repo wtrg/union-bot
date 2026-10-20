@@ -234,22 +234,22 @@ class CodexService extends EventEmitter {
       digestVerified = true;
     }
 
-    // 4. Zero-Cost Confirmation: verifies paidApiEnabled is strictly false via CostGuard or env
-    let zeroCostConfirmed = false;
-    if (this.costGuard) {
-      const isPaidAllowed = typeof this.costGuard.isPaidApiAllowed === 'function'
-        ? this.costGuard.isPaidApiAllowed()
-        : Boolean(this.costGuard.paidApiEnabled);
-      if (isPaidAllowed) {
-        const errCost = new Error('ERR_ZERO_COST_VIOLATION: Paid API egress is not disabled');
-        errCost.code = 'ERR_ZERO_COST_VIOLATION';
-        throw errCost;
-      }
-      zeroCostConfirmed = true;
-    } else {
-      const paidKey = process.env.OPENAI_API_KEY || process.env.ANTHROPIC_API_KEY;
-      zeroCostConfirmed = !paidKey || paidKey.trim().length === 0;
+    // 4. Zero-Cost Confirmation: strictly requires an active CostGuard instance fail-closed (P9-R04-005)
+    if (!this.costGuard) {
+      const errNoGuard = new Error('ERR_COST_GUARD_REQUIRED: Codex verification requires an active CostGuard instance fail-closed');
+      errNoGuard.code = 'ERR_COST_GUARD_REQUIRED';
+      throw errNoGuard;
     }
+
+    const isPaidAllowed = typeof this.costGuard.isPaidApiAllowed === 'function'
+      ? this.costGuard.isPaidApiAllowed()
+      : Boolean(this.costGuard.paidApiEnabled);
+    if (isPaidAllowed) {
+      const errCost = new Error('ERR_ZERO_COST_VIOLATION: Paid API egress is not disabled fail-closed');
+      errCost.code = 'ERR_ZERO_COST_VIOLATION';
+      throw errCost;
+    }
+    const zeroCostConfirmed = true;
 
     return {
       success: true,

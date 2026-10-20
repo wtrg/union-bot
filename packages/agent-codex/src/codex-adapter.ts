@@ -77,7 +77,7 @@ export class CodexAdapter extends EventEmitter {
       throw new Error('CodexAdapter requires a valid workspaceRoot string');
     }
     this.workspaceRoot = path.resolve(options.workspaceRoot);
-    this.costGuard = options.costGuard || new CostGuard({ allowLocalhost: true });
+    this.costGuard = options.costGuard || null;
     this.artifactStore = options.artifactStore;
     this.approvalValidator = options.approvalValidator;
 
@@ -362,21 +362,22 @@ export class CodexAdapter extends EventEmitter {
       digestVerified = true;
     }
 
-    let zeroCostConfirmed = false;
-    if (this.costGuard) {
-      const paidAllowed = typeof (this.costGuard as any).isPaidApiAllowed === 'function'
-        ? (this.costGuard as any).isPaidApiAllowed()
-        : Boolean((this.costGuard as any).paidApiEnabled);
-      if (paidAllowed) {
-        const errCost = new Error('ERR_ZERO_COST_VIOLATION: Paid API egress is not disabled');
-        (errCost as any).code = 'ERR_ZERO_COST_VIOLATION';
-        throw errCost;
-      }
-      zeroCostConfirmed = true;
-    } else {
-      const paidKey = process.env.OPENAI_API_KEY || process.env.ANTHROPIC_API_KEY;
-      zeroCostConfirmed = !paidKey || paidKey.trim().length === 0;
+    // 4. Zero-Cost Confirmation: strictly requires an active CostGuard instance fail-closed (P9-R04-005)
+    if (!this.costGuard) {
+      const errNoGuard = new Error('ERR_COST_GUARD_REQUIRED: Codex verification requires an active CostGuard instance fail-closed');
+      (errNoGuard as any).code = 'ERR_COST_GUARD_REQUIRED';
+      throw errNoGuard;
     }
+
+    const paidAllowed = typeof (this.costGuard as any).isPaidApiAllowed === 'function'
+      ? (this.costGuard as any).isPaidApiAllowed()
+      : Boolean((this.costGuard as any).paidApiEnabled);
+    if (paidAllowed) {
+      const errCost = new Error('ERR_ZERO_COST_VIOLATION: Paid API egress is not disabled fail-closed');
+      (errCost as any).code = 'ERR_ZERO_COST_VIOLATION';
+      throw errCost;
+    }
+    const zeroCostConfirmed = true;
 
     return {
       success: true,
