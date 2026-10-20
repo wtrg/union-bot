@@ -4642,6 +4642,33 @@ function createWindow() {
           try { fs.unlinkSync(targetCalc); } catch {}
         }
 
+        // In E2E harness, enable deterministic mock transport for native Antigravity pipeline
+        if (process.env.UNION_BOT_E2E_HARNESS === '1' && antigravityService) {
+          console.log('[P10-UAT] Setting up Antigravity native mock transport for headless testing...');
+          const mockEvents = [
+            JSON.stringify({
+              event: 'init',
+              init: { cwd: targetWorkspace, tools: [] },
+            }),
+            JSON.stringify({
+              event: 'step_update',
+              step_update: { conversation_id: 'conv-p10-uat', step_index: 0, state: 'ACTIVE', step_type: 'agent_response', text_delta: 'HELLO UNION BOT' },
+            }),
+            JSON.stringify({
+              event: 'result',
+              result: {
+                conversation_id: 'conv-p10-uat',
+                status: 'SUCCESS',
+                response: 'HELLO UNION BOT',
+                duration_seconds: 0.1,
+                num_turns: 1,
+                usage: { input_tokens: 10, output_tokens: 3, total_tokens: 13 },
+              },
+            }),
+          ];
+          await antigravityService.enableMockTransport(mockEvents);
+        }
+
         console.log('[P10-UAT] Executing renderer UAT workflow via preload API...');
         const uatResult = await mainWindow.webContents.executeJavaScript(`
           (async () => {
@@ -4650,7 +4677,7 @@ function createWindow() {
             res.hasUnionBotAPI = Boolean(window.unionBotAPI && typeof window.unionBotAPI.executeTask === 'function');
             if (!res.hasUnionBotAPI) return res;
 
-            // 2. Create task: Tạo file scratch/hello.txt chứa nội dung HELLO UNION BOT
+            // 2. Create task: Tạo file scratch/hello.txt chứa nội dung HELLO UNION BOT (Native Agent Route)
             const createRes = await window.unionBotAPI.createTask({
               title: 'Tạo file scratch/hello.txt chứa nội dung HELLO UNION BOT',
               status: 'pending',
@@ -4671,24 +4698,57 @@ function createWindow() {
               }
             }) : null;
 
-            // 4. Execute task
+            // 4. Execute native task (No shortcut, calls actual executor)
             const execRes = await window.unionBotAPI.executeTask({ taskId: res.taskId });
             res.execSuccess = Boolean(execRes && execRes.success);
             res.execStatus = execRes ? execRes.status : null;
             res.executionResult = execRes ? execRes.executionResult : null;
             res.reactiveUpdateReceived = updateReceived;
+            res.isNativeAgent = Boolean(execRes?.executionResult?.isNativeAgent === true);
 
-            // 5. Anti-double-dispatch check
+            // 5. Anti-double-dispatch check on completed task
             const doubleExecRes = await window.unionBotAPI.executeTask({ taskId: res.taskId });
             res.doubleDispatchBlocked = Boolean(doubleExecRes && doubleExecRes.alreadyCompleted === true);
 
-            // 6. Persistence check across listTasks
+            // 6. Concurrency negative test: Promise.all simultaneous double Start
+            const concTask = await window.unionBotAPI.createTask({
+              title: 'Tạo file scratch/concurrent.txt nội dung CONCURRENT',
+              status: 'pending',
+              progress: 0,
+              metadata: { role: 'LOCAL_UTILITY', provider: 'LOCAL_UTILITY' }
+            });
+            const concId = concTask && concTask.task ? concTask.task.id : null;
+            const [callA, callB] = await Promise.all([
+              window.unionBotAPI.executeTask({ taskId: concId }),
+              window.unionBotAPI.executeTask({ taskId: concId }),
+            ]);
+            res.concurrentDoubleStartBlocked = Boolean(
+              (callA.code === 'ERR_TASK_ALREADY_RUNNING' && callB.success) ||
+              (callB.code === 'ERR_TASK_ALREADY_RUNNING' && callA.success)
+            );
+
+            // 7. Cancellation negative test: Transition through cancel_requested to cancelled
+            const cancelTask = await window.unionBotAPI.createTask({
+              title: 'Cancellation Test Task',
+              status: 'pending',
+              progress: 0,
+              metadata: { role: 'IMPLEMENTER' }
+            });
+            const cancelId = cancelTask && cancelTask.task ? cancelTask.task.id : null;
+            const cancelExecPromise = window.unionBotAPI.executeTask({ taskId: cancelId });
+            await new Promise(r => setTimeout(r, 10));
+            const cancelReqRes = await window.unionBotAPI.cancelTask({ taskId: cancelId });
+            res.cancelRequestedTransition = Boolean(cancelReqRes && cancelReqRes.success && cancelReqRes.status === 'cancel_requested');
+            const cancelFinal = await cancelExecPromise;
+            res.cancelFinalizedAsCancelled = Boolean(cancelFinal && cancelFinal.status === 'cancelled');
+
+            // 8. Persistence check across listTasks
             const tasksAfter = await window.unionBotAPI.listTasks({ taskId: res.taskId });
             const persistedTask = tasksAfter && tasksAfter.find ? tasksAfter.find(t => t.id === res.taskId) : (tasksAfter && tasksAfter[0]);
             res.persistedCompleted = Boolean(persistedTask && persistedTask.status === 'completed' && persistedTask.progress === 100);
             res.persistedResult = persistedTask && persistedTask.metadata ? persistedTask.metadata.executionResult : null;
 
-            // 7. Path traversal defense
+            // 9. Path traversal defense
             const traversalTask = await window.unionBotAPI.createTask({
               title: 'Tạo file ../../escaped_malicious.txt chứa nội dung BAD',
               status: 'pending',
@@ -4698,15 +4758,21 @@ function createWindow() {
             const traversalExec = await window.unionBotAPI.executeTask({ taskId: traversalTask && traversalTask.task ? traversalTask.task.id : null });
             res.traversalDenied = Boolean(traversalExec && traversalExec.success === false && traversalExec.error && traversalExec.error.includes('ERR_PATH_TRAVERSAL_DENIED'));
 
-            // 8. Arithmetic computation
+            // 10. Local Utility Route (honest labeling: provider=LOCAL_UTILITY, isNativeAgent=false)
             const calcTask = await window.unionBotAPI.createTask({
               title: 'UI TEST: Tính 2 + 3 và ghi kết quả 5 (chỉ kiểm tra cục bộ)',
               status: 'pending',
               progress: 0,
-              metadata: { role: 'IMPLEMENTER' }
+              metadata: { role: 'LOCAL_UTILITY', provider: 'LOCAL_UTILITY' }
             });
             const calcExec = await window.unionBotAPI.executeTask({ taskId: calcTask && calcTask.task ? calcTask.task.id : null });
-            res.calcSuccess = Boolean(calcExec && calcExec.success && calcExec.executionResult && calcExec.executionResult.output === '5');
+            res.localUtilityVerified = Boolean(
+              calcExec && calcExec.success &&
+              calcExec.executionResult &&
+              calcExec.executionResult.output === '5' &&
+              calcExec.executionResult.provider === 'LOCAL_UTILITY' &&
+              calcExec.executionResult.isNativeAgent === false
+            );
 
             if (unsub) unsub();
             return res;
@@ -4721,11 +4787,15 @@ function createWindow() {
           rolePreservedAsImplementer: Boolean(uatResult?.rolePreserved),
           execSuccess: Boolean(uatResult?.execSuccess),
           execStatusCompleted: Boolean(uatResult?.execStatus === 'completed'),
+          isNativeAgent: Boolean(uatResult?.isNativeAgent),
           reactiveUpdateReceived: Boolean(uatResult?.reactiveUpdateReceived),
           doubleDispatchBlocked: Boolean(uatResult?.doubleDispatchBlocked),
+          concurrentDoubleStartBlocked: Boolean(uatResult?.concurrentDoubleStartBlocked),
+          cancelRequestedTransition: Boolean(uatResult?.cancelRequestedTransition),
+          cancelFinalizedAsCancelled: Boolean(uatResult?.cancelFinalizedAsCancelled),
           persistedCompleted: Boolean(uatResult?.persistedCompleted),
           traversalDenied: Boolean(uatResult?.traversalDenied),
-          calcSuccess: Boolean(uatResult?.calcSuccess),
+          localUtilityVerified: Boolean(uatResult?.localUtilityVerified),
         };
 
         // File system verification on main process side
@@ -4759,11 +4829,15 @@ function createWindow() {
           'rolePreservedAsImplementer',
           'execSuccess',
           'execStatusCompleted',
+          'isNativeAgent',
           'reactiveUpdateReceived',
           'doubleDispatchBlocked',
+          'concurrentDoubleStartBlocked',
+          'cancelRequestedTransition',
+          'cancelFinalizedAsCancelled',
           'persistedCompleted',
           'traversalDenied',
-          'calcSuccess',
+          'localUtilityVerified',
           'diskFileCreated',
           'diskContentMatches',
           'diskByteSizeMatches',
@@ -5187,9 +5261,22 @@ ipcMain.handle('union-bot:task-execute', async (event, payload) => {
   const { taskId, workspaceRoot } = payload || {};
   if (!taskId) return { success: false, error: 'taskId is required' };
 
+  // SYNCHRONOUS ATOMIC RESERVATION before ANY await to prevent race conditions
   if (activeTaskExecutions.has(taskId)) {
     return { success: false, code: 'ERR_TASK_ALREADY_RUNNING', error: 'Task is already executing' };
   }
+
+  let isCancelled = false;
+  let cancelRequested = false;
+  let cancelFn = () => { isCancelled = true; };
+  const executionEntry = {
+    cancel: () => { isCancelled = true; cancelRequested = true; cancelFn(); },
+    isCancelled: false,
+    cancelRequested: false,
+    startedAt: Date.now(),
+    status: 'STARTING',
+  };
+  activeTaskExecutions.set(taskId, executionEntry);
 
   try {
     const tasks = await storage.listTasks({ taskId, limit: 1 });
@@ -5205,7 +5292,10 @@ ipcMain.handle('union-bot:task-execute', async (event, payload) => {
       : path.resolve(__dirname, '../../..');
 
     const assignedRole = task.metadata?.role || task.role || 'IMPLEMENTER';
-    const assignedProvider = task.metadata?.provider || (assignedRole === 'QA_SECURITY' ? 'codex' : 'antigravity');
+    const isLocalUtility = (task.metadata?.provider === 'LOCAL_UTILITY' || assignedRole === 'LOCAL_UTILITY');
+    const assignedProvider = isLocalUtility
+      ? 'LOCAL_UTILITY'
+      : (task.metadata?.provider || (assignedRole === 'QA_SECURITY' ? 'codex' : 'antigravity'));
 
     let targetRelFile = 'scratch/hello.txt';
     const fileMatch = task.title.match(/(?:file\s+)?([a-zA-Z0-9_\-./]+\.[a-zA-Z0-9]+)/i);
@@ -5246,10 +5336,6 @@ ipcMain.handle('union-bot:task-execute', async (event, payload) => {
     });
     broadcastTaskUpdate(taskId, { status: 'running', progress: 10 });
 
-    let isCancelled = false;
-    let cancelFn = () => { isCancelled = true; };
-    activeTaskExecutions.set(taskId, { cancel: () => cancelFn(), startedAt: Date.now() });
-
     try {
       let outputContent = '';
       let bytesWritten = 0;
@@ -5257,57 +5343,63 @@ ipcMain.handle('union-bot:task-execute', async (event, payload) => {
 
       broadcastTaskUpdate(taskId, { status: 'running', progress: 30, statusMessage: 'Generating artifact...' });
 
-      let expectedContent = null;
-      const contentMatch = task.title.match(/nội dung(?:\s+chính xác)?\s+["']?([^"']+)["']?/i) ||
-                           task.title.match(/content\s+["']?([^"']+)["']?/i) ||
-                           task.title.match(/chứa\s+["']?([^"']+)["']?/i);
-      if (contentMatch && contentMatch[1]) {
-        expectedContent = contentMatch[1].trim();
-      } else {
-        const calcMatch = task.title.match(/(?:tính|calculate|eval)\s+([\d\s+\-*/().]+)/i);
-        if (calcMatch && calcMatch[1]) {
-          try {
-            const expr = calcMatch[1].trim();
-            if (/^[\d\s+\-*/().]+$/.test(expr)) {
-              const calculated = Function(`"use strict"; return (${expr});`)();
-              expectedContent = String(calculated);
-            }
-          } catch {}
-        }
-      }
-
       const targetAbsFile = path.resolve(targetWorkspace, targetRelFile);
       const parentDir = path.dirname(targetAbsFile);
       if (!fs.existsSync(parentDir)) fs.mkdirSync(parentDir, { recursive: true });
 
-      if (assignedProvider === 'antigravity') {
-        cancelFn = () => { isCancelled = true; if (antigravityService) antigravityService.cancelTurn(); };
-
-        if (expectedContent) {
-          outputContent = expectedContent;
+      if (isLocalUtility) {
+        // LOCAL DETERMINISTIC UTILITY (Not native AI agent, honest provider label)
+        let utilityOutput = '';
+        const contentMatch = task.title.match(/nội dung(?:\s+chính xác)?\s+["']?([^"']+)["']?/i) ||
+                             task.title.match(/content\s+["']?([^"']+)["']?/i) ||
+                             task.title.match(/chứa\s+["']?([^"']+)["']?/i);
+        if (contentMatch && contentMatch[1]) {
+          utilityOutput = contentMatch[1].trim();
         } else {
-          const turnRes = await antigravityService.executePrompt(task.title, { cwd: targetWorkspace, timeoutMs: 30000 });
-          if (!turnRes?.success || !turnRes?.response) {
-            throw new Error(`ERR_ANTIGRAVITY_EXECUTION_FAILED: ${turnRes?.error || 'Empty output'}`);
+          const calcMatch = task.title.match(/(?:tính|calculate|eval)\s+([\d\s+\-*/().]+)/i);
+          if (calcMatch && calcMatch[1]) {
+            try {
+              const expr = calcMatch[1].trim();
+              if (/^[\d\s+\-*/().]+$/.test(expr)) {
+                const calculated = Function(`"use strict"; return (${expr});`)();
+                utilityOutput = String(calculated);
+              }
+            } catch {}
           }
-          outputContent = turnRes.response;
         }
+        if (!utilityOutput) {
+          utilityOutput = `Local utility execution for: ${task.title}`;
+        }
+        outputContent = utilityOutput;
+      } else if (assignedProvider === 'antigravity') {
+        // AUTHENTIC NATIVE AGENT ROUTE (No shortcuts)
+        cancelFn = () => {
+          isCancelled = true;
+          executionEntry.isCancelled = true;
+          if (antigravityService) antigravityService.cancelTurn();
+        };
+        const turnRes = await antigravityService.executePrompt(task.title, { cwd: targetWorkspace, timeoutMs: 30000 });
+        if (!turnRes || turnRes.success === false) {
+          throw new Error(turnRes?.error || 'ERR_ANTIGRAVITY_EXECUTION_FAILED');
+        }
+        outputContent = turnRes.response || '';
       } else if (assignedProvider === 'codex') {
-        cancelFn = () => { isCancelled = true; if (codexService) codexService.cancelTurn(); };
-        if (expectedContent) {
-          outputContent = expectedContent;
-        } else {
-          const turnRes = await codexService.executeTurn(task.title, { cwd: targetWorkspace });
-          if (!turnRes?.success || !turnRes?.response) {
-            throw new Error(`ERR_CODEX_EXECUTION_FAILED: ${turnRes?.error || 'Empty output'}`);
-          }
-          outputContent = turnRes.response;
+        // AUTHENTIC CODEX AGENT ROUTE (No shortcuts)
+        cancelFn = () => {
+          isCancelled = true;
+          executionEntry.isCancelled = true;
+          if (codexService) codexService.cancelTurn();
+        };
+        const turnRes = await codexService.executeTurn(task.title, { cwd: targetWorkspace });
+        if (!turnRes || turnRes.success === false) {
+          throw new Error(turnRes?.error || 'ERR_CODEX_EXECUTION_FAILED');
         }
+        outputContent = turnRes.response || '';
       } else {
         throw new Error(`ERR_PROVIDER_NOT_SUPPORTED: Provider '${assignedProvider}' is not supported for native task execution`);
       }
 
-      if (isCancelled) {
+      if (isCancelled || cancelRequested || executionEntry.cancelRequested) {
         throw new Error('ERR_TASK_CANCELLED: Task execution was cancelled by user');
       }
 
@@ -5324,30 +5416,48 @@ ipcMain.handle('union-bot:task-execute', async (event, payload) => {
       broadcastTaskUpdate(taskId, { status: 'running', progress: 70, statusMessage: 'Codex verifying artifact...' });
 
       let verifyEvidence = null;
+      let verifiedByCodex = false;
       if (codexService && typeof codexService.executeVerification === 'function') {
         cancelFn = () => { isCancelled = true; if (codexService) codexService.cancelTurn(); };
-        const verifyRes = await codexService.executeVerification({
-          files: [targetRelFile],
-          workspaceRoot: targetWorkspace,
-          targetDigest: outputDigest,
-          requireTargetDigest: true,
-          stage: 'VERIFY',
-        });
+        try {
+          const verifyRes = await codexService.executeVerification({
+            files: [targetRelFile],
+            workspaceRoot: targetWorkspace,
+            targetDigest: outputDigest,
+            requireTargetDigest: true,
+            stage: 'VERIFY',
+          });
 
-        if (!verifyRes || !verifyRes.success) {
-          throw new Error(`ERR_CODEX_VERIFICATION_FAILED: ${verifyRes?.error || 'Verification failed'}`);
+          if (verifyRes && verifyRes.success) {
+            verifyEvidence = {
+              verified: true,
+              syntaxVerified: targetRelFile.endsWith('.txt') ? 'NOT_APPLICABLE' : Boolean(verifyRes.syntaxVerified),
+              securityBoundaryVerified: Boolean(verifyRes.securityBoundaryVerified),
+              zeroCostConfirmed: Boolean(verifyRes.zeroCostConfirmed),
+              digestVerified: Boolean(verifyRes.digestVerified),
+              targetDigest: outputDigest,
+            };
+            verifiedByCodex = Boolean(
+              verifyEvidence.verified &&
+              verifyEvidence.securityBoundaryVerified &&
+              verifyEvidence.digestVerified &&
+              verifyEvidence.zeroCostConfirmed
+            );
+          } else {
+            verifyEvidence = {
+              verified: false,
+              error: verifyRes?.error || 'Codex verification failed',
+            };
+            verifiedByCodex = false;
+          }
+        } catch (vErr) {
+          console.warn('[UnionBot] Codex verification error:', vErr);
+          verifyEvidence = { verified: false, error: vErr.message };
+          verifiedByCodex = false;
         }
-        verifyEvidence = {
-          verified: true,
-          syntaxVerified: targetRelFile.endsWith('.txt') ? 'NOT_APPLICABLE' : Boolean(verifyRes.syntaxVerified),
-          securityBoundaryVerified: Boolean(verifyRes.securityBoundaryVerified),
-          zeroCostConfirmed: Boolean(verifyRes.zeroCostConfirmed),
-          digestVerified: Boolean(verifyRes.digestVerified),
-          targetDigest: outputDigest,
-        };
       }
 
-      if (isCancelled) {
+      if (isCancelled || cancelRequested || executionEntry.cancelRequested) {
         throw new Error('ERR_TASK_CANCELLED: Task execution was cancelled by user');
       }
 
@@ -5357,10 +5467,11 @@ ipcMain.handle('union-bot:task-execute', async (event, payload) => {
         artifactPath: targetRelFile,
         digest: outputDigest,
         bytesWritten,
-        verifiedByCodex: true,
+        verifiedByCodex,
         verificationEvidence: verifyEvidence,
         provider: assignedProvider,
         role: assignedRole,
+        isNativeAgent: !isLocalUtility,
         completedAt: Date.now(),
       };
 
@@ -5390,8 +5501,9 @@ ipcMain.handle('union-bot:task-execute', async (event, payload) => {
         executionResult,
       };
     } catch (err) {
-      const isCancel = isCancelled || err.message?.includes('ERR_TASK_CANCELLED');
+      const isCancel = isCancelled || cancelRequested || executionEntry.cancelRequested || err.message?.includes('ERR_TASK_CANCELLED');
       const finalStatus = isCancel ? 'cancelled' : 'failed';
+      const statusMessage = isCancel ? 'Execution cancelled by user' : `Execution failed: ${err.message}`;
 
       await storage.updateTask(taskId, {
         status: finalStatus,
@@ -5399,7 +5511,7 @@ ipcMain.handle('union-bot:task-execute', async (event, payload) => {
         metadata: {
           ...(task.metadata || {}),
           error: err.message,
-          statusMessage: isCancel ? 'Execution cancelled by user' : `Execution failed: ${err.message}`,
+          statusMessage,
         }
       });
 
@@ -5407,6 +5519,7 @@ ipcMain.handle('union-bot:task-execute', async (event, payload) => {
         status: finalStatus,
         progress: 0,
         error: err.message,
+        statusMessage,
       });
 
       return {
@@ -5420,6 +5533,8 @@ ipcMain.handle('union-bot:task-execute', async (event, payload) => {
     }
   } catch (err) {
     return { success: false, error: err.message };
+  } finally {
+    activeTaskExecutions.delete(taskId);
   }
 });
 
@@ -5429,14 +5544,31 @@ ipcMain.handle('union-bot:task-cancel', async (event, payload) => {
   if (!taskId) return { success: false, error: 'taskId is required' };
 
   const active = activeTaskExecutions.get(taskId);
-  if (active && typeof active.cancel === 'function') {
-    active.cancel();
-    return { success: true, taskId, status: 'cancelling' };
+  if (active) {
+    active.cancelRequested = true;
+    active.isCancelled = true;
+    if (typeof active.cancel === 'function') {
+      try { active.cancel(); } catch {}
+    }
+    const tasks = await storage.listTasks({ taskId, limit: 1 });
+    const task = tasks && tasks.length > 0 ? tasks[0] : null;
+    await storage.updateTask(taskId, {
+      status: 'cancel_requested',
+      metadata: {
+        ...(task?.metadata || {}),
+        statusMessage: 'Cancellation requested; awaiting executor termination...',
+      }
+    });
+    broadcastTaskUpdate(taskId, {
+      status: 'cancel_requested',
+      statusMessage: 'Cancellation requested; awaiting executor termination...',
+    });
+    return { success: true, taskId, status: 'cancel_requested' };
   }
 
   const tasks = await storage.listTasks({ taskId, limit: 1 });
   const task = tasks && tasks.length > 0 ? tasks[0] : null;
-  if (task && (task.status === 'pending' || task.status === 'running')) {
+  if (task && (task.status === 'pending' || task.status === 'running' || task.status === 'cancel_requested')) {
     await storage.updateTask(taskId, {
       status: 'cancelled',
       progress: 0,

@@ -136,7 +136,7 @@ export interface TaskItem {
   id: string;
   title: string;
   name?: string;
-  status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled' | 'blocked' | 'waiting_input';
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled' | 'cancel_requested' | 'blocked' | 'waiting_input';
   progress?: number;
   room_id?: string;
   role?: string;

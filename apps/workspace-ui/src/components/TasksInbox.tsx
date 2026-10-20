@@ -134,16 +134,21 @@ export const TasksInbox: React.FC = () => {
     setDispatchingTaskIds((prev) => new Set(prev).add(taskId));
     setActionFeedback(`Dispatching task execution for ${taskId}...`);
 
-    // Optimistic progress
-    setTasks((prev) =>
-      prev.map((t) => (t.id === taskId ? { ...t, status: 'running', progress: 10 } : t))
-    );
-
     if (window.unionBotAPI && typeof window.unionBotAPI.executeTask === 'function') {
       try {
         const res = await window.unionBotAPI.executeTask({ taskId });
         if (res && res.success) {
-          setActionFeedback(`Task ${taskId} completed successfully.`);
+          if (res.status === 'completed') {
+            setActionFeedback(`Task ${taskId} completed successfully.`);
+          } else if (res.status === 'waiting_input') {
+            setActionFeedback(`Task ${taskId} is waiting for user input.`);
+          } else if (res.status === 'blocked') {
+            setActionFeedback(`Task ${taskId} is blocked: ${res.error || 'Authentication or quota required'}`);
+          } else if (res.status === 'cancelled') {
+            setActionFeedback(`Task ${taskId} was cancelled.`);
+          } else {
+            setActionFeedback(`Task ${taskId} dispatched (status: ${res.status || 'running'}).`);
+          }
         } else {
           setActionFeedback(`Task ${taskId} failed: ${res?.error || 'Unknown execution error'}`);
         }
@@ -158,26 +163,22 @@ export const TasksInbox: React.FC = () => {
         await fetchTasks();
       }
     } else {
-      // Demo fallback
-      setTimeout(() => {
-        setTasks((prev) =>
-          prev.map((t) => (t.id === taskId ? { ...t, status: 'completed', progress: 100 } : t))
-        );
-        setDispatchingTaskIds((prev) => {
-          const next = new Set(prev);
-          next.delete(taskId);
-          return next;
-        });
-      }, 1000);
+      setActionFeedback(`ERR_API_UNAVAILABLE: executeTask API is not available in current window environment`);
+      setDispatchingTaskIds((prev) => {
+        const next = new Set(prev);
+        next.delete(taskId);
+        return next;
+      });
     }
   };
 
   const handleCancelTask = async (taskId: string) => {
     if (window.unionBotAPI && typeof window.unionBotAPI.cancelTask === 'function') {
       try {
+        setActionFeedback(`Requesting cancellation for task ${taskId}...`);
         const res = await window.unionBotAPI.cancelTask({ taskId });
         if (res && res.success) {
-          setActionFeedback(`Task ${taskId} cancellation requested.`);
+          setActionFeedback(`Task ${taskId} cancel request acknowledged (${res.status || 'cancelled'}).`);
           await fetchTasks();
         } else {
           setActionFeedback(`Failed to cancel task: ${res?.error || 'Unknown error'}`);
@@ -371,6 +372,10 @@ export const TasksInbox: React.FC = () => {
                               ? 'var(--accent-blue)'
                               : t.status === 'failed'
                               ? 'var(--accent-red)'
+                              : t.status === 'waiting_input' || t.status === 'blocked'
+                              ? '#f59e0b'
+                              : t.status === 'cancelled'
+                              ? '#6b7280'
                               : 'var(--accent-amber)',
                           color: '#000',
                         }}

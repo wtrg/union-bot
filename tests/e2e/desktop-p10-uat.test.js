@@ -141,11 +141,15 @@ describe('Union Bot Phase P10 Gate: Windows Real Electron UI UAT Suite', () => {
     assert.equal(evidence.results.rolePreservedAsImplementer, true, 'UAT: Selected role must be preserved as IMPLEMENTER (not CORE)');
     assert.equal(evidence.results.execSuccess, true, 'UAT: Task execution must succeed');
     assert.equal(evidence.results.execStatusCompleted, true, 'UAT: Task execution must reach COMPLETED status');
+    assert.equal(evidence.results.isNativeAgent, true, 'UAT: Native execution must route to authentic agent service');
     assert.equal(evidence.results.reactiveUpdateReceived, true, 'UAT: Renderer must receive reactive onTaskUpdated event');
     assert.equal(evidence.results.doubleDispatchBlocked, true, 'UAT: Start repeated invocation must be blocked');
+    assert.equal(evidence.results.concurrentDoubleStartBlocked, true, 'UAT: Promise.all simultaneous double Start must be blocked fail-closed');
+    assert.equal(evidence.results.cancelRequestedTransition, true, 'UAT: Cancel must transition through cancel_requested state');
+    assert.equal(evidence.results.cancelFinalizedAsCancelled, true, 'UAT: Cancelled task must settle into cancelled status');
     assert.equal(evidence.results.persistedCompleted, true, 'UAT: Task must remain completed across listTasks query');
     assert.equal(evidence.results.traversalDenied, true, 'UAT: Path traversal must be blocked fail-closed');
-    assert.equal(evidence.results.calcSuccess, true, 'UAT: Local arithmetic computation must succeed');
+    assert.equal(evidence.results.localUtilityVerified, true, 'UAT: Local utility tasks must be honestly labeled LOCAL_UTILITY (not native)');
     assert.equal(evidence.results.diskFileCreated, true, 'UAT: scratch/hello.txt must be created on disk');
     assert.equal(evidence.results.diskContentMatches, true, 'UAT: scratch/hello.txt content must match exact bytes');
     assert.equal(evidence.results.diskByteSizeMatches, true, 'UAT: scratch/hello.txt must be 15 bytes');
