@@ -213,6 +213,12 @@ export interface UnionBotAPI {
   getWorkflowStatus?: () => Promise<{ state: string; activeLeasesCount: number; activeLeases: any[] }>;
   listMilestones?: (goalId: string) => Promise<MilestoneInfo[]>;
   listActivityEvents?: (payload: { projectId: string; goalId?: string }) => Promise<ActivityEventInfo[]>;
+
+  // Phase V4: GitHub Push Approval & Code Review Loop (UB-V4-U08)
+  validatePushSafety?: (payload: { branch: string; forcePush?: boolean; commitCount?: number }) => Promise<{ allowed: boolean; branch?: string; policy?: string; error?: string; code?: string }>;
+  computePushDigest?: (payload: { branch: string; headSha: string; commitMessage?: string; filesChanged?: string[] }) => Promise<{ digest: string; canonicalPayload: string }>;
+  generateReviewPacket?: (payload: { gate: string; name: string; ticketIds?: string[]; headSha: string; baseSha?: string; branch?: string; summary?: string[]; criteriaEvidence?: string[] }) => Promise<string>;
+  parseReviewFeedback?: (payload: { feedbackText: string; changeSetId?: string }) => Promise<{ status: string; findingsCount: number; hasBlockingSev1: boolean; findings: any[] }>;
   readAttachment: (sha256: string) => Promise<{ success: boolean; sha256?: string; dataBase64?: string; sizeBytes?: number; error?: string }>;
   openFileDialog: () => Promise<{ success: boolean; canceled?: boolean; attachment?: AttachmentInfo; error?: string }>;
   exportWorkspace: (options?: any) => Promise<{ success: boolean; exportJson?: string; exportMarkdown?: string; projectCount?: number; roomCount?: number; taskCount?: number; totalEnvelopes?: number; error?: string }>;

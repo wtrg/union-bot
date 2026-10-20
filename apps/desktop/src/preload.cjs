@@ -257,6 +257,20 @@ const api = {
     return ipcRenderer.invoke('union-bot:list-activity-events', payload);
   },
 
+  // Phase V4: GitHub Push Approval & Code Review Loop (UB-V4-U08)
+  validatePushSafety: async (payload) => {
+    return ipcRenderer.invoke('union-bot:validate-push-safety', payload);
+  },
+  computePushDigest: async (payload) => {
+    return ipcRenderer.invoke('union-bot:compute-push-digest', payload);
+  },
+  generateReviewPacket: async (payload) => {
+    return ipcRenderer.invoke('union-bot:generate-review-packet', payload);
+  },
+  parseReviewFeedback: async (payload) => {
+    return ipcRenderer.invoke('union-bot:parse-review-feedback', payload);
+  },
+
   // Phase P4: Embedded Chromium Browser API
   browserGetState: async () => {
     return ipcRenderer.invoke('union-bot:browser-get-state');

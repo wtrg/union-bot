@@ -36,6 +36,7 @@ const { ConversationRouter } = require('./services/conversation-router.cjs');
 const { ArtifactHandoffService } = require('./services/artifact-handoff-service.cjs');
 const { PlanRegistryService } = require('./services/plan-registry-service.cjs');
 const { WorkflowSupervisor } = require('./services/workflow-supervisor.cjs');
+const { GitReviewService } = require('./services/git-review-service.cjs');
 
 // Custom test userData override for isolated multi-process E2E testing
 const customUserDataArg = process.argv.find((a) => a.startsWith('--test-user-data=') || a.startsWith('--user-data-dir='));
@@ -147,6 +148,7 @@ const conversationRouter = new ConversationRouter(storage);
 const artifactHandoffService = new ArtifactHandoffService(storage, artifactStore);
 const planRegistryService = new PlanRegistryService(storage);
 const workflowSupervisor = new WorkflowSupervisor({ storage, planRegistry: planRegistryService, conversationRouter, costGuard });
+const gitReviewService = new GitReviewService({ repoRoot: process.cwd() });
 
 taskGraphService.on('graph-event', (evt) => {
   if (mainWindow && !mainWindow.isDestroyed()) {
@@ -5688,6 +5690,43 @@ ipcMain.handle('union-bot:list-activity-events', async (event, payload) => {
     }));
   } catch (err) {
     return [];
+  }
+});
+
+// Phase V4: GitHub Push Approval & Code Review Loop (UB-V4-U08)
+ipcMain.handle('union-bot:validate-push-safety', async (event, payload) => {
+  if (!checkSenderAuthorized(event)) return { allowed: false, error: 'Unauthorized IPC sender' };
+  try {
+    return gitReviewService.validatePushSafety(payload || {});
+  } catch (err) {
+    return { allowed: false, error: err.message };
+  }
+});
+
+ipcMain.handle('union-bot:compute-push-digest', async (event, payload) => {
+  if (!checkSenderAuthorized(event)) return { digest: '', error: 'Unauthorized IPC sender' };
+  try {
+    return gitReviewService.computePushDigest(payload || {});
+  } catch (err) {
+    return { digest: '', error: err.message };
+  }
+});
+
+ipcMain.handle('union-bot:generate-review-packet', async (event, payload) => {
+  if (!checkSenderAuthorized(event)) return '';
+  try {
+    return gitReviewService.generateReviewPacket(payload || {});
+  } catch (err) {
+    return '';
+  }
+});
+
+ipcMain.handle('union-bot:parse-review-feedback', async (event, payload) => {
+  if (!checkSenderAuthorized(event)) return { status: 'PENDING', findings: [] };
+  try {
+    return gitReviewService.parseReviewFeedback(payload.feedbackText, payload.changeSetId);
+  } catch (err) {
+    return { status: 'ERROR', error: err.message, findings: [] };
   }
 });
 
