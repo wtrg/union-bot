@@ -72,20 +72,31 @@ Kịch bản tự động `scripts/verify-portable-standalone.cjs` đã thực h
 
 ---
 
-## 3. TỔNG KẾT BẰNG CHỨNG THẨM TRA (EVIDENCE SUMMARY)
+## 3. GIẢI QUYẾT TRIỆT ĐỂ BÁO CÁO SỰ CỐ ĐỘC LẬP TỪ CODEX (P11_CODEX_INDEPENDENT_FAILURE_20261020.md)
+
+### Nguyên nhân gốc rễ (Root Cause Analysis):
+1. **Chromium WebViews trong chế độ Smoke:** `browserService.initialize()` khởi tạo 4 WebContentsViews tải các URL bên ngoài (`chatgpt.com`, `gemini.google.com`, `claude.ai`, `chat.deepseek.com`). Trong môi trường isolated/offline test, các socket Chromium treo chờ timeout kết nối mạng (~30s). Đã xử lý chặn bằng `if (!isSmoke)` tại `apps/desktop/src/main.js`.
+2. **Xung đột tín hiệu tắt Storage Worker:** `storage.close()` gửi tín hiệu tắt worker nhưng cờ `this.isClosing` chưa được bật đồng bộ, khiến sự kiện `worker-exit` bất ngờ phát ra và kích hoạt gửi IPC tới cửa sổ đang đóng. Đã khắc phục bằng `this.isClosing = true` tại `storage-service.cjs`.
+3. **Bảo vệ PPID cho Worker Process:** Thêm cơ chế watchdog PPID chu kỳ 500ms (`.unref()`) tại `storage-worker.cjs` đảm bảo tiến trình worker tự động kết thúc tức thì nếu tiến trình cha chết đột ngột.
+4. **Truyền mã thoát chính xác trong Launcher Batch:** Trong `union-bot.bat`, lệnh `findstr` kiểm tra tham số ghi nhận `%ERRORLEVEL%=1` nếu không có match, và thiếu reset trước khi gọi `union-bot.exe`. Đã thêm `(call )` để xóa cờ lỗi và truyền đúng mã thoát `exit /b %ERRORLEVEL%`.
+5. **Giải phóng handle bộ nhớ Windows an toàn:** Tránh vòng lặp busy-wait 100% CPU làm nghẽn tiến trình giải phóng file DLL của hệ điều hành, thay thế bằng `sleepMs()` dùng `Atomics.wait()` (0% CPU) và cơ chế dọn dẹp dự phòng qua PowerShell.
+
+---
+
+## 4. TỔNG KẾT BẰNG CHỨNG THẨM TRA (EVIDENCE SUMMARY)
 
 File bằng chứng chi tiết: `reports/capability-evidence/P11_PORTABLE_STANDALONE_EVIDENCE.json`
 
 ```json
 {
-  "timestamp": "2026-10-20T16:14:19.762Z",
+  "timestamp": "2026-10-20T17:11:29.665Z",
   "environment": "Windows x64 Outside-Repo Standalone",
   "zeroCostConfirmed": true,
   "t1LiveStatus": "NOT_LIVE_VERIFIED",
   "checks": {
     "copiedOutsideRepo": true,
     "hasManifest": true,
-    "manifestCheckedCount": 43,
+    "manifestCheckedCount": 281,
     "manifestAllMatch": true,
     "bundledNodeExists": true,
     "bundledExeExists": true,
@@ -106,6 +117,6 @@ File bằng chứng chi tiết: `reports/capability-evidence/P11_PORTABLE_STANDA
 
 ---
 
-## 4. KẾT LUẬN
+## 5. KẾT LUẬN
 
-Cả 2 điều kiện nghiệm thu then chốt (Harness Isolation và Standalone Portable Execution outside repo without Node.js) đã được chứng minh và thẩm tra đạt 100% bằng chứng thực nghiệm. Kính đề nghị Technical Leader ký duyệt nghiệm thu chính thức P10 và P11.
+Cả 2 điều kiện nghiệm thu then chốt (Harness Isolation và Standalone Portable Execution outside repo without Node.js) cùng với phản hồi sự cố độc lập của Codex đã được giải quyết triệt để và thẩm tra đạt 100% bằng chứng thực nghiệm (`allPassed: true`). Kính đề nghị Technical Leader ký duyệt nghiệm thu chính thức P10 và P11.

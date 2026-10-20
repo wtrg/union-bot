@@ -670,10 +670,13 @@ function handleRequest(msg) {
       }
       case 'close': {
         if (db) {
-          db.close();
+          try { db.close(); } catch {}
           db = null;
         }
-        process.send({ id, result: true });
+        if (process.send) {
+          try { process.send({ id, result: true }); } catch {}
+        }
+        process.exit(0);
         break;
       }
       default:
@@ -682,6 +685,22 @@ function handleRequest(msg) {
   } catch (err) {
     process.send({ id, error: err.message, stack: err.stack });
   }
+}
+
+// Parent process liveness watchdog: terminate worker immediately if parent dies
+if (process.ppid) {
+  const ppidCheck = setInterval(() => {
+    try {
+      process.kill(process.ppid, 0);
+    } catch {
+      clearInterval(ppidCheck);
+      if (db) {
+        try { db.close(); } catch {}
+      }
+      process.exit(0);
+    }
+  }, 500);
+  ppidCheck.unref();
 }
 
 process.on('message', handleRequest);

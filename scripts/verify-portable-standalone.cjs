@@ -133,7 +133,7 @@ try {
       cwd: externalDest,
       env: strippedEnv,
       encoding: 'utf8',
-      timeout: 30000,
+      timeout: 60000,
     }
   );
   smokeStdout = result.stdout || '';
@@ -178,20 +178,34 @@ if (effectiveDb) {
 
 // 7. Cleanup external test directory
 console.log('[P11-Verify] 5. Cleaning up external test directory...');
+function sleepMs(ms) {
+  try {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+  } catch {
+    cp.spawnSync('powershell.exe', ['-NoProfile', '-Command', `Start-Sleep -Milliseconds ${ms}`]);
+  }
+}
+
+// Allow Windows kernel and defender 2 seconds to release executable memory mappings
+sleepMs(2000);
+
 let cleaned = false;
-for (let attempt = 1; attempt <= 10; attempt++) {
+for (let attempt = 1; attempt <= 15; attempt++) {
   try {
     if (!fs.existsSync(externalDest)) {
       cleaned = true;
       break;
     }
-    fs.rmSync(externalDest, { recursive: true, force: true });
+    fs.rmSync(externalDest, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 });
     cleaned = !fs.existsSync(externalDest);
     if (cleaned) break;
   } catch (err) {
-    // Wait 1 second for Windows to release file handles
-    const waitTill = Date.now() + 1000;
-    while (Date.now() < waitTill) {}
+    try {
+      cp.spawnSync('powershell.exe', ['-NoProfile', '-Command', `Remove-Item -Path "${externalDest}" -Recurse -Force -ErrorAction SilentlyContinue`]);
+      cleaned = !fs.existsSync(externalDest);
+      if (cleaned) break;
+    } catch {}
+    sleepMs(1000);
   }
 }
 evidence.checks.externalDirCleanedUp = cleaned;

@@ -33,6 +33,11 @@ const { TaskGraphService } = require('./task-graph-service.cjs');
 
 // Custom test userData override for isolated multi-process E2E testing
 const customUserDataArg = process.argv.find((a) => a.startsWith('--test-user-data=') || a.startsWith('--user-data-dir='));
+if (process.argv.includes('--headless') || process.argv.includes('--smoke')) {
+  try {
+    app.disableHardwareAcceleration();
+  } catch {}
+}
 if (customUserDataArg) {
   const customUserData = customUserDataArg.split('=')[1];
   app.setPath('userData', path.resolve(customUserData));
@@ -140,6 +145,49 @@ storage.on('worker-exit', ({ code, signal }) => {
     mainWindow.webContents.send('union-bot:app-status-changed', { status: appStatus, error: storageInitError });
   }
 });
+
+let isExiting = false;
+function performGracefulExit(exitCode = 0) {
+  if (isExiting) return;
+  isExiting = true;
+  console.log(`[UnionBot] Initiating clean graceful exit with code ${exitCode}...`);
+  try {
+    if (browserService) {
+      browserService.destroy();
+      browserService = null;
+    }
+  } catch {}
+  try {
+    if (codexService) {
+      codexService.close();
+    }
+  } catch {}
+  try {
+    if (antigravityService) {
+      antigravityService.close();
+    }
+  } catch {}
+  try {
+    if (storage) {
+      storage.close();
+    }
+  } catch {}
+
+  try {
+    app.releaseSingleInstanceLock();
+  } catch {}
+
+  app.exitCode = exitCode;
+  process.exitCode = exitCode;
+  try {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.close();
+    }
+  } catch {}
+  try {
+    app.quit();
+  } catch {}
+}
 
 
 /**
@@ -779,14 +827,16 @@ function createWindow() {
     // Phase P9 Production Transport Registration: Synchronously registered across all runtime modes (P9-R02-001)
     registerProduction6AITransports(taskGraphService, browserService, codexService, antigravityService);
 
-    browserService.initialize().then(() => {
-      // Dedicated E2E test harness override: ONLY when explicitly running in test harness mode
-      if (process.env.UNION_BOT_E2E_HARNESS === '1' && process.env.NODE_ENV === 'test') {
-        registerTest6AIProviderTransports(taskGraphService, browserService);
-      }
-    }).catch((err) => {
-      console.warn('[UnionBot] Warning initializing browser service:', err.message);
-    });
+    if (!isSmoke) {
+      browserService.initialize().then(() => {
+        // Dedicated E2E test harness override: ONLY when explicitly running in test harness mode
+        if (process.env.UNION_BOT_E2E_HARNESS === '1' && process.env.NODE_ENV === 'test') {
+          registerTest6AIProviderTransports(taskGraphService, browserService);
+        }
+      }).catch((err) => {
+        console.warn('[UnionBot] Warning initializing browser service:', err.message);
+      });
+    }
   } catch (err) {
     console.warn('[UnionBot] Failed to create BrowserService:', err.message);
   }
@@ -4988,8 +5038,8 @@ function createWindow() {
 
         if (!allPassed) {
           console.error('[P10-UAT] One or more P10 UAT checks failed.');
-          app.quit();
-          process.exit(1);
+          performGracefulExit(1);
+          return;
         }
 
         console.log('[P10-UAT] ALL_P10_UAT_CHECKS_PASSED');
@@ -5000,14 +5050,10 @@ function createWindow() {
           }
         } catch {}
 
-        setTimeout(() => {
-          app.quit();
-          process.exit(0);
-        }, 500);
+        performGracefulExit(0);
       } catch (err) {
         console.error('[P10-UAT] Fatal error:', err);
-        app.quit();
-        process.exit(1);
+        performGracefulExit(1);
       }
     });
     return;
@@ -5135,17 +5181,15 @@ function createWindow() {
 
         if (!allChecksPassed) {
           console.error('[SmokeTest] One or more assertions FAILED! Exiting with code 1.');
-          app.quit();
-          process.exit(1);
+          setTimeout(() => performGracefulExit(1), 50);
+          return;
         }
 
         console.log('[SmokeTest] Smoke test PASS! All assertions verified cleanly.');
-        app.quit();
-        process.exit(0);
+        setTimeout(() => performGracefulExit(0), 50);
       } catch (err) {
         console.error('[SmokeTest] Smoke test FAILED:', err);
-        app.quit();
-        process.exit(1);
+        setTimeout(() => performGracefulExit(1), 50);
       }
     });
   }
@@ -7597,7 +7641,5 @@ app.on('window-all-closed', () => {
 });
 
 app.on('will-quit', () => {
-  try {
-    storage.close();
-  } catch {}
+  performGracefulExit(0);
 });

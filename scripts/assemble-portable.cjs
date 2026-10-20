@@ -33,6 +33,9 @@ function copyDirSync(src, dest, filterFn) {
     if (entry.isDirectory()) {
       copyDirSync(srcPath, destPath, filterFn);
     } else {
+      if (fs.existsSync(destPath) && fs.statSync(srcPath).size === fs.statSync(destPath).size) {
+        continue;
+      }
       fs.copyFileSync(srcPath, destPath);
     }
   }
@@ -95,7 +98,11 @@ fs.writeFileSync(
 );
 
 // 9. Create union-bot.exe from electron.exe
-fs.copyFileSync(path.join(outDir, 'electron.exe'), path.join(outDir, 'union-bot.exe'));
+const targetExe = path.join(outDir, 'union-bot.exe');
+const sourceExe = path.join(outDir, 'electron.exe');
+if (!fs.existsSync(targetExe) || fs.statSync(sourceExe).size !== fs.statSync(targetExe).size) {
+  fs.copyFileSync(sourceExe, targetExe);
+}
 
 // 10. Write union-bot.bat
 const batContent = `@echo off
@@ -114,15 +121,18 @@ for %%A in (%*) do (
     echo "%%A" | findstr /i /c:"--user-data-dir=" >nul && set "USER_DATA_OVERRIDE=1"
     echo "%%A" | findstr /i /c:"--test-user-data=" >nul && set "USER_DATA_OVERRIDE=1"
 )
+(call )
 
 if "%1"=="" (
     start "" "%PORTABLE_ROOT%union-bot.exe" --user-data-dir="%PORTABLE_ROOT%data"
+    exit /b 0
 ) else (
     if defined USER_DATA_OVERRIDE (
         "%PORTABLE_ROOT%union-bot.exe" %*
     ) else (
         "%PORTABLE_ROOT%union-bot.exe" --user-data-dir="%PORTABLE_ROOT%data" %*
     )
+    exit /b %ERRORLEVEL%
 )
 `;
 fs.writeFileSync(path.join(outDir, 'union-bot.bat'), batContent, 'utf8');

@@ -168,6 +168,7 @@ class StorageServiceClient extends EventEmitter {
         });
 
         this.worker.on('exit', (code, signal) => {
+          if (this.isClosing) return;
           if (code !== 0 && code !== null) {
             console.warn(`[StorageWorker] Exited with code ${code} / signal ${signal}`);
           }
@@ -1175,6 +1176,7 @@ class StorageServiceClient extends EventEmitter {
   }
 
   async closeAsync() {
+    this.isClosing = true;
     if (this.nativeDb) {
       try {
         this.nativeDb.close();
@@ -1194,6 +1196,7 @@ class StorageServiceClient extends EventEmitter {
   }
 
   close() {
+    this.isClosing = true;
     if (this.nativeDb) {
       try {
         this.nativeDb.close();
@@ -1202,7 +1205,11 @@ class StorageServiceClient extends EventEmitter {
     }
     if (this.worker) {
       try {
-        this.worker.kill();
+        if (this.worker.connected) {
+          try { this.worker.send({ method: 'close' }); } catch {}
+          try { this.worker.disconnect(); } catch {}
+        }
+        this.worker.kill('SIGTERM');
       } catch {}
       this.worker = null;
     }
