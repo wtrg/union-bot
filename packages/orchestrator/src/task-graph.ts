@@ -161,6 +161,10 @@ export class TaskGraphEngine extends EventEmitter {
     this.providerHandlers.set(providerIdOrNodeId, handler);
   }
 
+  public hasProviderHandler(providerIdOrNodeId: string): boolean {
+    return this.providerHandlers.has(providerIdOrNodeId);
+  }
+
   // =========================================================================
   // 1. Filesystem & Security Boundary Defense (Inherited from P5-P7)
   // =========================================================================

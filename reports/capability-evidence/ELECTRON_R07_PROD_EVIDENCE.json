@@ -1,7 +1,7 @@
 {
   "suite": "UNION_BOT_ELECTRON_R07_PROD_EVIDENCE",
-  "timestamp": "2026-10-20T08:12:38.017Z",
-  "userDataDir": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\ub-test-r07-prod-1792483957376",
+  "timestamp": "2026-10-20T08:40:57.325Z",
+  "userDataDir": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\ub-test-r07-prod-1792485656531",
   "vectors": {
     "R07-A03": {
       "productionTestKillDisabled": true,

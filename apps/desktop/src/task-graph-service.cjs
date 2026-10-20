@@ -114,6 +114,10 @@ class TaskGraphEngineCJS extends EventEmitter {
     this.providerHandlers.set(providerIdOrNodeId, handler);
   }
 
+  hasProviderHandler(providerIdOrNodeId) {
+    return this.providerHandlers.has(providerIdOrNodeId);
+  }
+
   static getCanonicalPath(targetPath) {
     if (!targetPath || typeof targetPath !== 'string' || !targetPath.trim()) return null;
     try {
@@ -1216,6 +1220,10 @@ class TaskGraphService extends EventEmitter {
       workspaceRoot: params.workspaceRoot || this.workspaceRoot,
       sessionRegistry: params.sessionRegistry || this.sessionRegistry,
     });
+  }
+
+  hasProviderHandler(providerIdOrNodeId) {
+    return this.engine.hasProviderHandler(providerIdOrNodeId);
   }
 }
 

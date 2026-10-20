@@ -748,7 +748,11 @@ class BrowserService {
       try {
         title = view.webContents.getTitle() || title;
         url = view.webContents.getURL() || url;
-        bodySnippet = await view.webContents.executeJavaScript('document.body ? document.body.innerText.slice(0, 500) : ""').catch(() => '');
+        if (!view.webContents.isLoading()) {
+          const jsPromise = view.webContents.executeJavaScript('document.body ? document.body.innerText.slice(0, 500) : ""');
+          const timeoutPromise = new Promise((resolve) => setTimeout(() => resolve(''), 500));
+          bodySnippet = await Promise.race([jsPromise, timeoutPromise]).catch(() => '');
+        }
       } catch {}
     }
 

@@ -65,7 +65,7 @@ function runElectronProcess(args, { timeoutMs = 65000, env = {} } = {}) {
     child.stdout.on('data', (d) => {
       const str = d.toString();
       stdout += str;
-      if (str.includes('[P9-E2E] ALL_P9_E2E_CHECKS_PASSED')) {
+      if (str.includes('[P9-E2E] ALL_P9_E2E_CHECKS_PASSED') || str.includes('[P9-PROD-E2E] ALL_P9_PROD_CHECKS_PASSED')) {
         setTimeout(() => {
           clearTimeout(timer);
           try {
@@ -224,6 +224,52 @@ describe('Union Bot Phase P9 Gate: Windows Real Electron E2E Suite', () => {
     // Clean up test directory
     try {
       fs.rmSync(testUserDataDir, { recursive: true, force: true });
+    } catch {}
+  });
+
+  it('P9-PROD-E2E: Production Mode Real 6-AI Transport Registration & Native Service Routing (PASS)', async () => {
+    const prodUserDataDir = path.join(os.tmpdir(), `union_bot_p9_prod_${Date.now()}`);
+    fs.mkdirSync(prodUserDataDir, { recursive: true });
+
+    const { code, stdout, stderr } = await runElectronProcess([
+      '--headless',
+      '--p9-prod-e2e',
+      `--test-user-data=${prodUserDataDir}`,
+    ], {
+      env: {
+        NODE_ENV: 'production',
+        // Purposely NO UNION_BOT_E2E_HARNESS - pure production runtime
+      },
+      timeoutMs: 65000,
+    });
+
+    assert.equal(code, 0, `Electron process should exit with code 0. Stderr: ${stderr}\nStdout: ${stdout}`);
+    assert.match(stdout, /\[P9-PROD-E2E\] ALL_P9_PROD_CHECKS_PASSED/);
+
+    const evidencePath = path.resolve(repoRoot, 'reports/capability-evidence/ELECTRON_P9_PROD_EVIDENCE.json');
+    assert.ok(fs.existsSync(evidencePath), 'P9 Production evidence JSON must be written');
+    const evidence = JSON.parse(fs.readFileSync(evidencePath, 'utf8'));
+    assert.equal(evidence.allPassed, true);
+
+    // Assert individual production checks
+    assert.equal(evidence.results.productionTransportsRegistered, true, 'P9-R02-001: All 6 providers must have production transports registered');
+    assert.equal(evidence.results.missingHandlerFailsClosed, true, 'P9-R02-001: Unknown provider must fail closed');
+    assert.equal(evidence.results.webProviderRoutesThroughBrowserSession, true, 'P9-R02-001: Web provider routes through live BrowserService session');
+    assert.equal(evidence.results.antigravityRoutesThroughNativeService, true, 'P9-R02-001: Antigravity routes through native antigravityService');
+    assert.equal(evidence.results.codexRoutesThroughNativeService, true, 'P9-R02-001: Codex routes through native codexService');
+    assert.equal(evidence.results.noE2EMocksInProduction, true, 'P9-R02-001: Production mode must not contain E2E mocks');
+
+    // Verify stdout checks
+    assert.match(stdout, /\[P9-PROD-E2E\] Check productionTransportsRegistered: true/);
+    assert.match(stdout, /\[P9-PROD-E2E\] Check missingHandlerFailsClosed: true/);
+    assert.match(stdout, /\[P9-PROD-E2E\] Check webProviderRoutesThroughBrowserSession: true/);
+    assert.match(stdout, /\[P9-PROD-E2E\] Check antigravityRoutesThroughNativeService: true/);
+    assert.match(stdout, /\[P9-PROD-E2E\] Check codexRoutesThroughNativeService: true/);
+    assert.match(stdout, /\[P9-PROD-E2E\] Check noE2EMocksInProduction: true/);
+
+    // Clean up test directory
+    try {
+      fs.rmSync(prodUserDataDir, { recursive: true, force: true });
     } catch {}
   });
 });

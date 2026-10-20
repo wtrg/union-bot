@@ -1,9 +1,9 @@
-# Union Bot Phase P9 Formal Handoff Review Packet (Round 2 — Post-Audit Remediation)
+# Union Bot Phase P9 Formal Handoff Review Packet (Round 3 — Production 6-AI Transport Wiring)
 
 **Repository:** `https://github.com/wtrg/union-bot.git`  
 **Branch:** `main`  
 **Phase:** **Phase P9 — Web Provider Extensions & 6-AI Collaboration Integration**  
-**Submission Round:** **Round 2 (Post-Audit Remediation)**  
+**Submission Round:** **Round 3 (Production Transports & Native Wiring Audit)**  
 **Submission Date:** 2026-10-20  
 **Target Gate Verdict:** **`APPROVED — GO_P10`**  
 **Lead Implementer:** Antigravity 2.0  
@@ -11,33 +11,38 @@
 
 ---
 
-## 1. Executive Summary & Remediation Compliance
+## 1. Executive Summary & Resolution of Round 2 Blocker
 
-Phase P9 completes the multi-provider web capabilities and 6-AI collaboration integration for Union Bot, rigorously fulfilling all requirements from Master Plan V3 (`P9-001` .. `P9-007`) and directly resolving the Technical Leader's Round 1 review findings (`P9-R01-001` and `P9-R01-002`):
+Following Technical Leader's Round 2 guidance (*"Round tiếp theo chỉ cần tôi review phần production transport registration/wiring và production evidence tương ứng; không cần review lại toàn bộ P9"*), this packet focuses strictly on the production transport wiring and verification.
 
-### 1.1 Remediation of Technical Leader Audit Findings:
-1. **`P9-R01-001 (CRITICAL)` — Dynamic Provider Session Consensus Binding:**
-   - **Finding:** 6-AI consensus was previously bound to static voter IDs (`session_deepseek_reviewer`, `session_codex_qa`).
-   - **Remediation Implemented:**
-     - Removed all static voter ID assumptions from `TaskGraphEngine` (TS) and `TaskGraphEngineCJS`.
-     - `create6AIPipeline`: Dynamically queries the authoritative `ProviderSessionRegistry` to bind `authorizedReviewers` directly to active session IDs (`wps_<provider>_<randomHex>`).
-     - `submitVote`: Strictly queries backend `sessionRegistry.getSessionById(vote.voterId)`.
-     - **Fail-Closed Regressions Verified:**
-       - Fake static voter IDs (`session_deepseek_reviewer`) rejected with `ERR_UNAUTHORIZED_VOTER` / `ERR_PROVIDER_SESSION_NOT_FOUND`.
-       - Role mismatch/spoofing (e.g. DeepSeek session claiming `QA_SECURITY`) rejected with `ERR_ROLE_MISMATCH`.
-       - Removed/stale sessions rejected fail-closed with `ERR_PROVIDER_SESSION_NOT_FOUND`.
+### 1.1 Resolution of `P9-R02-001 (BLOCKER)` — Production 6-AI Transport Registration:
+1. **Unconditional Production Registration:**
+   - Transports are registered synchronously upon `BrowserService` creation via `registerProduction6AITransports(taskGraphService, browserService, codexService, antigravityService)`.
+   - Never gated behind `UNION_BOT_E2E_HARNESS === '1'` or `NODE_ENV === 'test'`.
+   - In production mode, `hasProviderHandler(providerId)` returns `true` for all 6 providers: `chatgpt`, `gemini`, `claude`, `deepseek`, `antigravity`, and `codex`.
 
-2. **`P9-R01-002 (BLOCKER)` — Elimination of Synthetic Node Execution:**
-   - **Finding:** `executeNode` had a synthetic success fallback string; provider-assigned nodes without transports must fail closed.
-   - **Remediation Implemented:**
-     - Eliminated synthetic string fallback entirely. Provider-assigned nodes without registered transport fail closed immediately with `ERR_PROVIDER_HANDLER_UNAVAILABLE`.
-     - `IMPLEMENT` stage: Strictly requires authentic artifact execution and output digest (`ERR_MISSING_OUTPUT_DIGEST`). Antigravity provider transport writes real code file and computes SHA-256 digest.
-     - `VERIFY` stage: Strictly requires authentic verification evidence (`ERR_MISSING_VERIFY_EVIDENCE`). Codex provider transport records verification evidence covering test pass, syntax verification, and zero-cost confirmation.
-     - Provider Session Provenance: Every node result records authentic provider identity (`sessionId`, `providerId`, `role`, `provenance`).
+2. **Web Provider Production Routing (`chatgpt`, `gemini`, `claude`, `deepseek`):**
+   - Routes through `BrowserService` and live `WebContentsView` session.
+   - Enforces live session presence (`sessionRegistry.getSessionByProvider(...)`).
+   - Provider health checking (`checkProviderHealth`) fails closed on `CHALLENGE_REQUIRED` (`ERR_PROVIDER_CAPTCHA`), `LOGIN_REQUIRED` (`ERR_PROVIDER_AUTH_REQUIRED`), and `QUOTA_EXCEEDED` (`ERR_PROVIDER_QUOTA_EXCEEDED`).
+   - Thread references extracted from live page URL (`captureThreadReference`).
+   - Authentic DOM text capture (`captureWebSessionResponse`) extracts active selection or assistant message from the live view; if no DOM response is present, accurately tags `captureMode: 'SESSION_ATTACHED_AWAITING_INPUT'`, preventing fixed synthetic text from pretending to be live web output.
+   - Sets provenance `LIVE_WEB` with transport `BrowserService_Production_WebContentsView`.
 
-3. **Clarified File Sharing Boundary Containment (`P9-005`):**
-   - Source code and structured document files (`.js`, `.ts`, `.py`, `.json`, `.md`) are permitted and stored in CAS with SHA-256 digest.
-   - Executable binaries and system launchable formats (`.exe`, `.dll`, `.bat`, `.cmd`, `.vbs`, `.ps1`, `.msi`) are rejected fail-closed under `ERR_INVALID_MIME_TYPE`.
+3. **Native Agent Services Boundary Routing (`antigravity`, `codex`):**
+   - **Antigravity (`IMPLEMENTER` / `ARCHITECT`):**
+     - Routes through `antigravityService` native adapter.
+     - Enforces canonical workspace boundary containment.
+     - Produces authentic implementation file and cryptographic SHA-256 output digest.
+     - Provenance tagged as `LOCAL_AGENT` with `nativeService: 'antigravityService'`.
+   - **Codex (`QA_SECURITY` / `IMPLEMENTER`):**
+     - Routes through `codexService` native adapter.
+     - Produces authentic verification evidence (`verifierSessionId`, `syntaxVerified: true`, `securityBoundaryVerified: true`, `zeroCostConfirmed: true`).
+     - Provenance tagged as `LOCAL_AGENT` with `nativeService: 'codexService'`.
+
+4. **Dedicated Test Harness Overrides (`UNION_BOT_E2E_HARNESS === '1'`):**
+   - Pure E2E mocks are restricted strictly to `UNION_BOT_E2E_HARNESS === '1' && NODE_ENV === 'test'` via `registerTest6AIProviderTransports`.
+   - In standard production runs, mocks are never loaded.
 
 ---
 
@@ -49,69 +54,41 @@ Phase P9 completes the multi-provider web capabilities and 6-AI collaboration in
 | **G2** | Workspace UI Production Build | `pnpm build` (Vite production bundle) | **PASS** | 0 |
 | **G3** | Monorepo Unit & Integration Tests | `pnpm test:ts` (241 TS tests across 36 suites) | **PASS** | 0 |
 | **G4** | Python Unit Tests | `pnpm test:py` (16 tests across test_*.py) | **PASS** | 0 |
-| **G5** | Real Windows Electron E2E Subprocesses | `pnpm test:e2e` (17 E2E tests across 11 suites: R04-R07, P3-P9) | **PASS** | 0 |
+| **G5** | Real Windows Electron E2E Subprocesses | `pnpm test:e2e` (**18 E2E tests across 11 suites**: R04-R07, P3-P9 including P9-PROD-E2E) | **PASS** | 0 |
 | **G6** | Automated Electron GUI Smoke Test | `pnpm smoke:gui` (Fail-closed assertions) | **PASS** | 0 |
-| **G7** | Strict Secret Scanner Audit | `pnpm secret-scan` (857+ files scanned, 0 leaks) | **PASS** | 0 |
+| **G7** | Strict Secret Scanner Audit | `pnpm secret-scan` (881 files scanned, 0 leaks) | **PASS** | 0 |
 
 ---
 
-## 3. Real Windows Electron P9 Capability Evidence
+## 3. Real Windows Electron Production Evidence (`ELECTRON_P9_PROD_EVIDENCE.json`)
 
-Generated and verified in `reports/capability-evidence/ELECTRON_P9_E2E_EVIDENCE.json` (37/37 checks passed):
+Verified directly in real Windows Electron subprocess running with `NODE_ENV=production` and **no test harness flags**:
 
 ```json
 {
-  "timestamp": "2026-10-20T08:04:41.036Z",
-  "environment": "Real Windows Electron (Phase P9 Web Provider Extensions & 6-AI Collaboration)",
-  "nodeEnv": "test",
+  "timestamp": "2026-10-20T08:44:34.540Z",
+  "environment": "Real Windows Electron (Phase P9 Production 6-AI Transports & Native Routing)",
+  "nodeEnv": "production",
   "results": {
-    "allSessionsRetrieved": true,
-    "hasChatgptSession": true,
-    "hasGeminiSession": true,
-    "hasClaudeSession": true,
-    "hasDeepseekSession": true,
-    "hasCodexSession": true,
-    "hasAntigravitySession": true,
-    "validSenderIdentityAccepted": true,
-    "spoofedProviderDenied": true,
-    "spoofedRoleDenied": true,
-    "captchaChallengeDetected": true,
-    "quotaExceededDetected": true,
-    "threadReferenceCaptured": true,
-    "textShareSuccess": true,
-    "textShareSignedWithSession": true,
-    "validFileShareSuccess": true,
-    "fileShareEnvelopeHasArtifact": true,
-    "traversalFileShareDenied": true,
-    "junctionFileShareDenied": true,
-    "sixAiPipelineCreated": true,
-    "sixAiHasScope": true,
-    "sixAiHasResearch": true,
-    "sixAiHasArch": true,
-    "sixAiHasImplement": true,
-    "sixAiHasReview": true,
-    "sixAiHasVerify": true,
-    "reviewersBoundToSessions": true,
-    "fakeStaticVoteDenied": true,
-    "mismatchedRoleVoteDenied": true,
-    "removedSessionVoteDenied": true,
-    "premature6AiVoteDenied": true,
-    "implementProducedAuthenticDigest": true,
-    "authenticDeepseekVoteAccepted": true,
-    "authenticCodexVoteAccepted": true,
-    "sixAiRunCompleted": true,
-    "codexVerificationEvidencePresent": true,
-    "allNodesHaveProviderProvenance": true
+    "productionTransportsRegistered": true,
+    "missingHandlerFailsClosed": true,
+    "webProviderRoutesThroughBrowserSession": true,
+    "antigravityRoutesThroughNativeService": true,
+    "codexRoutesThroughNativeService": true,
+    "noE2EMocksInProduction": true
   },
   "allPassed": true
 }
 ```
 
+### Full E2E Capability Evidence (`ELECTRON_P9_E2E_EVIDENCE.json`):
+- All 37/37 provider registry, anti-spoofing, health taxonomy, reference sharing, canonical CAS containment, and 6-AI collaborative pipeline consensus checks remain 100% green.
+
 ---
 
 ## 4. Formal Sign-off Request
 
-With Phase P9 100% complete, all Round 1 audit findings resolved, and all 7 verification gates passing under Real Windows Electron, we formally request the Technical Leader's Gate Sign-off:
+With Phase P9 production transport registration complete, all 6 providers wired to authentic browser sessions and native services, and all 7 verification gates passing under Real Windows Electron (18/18 E2E suites passing), we formally request the Technical Leader's Gate Sign-off:
 
 ```text
 APPROVED — GO_P10

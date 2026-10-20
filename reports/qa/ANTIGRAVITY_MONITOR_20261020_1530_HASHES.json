@@ -1,0 +1,30 @@
+[
+  {
+    "Path": "D:\\WORK-TEAM\\apps\\desktop\\src\\main.js",
+    "Hash": "AF5716A59DDA7E6CD44026A2044EFFA13ABE6B6D00E9F55180F9CCA3534578AA"
+  },
+  {
+    "Path": "D:\\WORK-TEAM\\apps\\desktop\\src\\browser-service.cjs",
+    "Hash": "7D933343DBFAC8267CE4F4F148F5280AC8EF2099A13D9B4C7F9D53D60C8B74FC"
+  },
+  {
+    "Path": "D:\\WORK-TEAM\\apps\\desktop\\src\\preload.cjs",
+    "Hash": "8E1A318ABA16291132DE4E6148D986DDFCA33A3A352E3DF6C19A9207392EC69B"
+  },
+  {
+    "Path": "D:\\WORK-TEAM\\apps\\desktop\\src\\task-graph-service.cjs",
+    "Hash": "7AEF44C138EFA0F94D91A6FB3E230C681110754E429CA0D57C6A5B2FD17E76CC"
+  },
+  {
+    "Path": "D:\\WORK-TEAM\\packages\\orchestrator\\src\\task-graph.ts",
+    "Hash": "E4BD7022EB068E7A7A56A7CF8011AFF7E4E09B2DFEEEF239E84FA0BFE122ADC1"
+  },
+  {
+    "Path": "D:\\WORK-TEAM\\packages\\protocol\\src\\schemas.ts",
+    "Hash": "D899FA89DDA818A575EFFECBB16D1D3AC7655ED5722198CDE704B943B951D34E"
+  },
+  {
+    "Path": "D:\\WORK-TEAM\\tests\\e2e\\desktop-p9.test.js",
+    "Hash": "00E484620759D3FAD334BE720820EB915AF3E6A72C6E2DC4AF2FE2F2672ACBE2"
+  }
+]

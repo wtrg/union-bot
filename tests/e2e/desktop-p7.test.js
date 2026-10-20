@@ -138,7 +138,7 @@ describe('Union Bot Phase P7 Gate: Windows Real Electron E2E Suite', () => {
     // Assert individual P7 capabilities
     assert.equal(evidence.results.antigravityDiscoverSuccess, true, 'P7-001: antigravityDiscover IPC must succeed');
     assert.equal(evidence.results.antigravityAvailable, true, 'P7-001: Local Antigravity CLI must be available on Windows');
-    assert.equal(evidence.results.antigravityVersionMatches, true, 'P7-001: Antigravity CLI version must be 1.4.2');
+    assert.equal(evidence.results.antigravityVersionMatches, true, 'P7-001: Antigravity CLI version must match 1.x.x');
     assert.equal(evidence.results.validBoundaryAllowed, true, 'P7-004: In-workspace path must be allowed');
     assert.equal(evidence.results.invalidBoundaryDenied, true, 'P7-004: Directory traversal must be rejected with ERR_PATH_TRAVERSAL');
     assert.equal(evidence.results.junctionEscapeDenied, true, 'P7-R01: Real filesystem Windows junction escape must be rejected with ERR_PATH_TRAVERSAL');
