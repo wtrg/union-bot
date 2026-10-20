@@ -3,6 +3,7 @@
  */
 
 const { URL } = require('url');
+const crypto = require('node:crypto');
 
 const DISALLOWED_SCHEMES = new Set([
   'file:',
@@ -292,6 +293,20 @@ const PROVIDER_REGISTRY = {
     defaultUrl: 'https://duckduckgo.com/',
     approvedOrigin: 'https://duckduckgo.com',
   },
+  codex: {
+    id: 'codex',
+    name: 'Codex Local Agent',
+    partition: 'local:codex',
+    defaultUrl: 'https://github.com/openai/codex',
+    approvedOrigin: 'https://github.com',
+  },
+  antigravity: {
+    id: 'antigravity',
+    name: 'Antigravity Local Agent',
+    partition: 'local:antigravity',
+    defaultUrl: 'https://github.com/google-deepmind',
+    approvedOrigin: 'https://github.com',
+  },
 };
 
 const BLOCKED_API_PATTERNS = [
@@ -508,6 +523,362 @@ class BrowserStateManager {
   }
 }
 
+const CHALLENGE_TITLE_PATTERNS = [
+  'just a moment...',
+  'attention required! | cloudflare',
+  'security check',
+  'cloudflare',
+  'verifying you are human',
+  'bot verification',
+  'captcha',
+  'challenge',
+];
+
+const CHALLENGE_URL_PATTERNS = [
+  'challenges.cloudflare.com',
+  'cf-chl',
+  '/cdn-cgi/challenge-platform',
+  'turnstile',
+  'hcaptcha',
+  'recaptcha',
+];
+
+const QUOTA_PATTERNS = [
+  'too many requests',
+  'rate limit exceeded',
+  'usage limit reached',
+  'you have reached your limit',
+  'you\'ve reached your limit',
+  'reached your message limit',
+  'quota exceeded',
+  'try again in',
+  'wait until',
+];
+
+const OUTAGE_PATTERNS = [
+  '502 bad gateway',
+  '503 service temporarily unavailable',
+  '504 gateway timeout',
+  'internal server error',
+  'down for maintenance',
+  'service is currently unavailable',
+  'experiencing high traffic',
+];
+
+function detectProviderHealth(params) {
+  const { providerId, tabId, url = '', title = '', bodySnippet = '', statusCode } = params;
+  const now = Date.now();
+  const lowerUrl = (url || '').toLowerCase();
+  const lowerTitle = (title || '').toLowerCase();
+  const lowerBody = (bodySnippet || '').toLowerCase();
+
+  // 1. Check HTTP status code
+  if (statusCode === 429) {
+    return {
+      providerId,
+      tabId,
+      status: 'QUOTA_EXCEEDED',
+      errorCode: 'ERR_PROVIDER_QUOTA_EXCEEDED',
+      message: `Provider '${providerId}' returned HTTP 429 Too Many Requests (Rate limit exceeded).`,
+      checkedAt: now,
+    };
+  }
+
+  if (statusCode && statusCode >= 500 && statusCode < 600) {
+    return {
+      providerId,
+      tabId,
+      status: 'SERVICE_UNAVAILABLE',
+      errorCode: 'ERR_PROVIDER_SERVICE_UNAVAILABLE',
+      message: `Provider '${providerId}' returned HTTP ${statusCode} (Service outage or unavailable).`,
+      checkedAt: now,
+    };
+  }
+
+  // 2. Check Cloudflare / Turnstile / Captcha
+  const hasChallengeUrl = CHALLENGE_URL_PATTERNS.some((pat) => lowerUrl.includes(pat));
+  const hasChallengeTitle = CHALLENGE_TITLE_PATTERNS.some((pat) => lowerTitle.includes(pat));
+  const hasChallengeBody = lowerBody.includes('cf-browser-verification') ||
+    lowerBody.includes('cf-challenge-form') ||
+    lowerBody.includes('turnstile') ||
+    lowerBody.includes('verify you are human');
+
+  if (hasChallengeUrl || hasChallengeTitle || hasChallengeBody) {
+    return {
+      providerId,
+      tabId,
+      status: 'CHALLENGE_REQUIRED',
+      errorCode: 'ERR_PROVIDER_CAPTCHA',
+      message: `Cloudflare / Captcha challenge detected for '${providerId}'. Interactive user resolution required in browser.`,
+      checkedAt: now,
+      details: {
+        detectedIn: hasChallengeUrl ? 'url' : hasChallengeTitle ? 'title' : 'body',
+      },
+    };
+  }
+
+  // 3. Check Quota / Rate Limit text
+  const hasQuotaText = QUOTA_PATTERNS.some((pat) => lowerTitle.includes(pat) || lowerBody.includes(pat));
+  if (hasQuotaText) {
+    return {
+      providerId,
+      tabId,
+      status: 'QUOTA_EXCEEDED',
+      errorCode: 'ERR_PROVIDER_QUOTA_EXCEEDED',
+      message: `Rate limit or quota message detected for '${providerId}'. Fail-closed without automatic retry.`,
+      checkedAt: now,
+    };
+  }
+
+  // 4. Check Outage text
+  const hasOutageText = OUTAGE_PATTERNS.some((pat) => lowerTitle.includes(pat) || lowerBody.includes(pat));
+  if (hasOutageText) {
+    return {
+      providerId,
+      tabId,
+      status: 'SERVICE_UNAVAILABLE',
+      errorCode: 'ERR_PROVIDER_SERVICE_UNAVAILABLE',
+      message: `Service outage or error page detected for '${providerId}'.`,
+      checkedAt: now,
+    };
+  }
+
+  // 5. Check Authentication Required
+  const isAuthUrl =
+    lowerUrl.includes('auth.openai.com') ||
+    lowerUrl.includes('accounts.google.com') ||
+    lowerUrl.includes('claude.ai/login') ||
+    lowerUrl.includes('chat.deepseek.com/sign_in') ||
+    lowerUrl.includes('chat.deepseek.com/login') ||
+    lowerUrl.includes('/login') ||
+    lowerUrl.includes('/sign_in');
+
+  const isAuthTitle =
+    lowerTitle.includes('sign in') ||
+    lowerTitle.includes('log in') ||
+    lowerTitle.includes('login') ||
+    lowerTitle.includes('welcome back');
+
+  if (isAuthUrl || isAuthTitle) {
+    return {
+      providerId,
+      tabId,
+      status: 'LOGIN_REQUIRED',
+      errorCode: 'ERR_PROVIDER_AUTH_REQUIRED',
+      message: `Provider '${providerId}' requires user authentication. Please log in via the browser tab.`,
+      checkedAt: now,
+    };
+  }
+
+  return {
+    providerId,
+    tabId,
+    status: 'HEALTHY',
+    message: `Provider '${providerId}' is operational and ready.`,
+    checkedAt: now,
+  };
+}
+
+function extractThreadReference(providerId, url) {
+  if (!url || typeof url !== 'string') {
+    return { providerId, threadId: null, canonicalUrl: null, isReopenable: false };
+  }
+
+  const trimmed = url.trim();
+  try {
+    const parsed = new URL(trimmed);
+    switch (providerId) {
+      case 'chatgpt': {
+        const match = parsed.pathname.match(/\/c\/([a-zA-Z0-9_-]+)/);
+        if (match && match[1]) {
+          return {
+            providerId,
+            threadId: match[1],
+            canonicalUrl: `https://chatgpt.com/c/${match[1]}`,
+            isReopenable: true,
+          };
+        }
+        break;
+      }
+      case 'claude': {
+        const match = parsed.pathname.match(/\/chat\/([a-zA-Z0-9_-]+)/);
+        if (match && match[1]) {
+          return {
+            providerId,
+            threadId: match[1],
+            canonicalUrl: `https://claude.ai/chat/${match[1]}`,
+            isReopenable: true,
+          };
+        }
+        break;
+      }
+      case 'gemini': {
+        const match = parsed.pathname.match(/\/app\/([a-zA-Z0-9_-]+)/);
+        if (match && match[1]) {
+          return {
+            providerId,
+            threadId: match[1],
+            canonicalUrl: `https://gemini.google.com/app/${match[1]}`,
+            isReopenable: true,
+          };
+        }
+        break;
+      }
+      case 'deepseek': {
+        const match = parsed.pathname.match(/\/chat\/([a-zA-Z0-9_-]+)/);
+        if (match && match[1]) {
+          return {
+            providerId,
+            threadId: match[1],
+            canonicalUrl: `https://chat.deepseek.com/chat/${match[1]}`,
+            isReopenable: true,
+          };
+        }
+        break;
+      }
+      default:
+        break;
+    }
+  } catch {}
+
+  return {
+    providerId,
+    threadId: null,
+    canonicalUrl: url,
+    isReopenable: false,
+  };
+}
+
+const DEFAULT_PROVIDER_ROLES = {
+  chatgpt: 'LEADER',
+  gemini: 'RESEARCHER',
+  claude: 'REVIEWER',
+  deepseek: 'REVIEWER',
+  antigravity: 'IMPLEMENTER',
+  codex: 'QA_SECURITY',
+  search: 'USER',
+  custom: 'USER',
+};
+
+class ProviderSessionRegistry {
+  constructor() {
+    this.sessionsByTabId = new Map();
+    this.sessionsById = new Map();
+    this.sessionsByProvider = new Map();
+  }
+
+  createSession(params) {
+    const { providerId, tabId, partition } = params;
+    const now = Date.now();
+    const sessionId = `wps_${providerId}_${crypto.randomBytes(6).toString('hex')}`;
+    const sessionNonce = crypto.randomBytes(16).toString('hex');
+    const role = params.assignedRole || DEFAULT_PROVIDER_ROLES[providerId] || 'USER';
+
+    const session = {
+      sessionId,
+      providerId,
+      assignedRole: role,
+      partition,
+      tabId,
+      sessionNonce,
+      authStatus: params.authStatus || 'UNKNOWN',
+      threadId: params.threadId,
+      threadUrl: params.threadUrl,
+      isReopenable: Boolean(params.isReopenable),
+      createdAt: now,
+      lastActive: now,
+    };
+
+    this.sessionsByTabId.set(tabId, session);
+    this.sessionsById.set(sessionId, session);
+    this.sessionsByProvider.set(providerId, session);
+    return session;
+  }
+
+  getSessionByTab(tabId) {
+    return this.sessionsByTabId.get(tabId) || null;
+  }
+
+  getSessionById(sessionId) {
+    return this.sessionsById.get(sessionId) || null;
+  }
+
+  getSessionByProvider(providerId) {
+    return this.sessionsByProvider.get(providerId) || null;
+  }
+
+  getAllSessions() {
+    return Array.from(this.sessionsById.values());
+  }
+
+  verifySessionNonce(sessionId, sessionNonce) {
+    if (!sessionId || !sessionNonce) return false;
+    const session = this.sessionsById.get(sessionId);
+    if (!session) return false;
+    return session.sessionNonce === sessionNonce;
+  }
+
+  validateSenderIdentity(params) {
+    let session;
+    if (params.tabId) {
+      session = this.sessionsByTabId.get(params.tabId);
+    } else if (params.sessionId) {
+      session = this.sessionsById.get(params.sessionId);
+    }
+
+    if (!session) {
+      return {
+        valid: false,
+        error: 'ERR_PROVIDER_SESSION_NOT_FOUND: No backend provider session bound to this caller.',
+        code: 'ERR_PROVIDER_SESSION_NOT_FOUND',
+      };
+    }
+
+    if (params.claimedProvider && params.claimedProvider !== session.providerId) {
+      return {
+        valid: false,
+        error: `ERR_UNAUTHORIZED_ACTION: Claimed provider '${params.claimedProvider}' does not match session provider '${session.providerId}'.`,
+        code: 'ERR_UNAUTHORIZED_ACTION',
+      };
+    }
+
+    if (params.claimedRole && params.claimedRole !== session.assignedRole) {
+      return {
+        valid: false,
+        error: `ERR_ROLE_MISMATCH: Claimed role '${params.claimedRole}' does not match authoritative backend role '${session.assignedRole}'.`,
+        code: 'ERR_ROLE_MISMATCH',
+      };
+    }
+
+    session.lastActive = Date.now();
+    return { valid: true, session };
+  }
+
+  updateSession(sessionId, updates) {
+    const session = this.sessionsById.get(sessionId);
+    if (!session) return null;
+    Object.assign(session, updates, { lastActive: Date.now() });
+    return session;
+  }
+
+  removeSessionByTab(tabId) {
+    const session = this.sessionsByTabId.get(tabId);
+    if (!session) return false;
+    this.sessionsByTabId.delete(tabId);
+    this.sessionsById.delete(session.sessionId);
+    if (this.sessionsByProvider.get(session.providerId)?.sessionId === session.sessionId) {
+      this.sessionsByProvider.delete(session.providerId);
+    }
+    return true;
+  }
+
+  clear() {
+    this.sessionsByTabId.clear();
+    this.sessionsById.clear();
+    this.sessionsByProvider.clear();
+  }
+}
+
 module.exports = {
   DISALLOWED_SCHEMES,
   ALLOWED_SCHEMES,
@@ -515,6 +886,7 @@ module.exports = {
   PROVIDER_REGISTRY,
   PROVIDER_AUTH_ORIGINS,
   BLOCKED_API_PATTERNS,
+  DEFAULT_PROVIDER_ROLES,
   isPrivateOrLoopbackHost,
   validateUrl,
   resolveAddressBarInput,
@@ -522,6 +894,9 @@ module.exports = {
   isAllowedForProvider,
   isCostGuardBlockedUrl,
   inferAuthStatus,
+  detectProviderHealth,
+  extractThreadReference,
   BrowserStateManager,
+  ProviderSessionRegistry,
 };
 

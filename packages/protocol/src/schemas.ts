@@ -198,12 +198,23 @@ export const StatusMessagePartSchema = z.object({
 });
 export type StatusMessagePart = z.infer<typeof StatusMessagePartSchema>;
 
+export const ReferenceMessagePartSchema = z.object({
+  kind: z.literal('reference'),
+  url: z.string(),
+  providerId: ProviderKindSchema.optional(),
+  threadId: z.string().optional(),
+  pageTitle: z.string().optional(),
+  isReopenable: z.boolean().default(false),
+});
+export type ReferenceMessagePart = z.infer<typeof ReferenceMessagePartSchema>;
+
 export const MessagePartSchema = z.discriminatedUnion('kind', [
   TextMessagePartSchema,
   CodeMessagePartSchema,
   ArtifactMessagePartSchema,
   ActionMessagePartSchema,
   StatusMessagePartSchema,
+  ReferenceMessagePartSchema,
 ]);
 export type MessagePart = z.infer<typeof MessagePartSchema>;
 
@@ -494,8 +505,63 @@ export const UnionBotErrorCodeSchema = z.enum([
   'ERR_REVIEW_TARGET_NOT_READY',
   'ERR_UNAUTHORIZED_ACTION',
   'ERR_NODE_NOT_RUNNABLE',
+  // Phase P9: Web Provider Capabilities & Extensions Error Codes
+  'ERR_PROVIDER_CAPTCHA',
+  'ERR_PROVIDER_AUTH_REQUIRED',
+  'ERR_PROVIDER_QUOTA_EXCEEDED',
+  'ERR_PROVIDER_SERVICE_UNAVAILABLE',
+  'ERR_PROVIDER_AUTOMATION_DISABLED',
+  'ERR_PROVIDER_SESSION_NOT_FOUND',
+  'ERR_INVALID_FILE_SIZE',
+  'ERR_INVALID_MIME_TYPE',
 ]);
 export type UnionBotErrorCode = z.infer<typeof UnionBotErrorCodeSchema>;
+
+// Phase P9: Provider Session & Health Schemas
+export const WebProviderIdSchema = z.enum([
+  'chatgpt',
+  'gemini',
+  'claude',
+  'deepseek',
+]);
+export type WebProviderId = z.infer<typeof WebProviderIdSchema>;
+
+export const ProviderSessionSchema = z.object({
+  sessionId: z.string().min(1),
+  providerId: ProviderKindSchema,
+  assignedRole: RoleSchema,
+  partition: z.string().min(1),
+  tabId: z.string().min(1),
+  authStatus: AuthStatusSchema,
+  sessionNonce: z.string().min(1),
+  threadId: z.string().optional(),
+  threadUrl: z.string().optional(),
+  isReopenable: z.boolean().default(false),
+  createdAt: z.number().int().nonnegative(),
+  lastActive: z.number().int().nonnegative(),
+});
+export type ProviderSession = z.infer<typeof ProviderSessionSchema>;
+
+export const ProviderHealthStatusSchema = z.enum([
+  'HEALTHY',
+  'CHALLENGE_REQUIRED',
+  'LOGIN_REQUIRED',
+  'QUOTA_EXCEEDED',
+  'SERVICE_UNAVAILABLE',
+  'AUTOMATION_DISABLED',
+]);
+export type ProviderHealthStatus = z.infer<typeof ProviderHealthStatusSchema>;
+
+export const ProviderHealthReportSchema = z.object({
+  providerId: ProviderKindSchema,
+  tabId: z.string().min(1),
+  status: ProviderHealthStatusSchema,
+  errorCode: UnionBotErrorCodeSchema.optional(),
+  message: z.string().optional(),
+  details: z.record(z.unknown()).optional(),
+  checkedAt: z.number().int().nonnegative(),
+});
+export type ProviderHealthReport = z.infer<typeof ProviderHealthReportSchema>;
 
 /**
  * Creates a valid Envelope with generated timestamp and ID if not provided.

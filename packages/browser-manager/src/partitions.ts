@@ -64,6 +64,20 @@ export const PROVIDER_REGISTRY: Record<ProviderId, ProviderDefinition> = {
     defaultUrl: 'https://duckduckgo.com/',
     approvedOrigin: 'https://duckduckgo.com',
   },
+  codex: {
+    id: 'codex',
+    name: 'Codex Local Agent',
+    partition: 'local:codex',
+    defaultUrl: 'https://github.com/openai/codex',
+    approvedOrigin: 'https://github.com',
+  },
+  antigravity: {
+    id: 'antigravity',
+    name: 'Antigravity Local Agent',
+    partition: 'local:antigravity',
+    defaultUrl: 'https://github.com/google-deepmind',
+    approvedOrigin: 'https://github.com',
+  },
 };
 
 /**

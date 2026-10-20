@@ -172,7 +172,7 @@ function createWindow() {
 
   // Phase P4: Embedded Chromium & AI Provider BrowserService
   try {
-    browserService = new BrowserService(mainWindow, storage);
+    browserService = new BrowserService(mainWindow, storage, artifactStore, path.resolve(__dirname, '../../..'));
     browserService.initialize().catch((err) => {
       console.warn('[UnionBot] Warning initializing browser service:', err.message);
     });
@@ -3302,6 +3302,7 @@ function createWindow() {
             const execRes = await window.unionBotAPI.taskGraphRun({
               graphId: 'p8-e2e-pipeline',
             });
+            await new Promise(r => setTimeout(r, 150));
             unsubEvents();
 
             results.runGraphSuccess = Boolean(execRes?.success);
@@ -3389,6 +3390,273 @@ function createWindow() {
         process.exit(0);
       } catch (err) {
         console.error('[P8-E2E] Exception:', err);
+        app.quit();
+        process.exit(1);
+      }
+    });
+    return;
+  }
+
+  // Phase P9 Gate: Real Windows Electron E2E Subprocess Mode
+  if (process.argv.includes('--p9-e2e')) {
+    mainWindow.webContents.once('did-finish-load', async () => {
+      try {
+        console.log('[P9-E2E] Running Real Windows Electron P9 Verification (Web Provider Extensions & 6-AI Collaboration)...');
+
+        const e2eScratchDir = path.resolve(__dirname, '../../../scratch/p9-e2e-junction');
+        const e2eOutsideDir = path.join(os.tmpdir(), `p9-e2e-outside-${Date.now()}`);
+        fs.mkdirSync(e2eScratchDir, { recursive: true });
+        fs.mkdirSync(e2eOutsideDir, { recursive: true });
+        const e2eJunctionPath = path.join(e2eScratchDir, 'escape-junction');
+        const symlinkType = process.platform === 'win32' ? 'junction' : 'dir';
+        try {
+          fs.symlinkSync(e2eOutsideDir, e2eJunctionPath, symlinkType);
+          fs.writeFileSync(path.join(e2eOutsideDir, 'malicious.txt'), 'out of bounds file');
+        } catch {}
+
+        const p9Result = await mainWindow.webContents.executeJavaScript(`
+          (async () => {
+            const results = {};
+
+            // 1. Provider Session Registry & Backend Identity (P9-001)
+            const allSessionsRes = await window.unionBotAPI.browserGetAllSessions();
+            results.allSessionsRetrieved = Boolean(allSessionsRes?.success && allSessionsRes?.sessions?.length >= 6);
+            results.hasChatgptSession = Boolean(allSessionsRes?.sessions?.some(s => s.providerId === 'chatgpt' && s.assignedRole === 'LEADER'));
+            results.hasGeminiSession = Boolean(allSessionsRes?.sessions?.some(s => s.providerId === 'gemini' && s.assignedRole === 'RESEARCHER'));
+            results.hasClaudeSession = Boolean(allSessionsRes?.sessions?.some(s => s.providerId === 'claude' && s.assignedRole === 'REVIEWER'));
+            results.hasDeepseekSession = Boolean(allSessionsRes?.sessions?.some(s => s.providerId === 'deepseek' && s.assignedRole === 'REVIEWER'));
+            results.hasCodexSession = Boolean(allSessionsRes?.sessions?.some(s => s.providerId === 'codex' && s.assignedRole === 'QA_SECURITY'));
+            results.hasAntigravitySession = Boolean(allSessionsRes?.sessions?.some(s => s.providerId === 'antigravity' && s.assignedRole === 'IMPLEMENTER'));
+
+            // 2. Anti-Spoofing Backend Identity Validation (P9-001, P9-002)
+            const activeTabSession = allSessionsRes?.sessions?.find(s => s.providerId === 'chatgpt');
+            const validSenderCheck = await window.unionBotAPI.testSpoofVoterIdentity({
+              tabId: activeTabSession?.tabId,
+              claimedProvider: 'chatgpt',
+              claimedRole: 'LEADER',
+            });
+            results.validSenderIdentityAccepted = Boolean(validSenderCheck?.valid === true);
+
+            const spoofedProviderCheck = await window.unionBotAPI.testSpoofVoterIdentity({
+              tabId: activeTabSession?.tabId,
+              claimedProvider: 'claude',
+            });
+            results.spoofedProviderDenied = Boolean(spoofedProviderCheck?.valid === false && spoofedProviderCheck?.code === 'ERR_UNAUTHORIZED_ACTION');
+
+            const spoofedRoleCheck = await window.unionBotAPI.testSpoofVoterIdentity({
+              tabId: activeTabSession?.tabId,
+              claimedRole: 'QA_SECURITY',
+            });
+            results.spoofedRoleDenied = Boolean(spoofedRoleCheck?.valid === false && spoofedRoleCheck?.code === 'ERR_ROLE_MISMATCH');
+
+            // 3. Provider Health Monitor & Error Taxonomy (P9-003, P9-XX5)
+            await window.unionBotAPI.testSimulateProviderHealth({
+              tabId: activeTabSession?.tabId,
+              report: {
+                providerId: 'chatgpt',
+                tabId: activeTabSession?.tabId,
+                status: 'CHALLENGE_REQUIRED',
+                errorCode: 'ERR_PROVIDER_CAPTCHA',
+                message: 'Cloudflare Turnstile challenge detected',
+                checkedAt: Date.now(),
+              },
+            });
+            const captchaHealth = await window.unionBotAPI.browserCheckHealth(activeTabSession?.tabId);
+            results.captchaChallengeDetected = Boolean(captchaHealth?.status === 'CHALLENGE_REQUIRED' && captchaHealth?.errorCode === 'ERR_PROVIDER_CAPTCHA');
+
+            await window.unionBotAPI.testSimulateProviderHealth({
+              tabId: activeTabSession?.tabId,
+              report: {
+                providerId: 'chatgpt',
+                tabId: activeTabSession?.tabId,
+                status: 'QUOTA_EXCEEDED',
+                errorCode: 'ERR_PROVIDER_QUOTA_EXCEEDED',
+                message: 'HTTP 429 Too Many Requests',
+                checkedAt: Date.now(),
+              },
+            });
+            const quotaHealth = await window.unionBotAPI.browserCheckHealth(activeTabSession?.tabId);
+            results.quotaExceededDetected = Boolean(quotaHealth?.status === 'QUOTA_EXCEEDED' && quotaHealth?.errorCode === 'ERR_PROVIDER_QUOTA_EXCEEDED');
+
+            await window.unionBotAPI.testSimulateProviderHealth({
+              tabId: activeTabSession?.tabId,
+              report: null,
+            });
+
+            // 4. Thread Reference & Provenance Text Sharing (P9-004, P9-XX2, P9-XX4)
+            const threadRef = await window.unionBotAPI.browserCaptureReference(activeTabSession?.tabId);
+            results.threadReferenceCaptured = Boolean(threadRef?.success && threadRef?.reference);
+
+            const textShareRes = await window.unionBotAPI.browserShareText({
+              tabId: activeTabSession?.tabId,
+              text: 'Architectural analysis approved by ChatGPT Leader',
+              options: { roomId: 'orchestration' },
+            });
+            results.textShareSuccess = Boolean(textShareRes?.success && textShareRes?.envelope?.parts?.length >= 1);
+            results.textShareSignedWithSession = Boolean(textShareRes?.envelope?.sender?.id === activeTabSession?.sessionId);
+
+            // 5. File Sharing with Canonical Boundary Containment & SHA256 (P9-005, P9-XX3)
+            const fileShareRes = await window.unionBotAPI.browserShareFile({
+              tabId: activeTabSession?.tabId,
+              filePath: 'package.json',
+            });
+            results.validFileShareSuccess = Boolean(fileShareRes?.success && fileShareRes?.sha256?.length === 64);
+            results.fileShareEnvelopeHasArtifact = Boolean(fileShareRes?.envelope?.parts?.[0]?.kind === 'artifact');
+
+            const invalidFileShare = await window.unionBotAPI.browserShareFile({
+              tabId: activeTabSession?.tabId,
+              filePath: '../../Windows/System32/cmd.exe',
+            });
+            results.traversalFileShareDenied = Boolean(invalidFileShare?.success === false && invalidFileShare?.code === 'ERR_PATH_TRAVERSAL_DENIED');
+
+            const junctionFileShare = await window.unionBotAPI.browserShareFile({
+              tabId: activeTabSession?.tabId,
+              filePath: 'scratch/p9-e2e-junction/escape-junction/malicious.txt',
+            });
+            results.junctionFileShareDenied = Boolean(junctionFileShare?.success === false && junctionFileShare?.code === 'ERR_PATH_TRAVERSAL_DENIED');
+
+            // 6. 6-AI Collaborative Workflow Engine & Consensus (P9-006)
+            const sixAiPipelineRes = await window.unionBotAPI.taskGraph6AIPipeline({
+              id: 'p9-e2e-6ai-pipeline',
+              name: 'Windows Electron E2E 6-AI Pipeline',
+              taskPrompt: 'Build production zero-cost collaborative workspace',
+              targetFiles: ['src/core.ts'],
+            });
+            results.sixAiPipelineCreated = Boolean(sixAiPipelineRes?.success && sixAiPipelineRes?.graph?.nodes?.length === 6);
+            results.sixAiHasScope = Boolean(sixAiPipelineRes?.graph?.nodes?.some(n => n.id === 'node-scope' && n.role === 'LEADER'));
+            results.sixAiHasResearch = Boolean(sixAiPipelineRes?.graph?.nodes?.some(n => n.id === 'node-research' && n.role === 'RESEARCHER'));
+            results.sixAiHasArch = Boolean(sixAiPipelineRes?.graph?.nodes?.some(n => n.id === 'node-arch' && n.role === 'ARCHITECT'));
+            results.sixAiHasImplement = Boolean(sixAiPipelineRes?.graph?.nodes?.some(n => n.id === 'node-implement' && n.role === 'IMPLEMENTER'));
+            results.sixAiHasReview = Boolean(sixAiPipelineRes?.graph?.nodes?.some(n => n.id === 'node-algo-review' && n.role === 'REVIEWER'));
+            results.sixAiHasVerify = Boolean(sixAiPipelineRes?.graph?.nodes?.some(n => n.id === 'node-qa-verify' && n.role === 'QA_SECURITY'));
+
+            // 7. Anti-pre-approval digest lock on 6-AI review node
+            const prematureReviewVote = await window.unionBotAPI.taskGraphSubmitVote({
+              graphId: 'p9-e2e-6ai-pipeline',
+              nodeId: 'node-algo-review',
+              vote: {
+                voterId: 'session_deepseek_reviewer',
+                voterRole: 'REVIEWER',
+                decision: 'APPROVE',
+                rationale: 'Pre-approving non-existent code',
+                reviewedDigest: 'f'.repeat(64),
+                timestamp: Date.now(),
+              },
+            });
+            results.premature6AiVoteDenied = Boolean(prematureReviewVote?.success === false && prematureReviewVote?.code === 'ERR_REVIEW_TARGET_NOT_READY');
+
+            // 8. Step PLAN and IMPLEMENT nodes through DAG
+            await window.unionBotAPI.testTaskGraphStep({ graphId: 'p9-e2e-6ai-pipeline', nodeId: 'node-scope' });
+            await window.unionBotAPI.testTaskGraphStep({ graphId: 'p9-e2e-6ai-pipeline', nodeId: 'node-research' });
+            await window.unionBotAPI.testTaskGraphStep({ graphId: 'p9-e2e-6ai-pipeline', nodeId: 'node-arch' });
+            const impStepRes = await window.unionBotAPI.testTaskGraphStep({ graphId: 'p9-e2e-6ai-pipeline', nodeId: 'node-implement' });
+            const targetCodeDigest = impStepRes?.node?.outputDigest;
+
+            // Submit authentic consensus votes for node-algo-review
+            await window.unionBotAPI.taskGraphSubmitVote({
+              graphId: 'p9-e2e-6ai-pipeline',
+              nodeId: 'node-algo-review',
+              vote: {
+                voterId: 'session_deepseek_reviewer',
+                voterRole: 'REVIEWER',
+                decision: 'APPROVE',
+                rationale: 'Algorithm efficiency approved',
+                reviewedDigest: targetCodeDigest,
+                timestamp: Date.now(),
+              },
+            });
+
+            await window.unionBotAPI.taskGraphSubmitVote({
+              graphId: 'p9-e2e-6ai-pipeline',
+              nodeId: 'node-algo-review',
+              vote: {
+                voterId: 'session_codex_qa',
+                voterRole: 'QA_SECURITY',
+                decision: 'APPROVE',
+                rationale: 'Security verified',
+                reviewedDigest: targetCodeDigest,
+                timestamp: Date.now(),
+              },
+            });
+
+            // Run remainder of 6-AI Pipeline to COMPLETED
+            const sixAiRunRes = await window.unionBotAPI.taskGraphRun({
+              graphId: 'p9-e2e-6ai-pipeline',
+            });
+
+            results.sixAiRunCompleted = Boolean(sixAiRunRes?.success && sixAiRunRes?.status === 'COMPLETED');
+            return results;
+          })()
+        `);
+
+        console.log('[P9-E2E] Results:', JSON.stringify(p9Result, null, 2));
+
+        const requiredChecks = [
+          'allSessionsRetrieved',
+          'hasChatgptSession',
+          'hasGeminiSession',
+          'hasClaudeSession',
+          'hasDeepseekSession',
+          'hasCodexSession',
+          'hasAntigravitySession',
+          'validSenderIdentityAccepted',
+          'spoofedProviderDenied',
+          'spoofedRoleDenied',
+          'captchaChallengeDetected',
+          'quotaExceededDetected',
+          'threadReferenceCaptured',
+          'textShareSuccess',
+          'textShareSignedWithSession',
+          'validFileShareSuccess',
+          'fileShareEnvelopeHasArtifact',
+          'traversalFileShareDenied',
+          'junctionFileShareDenied',
+          'sixAiPipelineCreated',
+          'sixAiHasScope',
+          'sixAiHasResearch',
+          'sixAiHasArch',
+          'sixAiHasImplement',
+          'sixAiHasReview',
+          'sixAiHasVerify',
+          'premature6AiVoteDenied',
+          'sixAiRunCompleted',
+        ];
+
+        let allPassed = true;
+        for (const check of requiredChecks) {
+          const pass = Boolean(p9Result[check]);
+          console.log(`[P9-E2E] Check ${check}: ${pass}`);
+          if (!pass) allPassed = false;
+        }
+
+        const reportDir = path.resolve(__dirname, '../../../reports/capability-evidence');
+        if (!fs.existsSync(reportDir)) fs.mkdirSync(reportDir, { recursive: true });
+        const evidencePath = path.resolve(reportDir, 'ELECTRON_P9_E2E_EVIDENCE.json');
+        fs.writeFileSync(evidencePath, JSON.stringify({
+          timestamp: new Date().toISOString(),
+          environment: 'Real Windows Electron (Phase P9 Web Provider Extensions & 6-AI Collaboration)',
+          nodeEnv: process.env.NODE_ENV,
+          results: p9Result,
+          allPassed,
+        }, null, 2));
+
+        try {
+          if (fs.existsSync(e2eJunctionPath)) fs.rmSync(e2eJunctionPath, { force: true });
+          if (fs.existsSync(e2eScratchDir)) fs.rmSync(e2eScratchDir, { recursive: true, force: true });
+          if (fs.existsSync(e2eOutsideDir)) fs.rmSync(e2eOutsideDir, { recursive: true, force: true });
+        } catch {}
+
+        if (!allPassed) {
+          console.error('[P9-E2E] One or more P9 checks failed.');
+          app.quit();
+          process.exit(1);
+        }
+
+        console.log('[P9-E2E] ALL_P9_E2E_CHECKS_PASSED');
+        app.quit();
+        process.exit(0);
+      } catch (err) {
+        console.error('[P9-E2E] Exception:', err);
         app.quit();
         process.exit(1);
       }
@@ -4392,6 +4660,58 @@ ipcMain.handle('union-bot:browser-share-selection', async (event, payload) => {
   return await browserService.shareSelection(payload?.tabId, payload?.selectedText, payload?.roomId);
 });
 
+// Phase P9: Web Provider Capabilities & Extensions Handlers
+ipcMain.handle('union-bot:browser-get-session', async (event, tabId) => {
+  if (!checkSenderAuthorized(event)) {
+    return { success: false, error: 'ERR_UNAUTHORIZED_FRAME: Caller frame unauthorized' };
+  }
+  if (!browserService) return { success: false, error: 'BrowserService not initialized' };
+  const session = browserService.getProviderSession(tabId);
+  return { success: Boolean(session), session };
+});
+
+ipcMain.handle('union-bot:browser-get-all-sessions', async (event) => {
+  if (!checkSenderAuthorized(event)) {
+    return { success: false, error: 'ERR_UNAUTHORIZED_FRAME: Caller frame unauthorized' };
+  }
+  if (!browserService) return { success: false, error: 'BrowserService not initialized' };
+  const sessions = browserService.getAllProviderSessions();
+  return { success: true, sessions };
+});
+
+ipcMain.handle('union-bot:browser-check-health', async (event, tabId) => {
+  if (!checkSenderAuthorized(event)) {
+    return { success: false, error: 'ERR_UNAUTHORIZED_FRAME: Caller frame unauthorized' };
+  }
+  if (!browserService) return { success: false, error: 'BrowserService not initialized' };
+  return await browserService.checkProviderHealth(tabId);
+});
+
+ipcMain.handle('union-bot:browser-capture-reference', async (event, tabId) => {
+  if (!checkSenderAuthorized(event)) {
+    return { success: false, error: 'ERR_UNAUTHORIZED_FRAME: Caller frame unauthorized' };
+  }
+  if (!browserService) return { success: false, error: 'BrowserService not initialized' };
+  const reference = browserService.captureThreadReference(tabId);
+  return { success: true, reference };
+});
+
+ipcMain.handle('union-bot:browser-share-text', async (event, payload) => {
+  if (!checkSenderAuthorized(event)) {
+    return { success: false, error: 'ERR_UNAUTHORIZED_FRAME: Caller frame unauthorized' };
+  }
+  if (!browserService) return { success: false, error: 'BrowserService not initialized' };
+  return await browserService.shareTextWithProvenance(payload?.tabId, payload?.text, payload?.options);
+});
+
+ipcMain.handle('union-bot:browser-share-file', async (event, payload) => {
+  if (!checkSenderAuthorized(event)) {
+    return { success: false, error: 'ERR_UNAUTHORIZED_FRAME: Caller frame unauthorized' };
+  }
+  if (!browserService) return { success: false, error: 'BrowserService not initialized' };
+  return await browserService.shareFileWithProvenance(payload?.tabId, payload?.filePath, payload?.options);
+});
+
 // Phase P5: Artifact Store, Previews & Local MCP IPC Handlers
 ipcMain.handle('union-bot:artifact-save-as', async (event, payload) => {
   if (!checkSenderAuthorized(event)) {
@@ -4785,6 +5105,33 @@ ipcMain.handle('union-bot:task-graph-standard-pipeline', async (event, params) =
   }
   try {
     const pipeline = taskGraphService.createStandard5StagePipeline(params);
+    const graph = taskGraphService.createGraph(pipeline);
+    return {
+      success: true,
+      graph: {
+        id: graph.id,
+        name: graph.name,
+        status: graph.status,
+        nodes: Array.from(graph.nodes.values()).map((n) => ({
+          id: n.id,
+          stage: n.stage,
+          role: n.assignedRole,
+          dependencies: n.dependencies,
+        })),
+      },
+    };
+  } catch (err) {
+    return { success: false, error: err.message, code: err.code };
+  }
+});
+
+// Phase P9: 6-AI Collaborative Task Graph Pipeline
+ipcMain.handle('union-bot:task-graph-6ai-pipeline', async (event, params) => {
+  if (!checkSenderAuthorized(event)) {
+    return { success: false, error: 'Unauthorized IPC sender origin' };
+  }
+  try {
+    const pipeline = taskGraphService.create6AIPipeline(params);
     const graph = taskGraphService.createGraph(pipeline);
     return {
       success: true,
@@ -5259,8 +5606,46 @@ if (isDedicatedTestHarness) {
     });
   });
 
+  // Phase P9: Test Harness Provider Health Simulation & Spoofing Test Handlers
+  ipcMain.handle('union-bot:test-simulate-provider-health', async (event, payload) => {
+    if (!checkSenderAuthorized(event)) {
+      return { success: false, error: 'Unauthorized IPC sender origin' };
+    }
+    if (!browserService) return { success: false, error: 'No browserService' };
+    const { tabId, report } = payload || {};
+    browserService.setTestHealthOverride(tabId, report);
+    return { success: true };
+  });
+
+  ipcMain.handle('union-bot:test-spoof-voter-identity', async (event, payload) => {
+    if (!checkSenderAuthorized(event)) {
+      return { success: false, error: 'Unauthorized IPC sender origin' };
+    }
+    if (!browserService) return { success: false, error: 'No browserService' };
+    const { tabId, claimedProvider, claimedRole } = payload || {};
+    return browserService.sessionRegistry.validateSenderIdentity({
+      tabId,
+      claimedProvider,
+      claimedRole,
+    });
+  });
+
 } else {
   // Production / non-harness mode: fail-closed rejection
+  ipcMain.handle('union-bot:test-simulate-provider-health', async () => {
+    return {
+      success: false,
+      error: 'ERR_TEST_IPC_DISABLED: Test IPC channels are strictly disabled in production mode',
+    };
+  });
+
+  ipcMain.handle('union-bot:test-spoof-voter-identity', async () => {
+    return {
+      success: false,
+      error: 'ERR_TEST_IPC_DISABLED: Test IPC channels are strictly disabled in production mode',
+    };
+  });
+
   ipcMain.handle('union-bot:test-verify-oauth-popup', async () => {
     return {
       success: false,

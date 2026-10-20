@@ -17,17 +17,17 @@
 |---|---|---|---|---|---|
 | **P0** | Khảo sát & Khóa Nền móng (Audit & Baseline) | `GATE_ACCEPTED_WITH_CARRYOVER` | 18 | 18 (Gate Closed) | 100% |
 | **P1** | Monorepo Foundation & Toolchain | `GATE_ACCEPTED_WITH_CARRYOVER` | 18 | 18 (Gate Closed) | 100% |
-| **P2** | Protocol, Storage & Event Sourcing | `SUBMISSION_READY (ALL 12 TICKETS & C01-C06 COMPLETE)` | 12 | 12 | 100% |
-| **P3** | Desktop Shell & Workspace Window | `TODO (NEXT UP ON GO_P3)` | 15 | 0 | 0% |
-| **P4** | Multi-Provider Browser Integration | `TODO` | 14 | 0 | 0% |
-| **P5** | Artifact Management & Rich Response CAS | `TODO` | 15 | 0 | 0% |
-| **P6** | Codex Local Agent Integration | `TODO` | 10 | 0 | 0% |
-| **P7** | Antigravity Local Agent Integration | `TODO` | 10 | 0 | 0% |
-| **P8** | Multi-Agent Orchestration & Task Graph | `TODO` | 16 | 0 | 0% |
-| **P9** | Web Provider Capabilities & Extensions | `TODO` | 7 | 0 | 0% |
-| **P10**| Hardening, Adversarial Tests & Acceptance | `TODO` | 14 | 0 | 0% |
+| **P2** | Protocol, Storage & Event Sourcing | `COMPLETE (OFFICIALLY SIGNED OFF)` | 12 | 12 | 100% |
+| **P3** | Desktop Shell & Workspace Window | `COMPLETE (OFFICIALLY SIGNED OFF)` | 15 | 15 | 100% |
+| **P4** | Multi-Provider Browser Integration | `COMPLETE (OFFICIALLY SIGNED OFF)` | 14 | 14 | 100% |
+| **P5** | Artifact Management & Rich Response CAS | `COMPLETE (OFFICIALLY SIGNED OFF)` | 15 | 15 | 100% |
+| **P6** | Codex Local Agent Integration | `COMPLETE (OFFICIALLY SIGNED OFF)` | 10 | 10 | 100% |
+| **P7** | Antigravity Local Agent Integration | `COMPLETE (OFFICIALLY SIGNED OFF)` | 10 | 10 | 100% |
+| **P8** | Multi-Agent Orchestration & Task Graph | `COMPLETE (OFFICIALLY SIGNED OFF)` | 16 | 16 | 100% |
+| **P9** | Web Provider Capabilities & Extensions | `COMPLETE (SUBMISSION READY FOR GO_P10)` | 7 | 7 | 100% |
+| **P10**| Hardening, Adversarial Tests & Acceptance | `TODO (NEXT UP ON GO_P10)` | 14 | 0 | 0% |
 | **P11**| Packaging, Windows Installer & Final Dossier | `TODO` | 12 | 0 | 0% |
-| **Tổng** | **Toàn bộ Lộ trình Union Bot** | **P2 Submission Ready (95 Tests PASS)** | **161** | **48** | **29.8%** |
+| **Tổng** | **Toàn bộ Lộ trình Union Bot** | **Phase P9 Complete (238 Unit Tests + 17 Real E2E PASS)** | **161** | **135** | **83.9%** |
 
 ---
 
@@ -158,9 +158,14 @@
 - `P8-015` [V3.1]: AI team discussion controller with evidence-based debate
 - `P8-016` [V3.1]: Fair scheduling & backpressure per provider
 
-### Phase P9: Web Provider Capabilities & Extensions (7 tickets)
-- `P9-001` .. `P9-006`: Provider health monitors, error detectors, manual export helpers
-- `P9-007` [V3.1]: Capability truth probe per website (`P9-CG7`, `P9-GM7`, `P9-CL7`, `P9-DS7`)
+### Phase P9: Web Provider Capabilities & Extensions (7 tickets) — `COMPLETE (ALL 7 TICKETS DONE)`
+- `P9-001` [V3.1]: Web Provider Session Registry & Backend Identity Binding (`chatgpt`, `gemini`, `claude`, `deepseek`, `codex`, `antigravity`) - `DONE`
+- `P9-002` [V3.1]: Anti-spoofing backend identity guard (renderer cannot self-assign voter role or provider identity) - `DONE`
+- `P9-003` [V3.1]: Provider health monitor & error taxonomy (Cloudflare Captcha, Quota limit, Auth required, Service outage fail-closed) - `DONE`
+- `P9-004` [V3.1]: Native thread reference capture (`/c/<id>`, `/chat/<id>`, `/app/<id>`) & provenance-tracked text sharing - `DONE`
+- `P9-005` [V3.1]: File & Image sharing with canonical boundary containment (`assertCanonicalWorkspacePath`, no junction escape, SHA256 digest) - `DONE`
+- `P9-006` [V3.1]: 6-AI Collaborative Workflow Pipeline (`create6AIPipeline`) & DAG consensus engine - `DONE`
+- `P9-007` [V3.1]: Capability truth probe per website (`P9-CG7`, `P9-GM7`, `P9-CL7`, `P9-DS7`, `provider-fidelity-checklist.md`) - `DONE`
 
 ### Phase P10: Hardening, Adversarial Tests & Acceptance (14 tickets)
 - `P10-001` .. `P10-012`: Stress tests, network disconnection recovery, crash resilience

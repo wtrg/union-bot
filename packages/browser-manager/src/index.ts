@@ -6,3 +6,5 @@ export * from './types.ts';
 export * from './url-policy.ts';
 export * from './partitions.ts';
 export * from './view-manager.ts';
+export * from './provider-health.ts';
+export * from './provider-session.ts';

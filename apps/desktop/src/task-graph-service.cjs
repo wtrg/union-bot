@@ -967,6 +967,84 @@ class TaskGraphEngineCJS extends EventEmitter {
       ],
     };
   }
+
+  static create6AIPipeline(params) {
+    const defaultAuthorizedReviewers = [
+      { voterId: 'session_chatgpt_leader', role: 'LEADER' },
+      { voterId: 'session_claude_architect', role: 'ARCHITECT' },
+      { voterId: 'session_deepseek_reviewer', role: 'REVIEWER' },
+      { voterId: 'session_codex_qa', role: 'QA_SECURITY' },
+    ];
+
+    const policy = {
+      type: (params.consensusPolicy && params.consensusPolicy.type) || 'majority',
+      minThreshold: params.consensusPolicy && params.consensusPolicy.minThreshold,
+      requiredRoles: (params.consensusPolicy && params.consensusPolicy.requiredRoles) || ['REVIEWER', 'QA_SECURITY'],
+      authorizedReviewers: (params.consensusPolicy && params.consensusPolicy.authorizedReviewers !== undefined)
+        ? params.consensusPolicy.authorizedReviewers
+        : defaultAuthorizedReviewers,
+    };
+
+    return {
+      id: params.id,
+      name: params.name,
+      workspaceRoot: params.workspaceRoot,
+      consensusPolicy: policy,
+      maxFixAttempts: params.maxFixAttempts || 3,
+      nodes: [
+        {
+          id: 'node-scope',
+          name: 'ChatGPT Product & Scope Alignment',
+          stage: 'PLAN',
+          assignedRole: 'LEADER',
+          assignedProvider: 'chatgpt',
+          dependencies: [],
+          actionPayload: { prompt: params.taskPrompt || params.planPrompt },
+        },
+        {
+          id: 'node-research',
+          name: 'Gemini Multimodal Research & Context Exploration',
+          stage: 'PLAN',
+          assignedRole: 'RESEARCHER',
+          assignedProvider: 'gemini',
+          dependencies: ['node-scope'],
+        },
+        {
+          id: 'node-arch',
+          name: 'Claude System Architecture & Threat Model',
+          stage: 'PLAN',
+          assignedRole: 'ARCHITECT',
+          assignedProvider: 'claude',
+          dependencies: ['node-research'],
+        },
+        {
+          id: 'node-implement',
+          name: 'Antigravity Local Implementation & Workspace Builder',
+          stage: 'IMPLEMENT',
+          assignedRole: 'IMPLEMENTER',
+          assignedProvider: 'antigravity',
+          dependencies: ['node-arch'],
+          actionPayload: { files: params.targetFiles || [] },
+        },
+        {
+          id: 'node-algo-review',
+          name: 'DeepSeek Code & Algorithm Efficiency Review',
+          stage: 'REVIEW',
+          assignedRole: 'REVIEWER',
+          assignedProvider: 'deepseek',
+          dependencies: ['node-implement'],
+        },
+        {
+          id: 'node-qa-verify',
+          name: 'Codex Static & Runtime Verification Audit',
+          stage: 'VERIFY',
+          assignedRole: 'QA_SECURITY',
+          assignedProvider: 'codex',
+          dependencies: ['node-algo-review'],
+        },
+      ],
+    };
+  }
 }
 
 /**
@@ -1017,6 +1095,13 @@ class TaskGraphService extends EventEmitter {
 
   createStandard5StagePipeline(params) {
     return TaskGraphEngineCJS.createStandard5StagePipeline({
+      ...params,
+      workspaceRoot: params.workspaceRoot || this.workspaceRoot,
+    });
+  }
+
+  create6AIPipeline(params) {
+    return TaskGraphEngineCJS.create6AIPipeline({
       ...params,
       workspaceRoot: params.workspaceRoot || this.workspaceRoot,
     });

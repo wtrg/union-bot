@@ -166,6 +166,25 @@ const api = {
   browserShareSelection: async (payload) => {
     return ipcRenderer.invoke('union-bot:browser-share-selection', payload);
   },
+  // Phase P9: Provider Sessions, Health, Provenance & Reference APIs
+  browserGetSession: async (tabId) => {
+    return ipcRenderer.invoke('union-bot:browser-get-session', tabId);
+  },
+  browserGetAllSessions: async () => {
+    return ipcRenderer.invoke('union-bot:browser-get-all-sessions');
+  },
+  browserCheckHealth: async (tabId) => {
+    return ipcRenderer.invoke('union-bot:browser-check-health', tabId);
+  },
+  browserCaptureReference: async (tabId) => {
+    return ipcRenderer.invoke('union-bot:browser-capture-reference', tabId);
+  },
+  browserShareText: async (payload) => {
+    return ipcRenderer.invoke('union-bot:browser-share-text', payload);
+  },
+  browserShareFile: async (payload) => {
+    return ipcRenderer.invoke('union-bot:browser-share-file', payload);
+  },
   onBrowserStateUpdated: (callback) => {
     if (typeof callback !== 'function') return () => {};
     const subscription = (_event, state) => callback(state);
@@ -268,6 +287,9 @@ const api = {
   taskGraphStandardPipeline: async (params) => {
     return ipcRenderer.invoke('union-bot:task-graph-standard-pipeline', params);
   },
+  taskGraph6AIPipeline: async (params) => {
+    return ipcRenderer.invoke('union-bot:task-graph-6ai-pipeline', params);
+  },
   taskGraphRun: async (payload) => {
     return ipcRenderer.invoke('union-bot:task-graph-run', payload);
   },
@@ -342,6 +364,13 @@ if (process.env.UNION_BOT_E2E_HARNESS === '1' && process.env.NODE_ENV === 'test'
   };
   api.taskGraphStep = api.testTaskGraphStep;
   api.taskGraphRegisterReviewer = api.testTaskGraphRegisterReviewer;
+  // Phase P9: Provider Health Simulation & Spoofing Test APIs
+  api.testSimulateProviderHealth = async (payload) => {
+    return ipcRenderer.invoke('union-bot:test-simulate-provider-health', payload);
+  };
+  api.testSpoofVoterIdentity = async (payload) => {
+    return ipcRenderer.invoke('union-bot:test-spoof-voter-identity', payload);
+  };
 }
 
 contextBridge.exposeInMainWorld('unionBotAPI', api);

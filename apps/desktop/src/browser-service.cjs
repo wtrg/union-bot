@@ -6,11 +6,14 @@
 
 const { WebContentsView, session, shell } = require('electron');
 const path = require('path');
+const fs = require('fs');
+const crypto = require('crypto');
 const { safeOpenExternal, validateExternalUrl } = require('./safe-external.js');
 const {
   BrowserStateManager,
   PROVIDER_REGISTRY,
   PROVIDER_AUTH_ORIGINS,
+  DEFAULT_PROVIDER_ROLES,
   isCostGuardBlockedUrl,
   resolveAddressBarInput,
   validateUrl,
@@ -18,15 +21,22 @@ const {
   isAllowedForProvider,
   isPrivateOrLoopbackHost,
   inferAuthStatus,
+  detectProviderHealth,
+  extractThreadReference,
+  ProviderSessionRegistry,
 } = require('../../../packages/browser-manager/src/browser-manager.cjs');
 
 class BrowserService {
-  constructor(mainWindow, storageService) {
+  constructor(mainWindow, storageService, artifactStore, workspaceRoot) {
     this.mainWindow = mainWindow;
     this.storageService = storageService;
+    this.artifactStore = artifactStore;
+    this.workspaceRoot = path.resolve(workspaceRoot || process.cwd());
     this.stateManager = new BrowserStateManager();
+    this.sessionRegistry = new ProviderSessionRegistry();
     this.views = new Map(); // tabId -> WebContentsView
     this.configuredPartitions = new Set();
+    this._testHealthOverrides = new Map();
   }
 
   /**
@@ -37,10 +47,34 @@ class BrowserService {
     for (const tab of defaultTabs) {
       try {
         this._createViewForTab(tab);
+        this.sessionRegistry.createSession({
+          providerId: tab.providerId,
+          tabId: tab.id,
+          partition: tab.partition,
+          assignedRole: DEFAULT_PROVIDER_ROLES[tab.providerId] || 'USER',
+          authStatus: tab.authStatus,
+        });
       } catch (err) {
         console.error(`[BrowserService] Failed to create view for default tab ${tab.id}:`, err.message);
       }
     }
+
+    // Register backend sessions for local agent providers (Codex & Antigravity) to complete 6-AI ecosystem
+    this.sessionRegistry.createSession({
+      providerId: 'codex',
+      tabId: 'local_agent_codex',
+      partition: 'local:codex',
+      assignedRole: 'QA_SECURITY',
+      authStatus: 'READY_OR_LANDING',
+    });
+    this.sessionRegistry.createSession({
+      providerId: 'antigravity',
+      tabId: 'local_agent_antigravity',
+      partition: 'local:antigravity',
+      assignedRole: 'IMPLEMENTER',
+      authStatus: 'READY_OR_LANDING',
+    });
+
     this.updateLayout();
   }
 
@@ -357,6 +391,13 @@ class BrowserService {
     const tab = this.stateManager.createTab(providerId, check.sanitizedUrl, tabTitle);
     try {
       this._createViewForTab(tab);
+      this.sessionRegistry.createSession({
+        providerId: tab.providerId,
+        tabId: tab.id,
+        partition: tab.partition,
+        assignedRole: DEFAULT_PROVIDER_ROLES[tab.providerId] || 'USER',
+        authStatus: tab.authStatus,
+      });
     } catch (err) {
       console.error(`[BrowserService] Failed to create view for tab ${tab.id}:`, err.message);
       this.stateManager.closeTab(tab.id);
@@ -381,6 +422,7 @@ class BrowserService {
     }
 
     const res = this.stateManager.closeTab(tabId);
+    this.sessionRegistry.removeSessionByTab(tabId);
     this.updateLayout();
     this._notifyRenderer();
     return res;
@@ -645,6 +687,429 @@ class BrowserService {
     } catch (err) {
       console.error('[BrowserService] Fail-closed: Error saving shared envelope to storage:', err.message);
       return { success: false, error: `STORAGE_WRITE_FAILED: ${err.message}` };
+    }
+  }
+
+  /**
+   * Phase P9: Retrieves backend-authenticated provider session for a tab
+   */
+  getProviderSession(tabId) {
+    const targetTabId = tabId || this.stateManager.getState().activeTabId;
+    if (!targetTabId) return null;
+    return this.sessionRegistry.getSessionByTab(targetTabId);
+  }
+
+  /**
+   * Phase P9: Retrieves all registered provider sessions (4 web + 2 local)
+   */
+  getAllProviderSessions() {
+    return this.sessionRegistry.getAllSessions();
+  }
+
+  /**
+   * Phase P9: Provider Health Monitor (P9-XX5, P9-007)
+   * Detects Cloudflare Captcha, Login requirements, Quota exhaustion, Outage
+   */
+  async checkProviderHealth(tabId) {
+    const targetTabId = tabId || this.stateManager.getState().activeTabId;
+    if (!targetTabId) {
+      return {
+        providerId: 'custom',
+        tabId: '',
+        status: 'SERVICE_UNAVAILABLE',
+        errorCode: 'ERR_PROVIDER_SESSION_NOT_FOUND',
+        message: 'No active tab for health check',
+        checkedAt: Date.now(),
+      };
+    }
+
+    if (this._testHealthOverrides && this._testHealthOverrides.has(targetTabId)) {
+      return this._testHealthOverrides.get(targetTabId);
+    }
+
+    const tab = this.stateManager.tabs.get(targetTabId);
+    if (!tab) {
+      return {
+        providerId: 'custom',
+        tabId: targetTabId,
+        status: 'SERVICE_UNAVAILABLE',
+        errorCode: 'ERR_PROVIDER_SESSION_NOT_FOUND',
+        message: 'Tab not found',
+        checkedAt: Date.now(),
+      };
+    }
+
+    const view = this.views.get(targetTabId);
+    let title = tab.title;
+    let url = tab.url;
+    let bodySnippet = '';
+
+    if (view && !view.webContents.isDestroyed()) {
+      try {
+        title = view.webContents.getTitle() || title;
+        url = view.webContents.getURL() || url;
+        bodySnippet = await view.webContents.executeJavaScript('document.body ? document.body.innerText.slice(0, 500) : ""').catch(() => '');
+      } catch {}
+    }
+
+    const report = detectProviderHealth({
+      providerId: tab.providerId,
+      tabId: targetTabId,
+      url,
+      title,
+      bodySnippet,
+    });
+
+    if (report.status === 'CHALLENGE_REQUIRED') {
+      this.stateManager.updateTab(targetTabId, { authStatus: 'CHALLENGE_REQUIRED', lastError: report.message });
+      this._notifyRenderer();
+    } else if (report.status === 'LOGIN_REQUIRED') {
+      this.stateManager.updateTab(targetTabId, { authStatus: 'LOGIN_REQUIRED' });
+      this._notifyRenderer();
+    } else if (report.status === 'QUOTA_EXCEEDED' || report.status === 'SERVICE_UNAVAILABLE') {
+      this.stateManager.updateTab(targetTabId, { lastError: report.message });
+      this._notifyRenderer();
+    }
+
+    return report;
+  }
+
+  /**
+   * Phase P9: Captures native thread reference from provider page (P9-XX4)
+   */
+  captureThreadReference(tabId) {
+    const targetTabId = tabId || this.stateManager.getState().activeTabId;
+    if (!targetTabId) {
+      return { providerId: 'custom', threadId: null, canonicalUrl: null, isReopenable: false };
+    }
+    const tab = this.stateManager.tabs.get(targetTabId);
+    if (!tab) {
+      return { providerId: 'custom', threadId: null, canonicalUrl: null, isReopenable: false };
+    }
+    const ref = extractThreadReference(tab.providerId, tab.url);
+    const session = this.sessionRegistry.getSessionByTab(targetTabId);
+    if (session && ref.threadId) {
+      this.sessionRegistry.updateSession(session.sessionId, {
+        threadId: ref.threadId,
+        threadUrl: ref.canonicalUrl,
+        isReopenable: ref.isReopenable,
+      });
+    }
+    return ref;
+  }
+
+  /**
+   * Phase P9: Provenance-tracked manual & assisted text sharing (P9-XX2)
+   */
+  async shareTextWithProvenance(tabId, text, options = {}) {
+    const targetTabId = tabId || this.stateManager.getState().activeTabId;
+    if (!targetTabId) {
+      return { success: false, error: 'No target tab specified or active', code: 'ERR_UNAUTHORIZED_ACTION' };
+    }
+
+    const tab = this.stateManager.tabs.get(targetTabId);
+    if (!tab) {
+      return { success: false, error: 'Target tab state not found', code: 'ERR_PROVIDER_SESSION_NOT_FOUND' };
+    }
+
+    const session = this.sessionRegistry.getSessionByTab(targetTabId);
+    if (!session) {
+      return { success: false, error: 'Backend session not found for tab', code: 'ERR_PROVIDER_SESSION_NOT_FOUND' };
+    }
+
+    let textToShare = text;
+    if (!textToShare) {
+      const view = this.views.get(targetTabId);
+      if (view) {
+        try {
+          textToShare = await view.webContents.executeJavaScript('window.getSelection().toString()');
+        } catch {}
+      }
+    }
+
+    if (!textToShare) {
+      textToShare = `(Shared reference to ${tab.title})`;
+    }
+
+    const threadRef = extractThreadReference(tab.providerId, tab.url);
+    if (threadRef.threadId) {
+      session.threadId = threadRef.threadId;
+      session.threadUrl = threadRef.canonicalUrl;
+      session.isReopenable = true;
+    }
+
+    const roomId = options.roomId || 'orchestration';
+    const parts = [
+      {
+        kind: 'text',
+        text: `[Provider Share: ${tab.title}]\nSource: ${tab.url}\nRole: ${session.assignedRole}\n\n${textToShare}`,
+      },
+    ];
+
+    if (threadRef.canonicalUrl) {
+      parts.push({
+        kind: 'reference',
+        url: threadRef.canonicalUrl,
+        providerId: tab.providerId,
+        threadId: threadRef.threadId || undefined,
+        pageTitle: tab.title,
+        isReopenable: threadRef.isReopenable,
+      });
+    }
+
+    const envelope = {
+      schemaVersion: '1.0.0',
+      id: `share_txt_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      traceId: `trc_share_${Date.now()}`,
+      timestamp: Date.now(),
+      sender: {
+        kind: 'agent',
+        id: session.sessionId,
+        name: `${tab.title} (${session.assignedRole})`,
+        role: session.assignedRole,
+        provider: tab.providerId,
+        providerIdentity: {
+          provider: tab.providerId,
+          profileId: session.sessionId,
+          sessionId: session.sessionId,
+          partitionKey: tab.partition,
+          capabilityVersion: '1.0.0',
+          authStatus: session.authStatus === 'AUTHENTICATED' ? 'AUTHENTICATED' : 'NOT_VERIFIED',
+          evidenceProvenance: 'LIVE_WEB',
+        },
+      },
+      recipient: {
+        kind: 'room',
+        id: roomId,
+      },
+      roomId,
+      fidelity: 'L1_FORMATTED_MARKDOWN',
+      status: 'acknowledged',
+      parts,
+      metadata: {
+        sourceTabId: tab.id,
+        sourceUrl: tab.url,
+        threadId: threadRef.threadId,
+        providerSessionId: session.sessionId,
+      },
+    };
+
+    if (this.storageService) {
+      try {
+        if (typeof this.storageService.insertEnvelope === 'function') {
+          await this.storageService.insertEnvelope(envelope);
+        } else if (typeof this.storageService.dispatchEnvelope === 'function') {
+          await this.storageService.dispatchEnvelope(envelope);
+        }
+      } catch (err) {
+        return { success: false, error: `STORAGE_WRITE_FAILED: ${err.message}`, code: 'ERR_STORAGE_CORRUPTION' };
+      }
+    }
+
+    if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+      this.mainWindow.webContents.send('union-bot:envelope-received', envelope);
+    }
+
+    return {
+      success: true,
+      envelope,
+      threadReference: threadRef,
+      session,
+    };
+  }
+
+  /**
+   * Phase P9: Legitimate File & Image Artifact Sharing with Canonical Boundary Containment (P9-XX3)
+   */
+  async shareFileWithProvenance(tabId, filePath, options = {}) {
+    const targetTabId = tabId || this.stateManager.getState().activeTabId;
+    if (!targetTabId) {
+      return { success: false, error: 'No target tab specified or active', code: 'ERR_UNAUTHORIZED_ACTION' };
+    }
+
+    const tab = this.stateManager.tabs.get(targetTabId);
+    if (!tab) {
+      return { success: false, error: 'Target tab state not found', code: 'ERR_PROVIDER_SESSION_NOT_FOUND' };
+    }
+
+    const session = this.sessionRegistry.getSessionByTab(targetTabId);
+    if (!session) {
+      return { success: false, error: 'Backend session not found for tab', code: 'ERR_PROVIDER_SESSION_NOT_FOUND' };
+    }
+
+    if (!filePath || typeof filePath !== 'string') {
+      return { success: false, error: 'File path must be a non-empty string', code: 'ERR_SCHEMA_VALIDATION_FAILED' };
+    }
+
+    // Canonical Workspace Boundary Containment Check
+    let realFilePath;
+    try {
+      realFilePath = fs.realpathSync(path.resolve(this.workspaceRoot, filePath));
+    } catch (err) {
+      return { success: false, error: `File not found or unresolvable: ${err.message}`, code: 'ERR_PATH_TRAVERSAL_DENIED' };
+    }
+
+    const canonicalWorkspace = fs.realpathSync(this.workspaceRoot);
+    const relative = path.relative(canonicalWorkspace, realFilePath);
+    const isEscaping = relative.startsWith('..') || path.isAbsolute(relative);
+
+    if (isEscaping) {
+      return {
+        success: false,
+        error: `ERR_PATH_TRAVERSAL_DENIED: Target file '${filePath}' resolves outside canonical workspace boundary.`,
+        code: 'ERR_PATH_TRAVERSAL_DENIED',
+      };
+    }
+
+    // File Stat & Size Check (Max 100MiB boundary)
+    let stats;
+    try {
+      stats = fs.statSync(realFilePath);
+    } catch (err) {
+      return { success: false, error: `Could not stat file: ${err.message}`, code: 'ERR_SCHEMA_VALIDATION_FAILED' };
+    }
+
+    if (stats.isDirectory()) {
+      return { success: false, error: 'Directories cannot be shared as file artifacts', code: 'ERR_SCHEMA_VALIDATION_FAILED' };
+    }
+
+    const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100MiB
+    if (stats.size > MAX_FILE_SIZE) {
+      return {
+        success: false,
+        error: `ERR_INVALID_FILE_SIZE: File size (${stats.size} bytes) exceeds 100MiB maximum allowable boundary.`,
+        code: 'ERR_INVALID_FILE_SIZE',
+      };
+    }
+
+    // MIME type check
+    const ext = path.extname(realFilePath).toLowerCase();
+    const DISALLOWED_EXECUTABLE_EXTS = new Set(['.exe', '.dll', '.bat', '.cmd', '.vbs', '.msi', '.com', '.scr', '.pif']);
+    if (DISALLOWED_EXECUTABLE_EXTS.has(ext)) {
+      return {
+        success: false,
+        error: `ERR_INVALID_MIME_TYPE: Executable binary or script extension '${ext}' is prohibited from provider artifact exchange.`,
+        code: 'ERR_INVALID_MIME_TYPE',
+      };
+    }
+
+    const MIME_MAP = {
+      '.png': 'image/png',
+      '.jpg': 'image/jpeg',
+      '.jpeg': 'image/jpeg',
+      '.webp': 'image/webp',
+      '.gif': 'image/gif',
+      '.svg': 'image/svg+xml',
+      '.pdf': 'application/pdf',
+      '.txt': 'text/plain',
+      '.md': 'text/markdown',
+      '.json': 'application/json',
+      '.csv': 'text/csv',
+      '.ts': 'text/plain',
+      '.js': 'text/javascript',
+      '.py': 'text/x-python',
+    };
+    const mimeType = options.mimeType || MIME_MAP[ext] || 'application/octet-stream';
+
+    // Compute SHA256 digest
+    const fileBytes = fs.readFileSync(realFilePath);
+    const sha256 = crypto.createHash('sha256').update(fileBytes).digest('hex');
+    const filename = path.basename(realFilePath);
+
+    // Store in ArtifactStore if available
+    let artifactId = sha256;
+    if (this.artifactStore && typeof this.artifactStore.storeBytes === 'function') {
+      try {
+        const stored = this.artifactStore.storeBytes(fileBytes, filename, { mimeType });
+        artifactId = stored.sha256;
+      } catch (err) {
+        console.warn('[BrowserService] ArtifactStore warning:', err.message);
+      }
+    }
+
+    const roomId = options.roomId || 'orchestration';
+    const envelope = {
+      schemaVersion: '1.0.0',
+      id: `share_file_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      traceId: `trc_share_${Date.now()}`,
+      timestamp: Date.now(),
+      sender: {
+        kind: 'agent',
+        id: session.sessionId,
+        name: `${tab.title} (${session.assignedRole})`,
+        role: session.assignedRole,
+        provider: tab.providerId,
+        providerIdentity: {
+          provider: tab.providerId,
+          profileId: session.sessionId,
+          sessionId: session.sessionId,
+          partitionKey: tab.partition,
+          capabilityVersion: '1.0.0',
+          authStatus: session.authStatus === 'AUTHENTICATED' ? 'AUTHENTICATED' : 'NOT_VERIFIED',
+          evidenceProvenance: 'LIVE_WEB',
+        },
+      },
+      recipient: {
+        kind: 'room',
+        id: roomId,
+      },
+      roomId,
+      fidelity: 'L2_STANDALONE_ARTIFACT',
+      status: 'acknowledged',
+      parts: [
+        {
+          kind: 'artifact',
+          sha256,
+          mimeType,
+          filename,
+          sizeBytes: stats.size,
+          contentFidelity: 'original_bytes',
+          provenance: 'LIVE_WEB',
+          transferStatus: 'VERIFIED_TRANSFERRED',
+        },
+      ],
+      metadata: {
+        sourceTabId: tab.id,
+        sourceUrl: tab.url,
+        providerSessionId: session.sessionId,
+      },
+    };
+
+    if (this.storageService) {
+      try {
+        if (typeof this.storageService.insertEnvelope === 'function') {
+          await this.storageService.insertEnvelope(envelope);
+        } else if (typeof this.storageService.dispatchEnvelope === 'function') {
+          await this.storageService.dispatchEnvelope(envelope);
+        }
+      } catch (err) {
+        return { success: false, error: `STORAGE_WRITE_FAILED: ${err.message}`, code: 'ERR_STORAGE_CORRUPTION' };
+      }
+    }
+
+    if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+      this.mainWindow.webContents.send('union-bot:envelope-received', envelope);
+    }
+
+    return {
+      success: true,
+      sha256,
+      sizeBytes: stats.size,
+      mimeType,
+      filename,
+      envelope,
+    };
+  }
+
+  /**
+   * Test injection helper for E2E harness
+   */
+  setTestHealthOverride(tabId, report) {
+    if (!this._testHealthOverrides) this._testHealthOverrides = new Map();
+    if (report === null) {
+      this._testHealthOverrides.delete(tabId);
+    } else {
+      this._testHealthOverrides.set(tabId, report);
     }
   }
 

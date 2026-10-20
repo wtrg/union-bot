@@ -1,0 +1,42 @@
+[
+  {
+    "Path": "D:\\WORK-TEAM\\apps\\desktop\\src\\main.js",
+    "Hash": "7BED11F4AD4946292D17D7D8A3AC9C92A93E7FDBDDBDBF5C98DAD7DFE58C2123"
+  },
+  {
+    "Path": "D:\\WORK-TEAM\\apps\\desktop\\src\\orchestrator.cjs",
+    "Hash": "96B0E375F8BC005FC84262C0610CBE8CC97ECDD3A402F49C478EED0767E17ED1"
+  },
+  {
+    "Path": "D:\\WORK-TEAM\\apps\\desktop\\src\\preload.cjs",
+    "Hash": "93CA771F362A53305F8D6E4301948713CB8DDB9E5899DA024C47A6691F7A1B7A"
+  },
+  {
+    "Path": "D:\\WORK-TEAM\\apps\\desktop\\src\\browser-service.cjs",
+    "Hash": "F183C300C3394BF63745512A521870D26F50AFF7486E89D6FCB8BBEEA8BBE1CD"
+  },
+  {
+    "Path": "D:\\WORK-TEAM\\apps\\desktop\\src\\task-graph-service.cjs",
+    "Hash": "9F12A9CD4CFECB5E234B66DFC7C7F05E41B83DB15C1192731C99DB7CBF7FC5D3"
+  },
+  {
+    "Path": "D:\\WORK-TEAM\\packages\\protocol\\src\\schemas.ts",
+    "Hash": "C4158B633D559EBAEF55E61FB57DF558E1BAA82E400BC23A77F293FACE430C1F"
+  },
+  {
+    "Path": "D:\\WORK-TEAM\\packages\\orchestrator\\src\\task-graph.ts",
+    "Hash": "869895F0B4BC32E3BF392E2BE28E922FAE350CFE5540CCCA879A3FBF1A841D91"
+  },
+  {
+    "Path": "D:\\WORK-TEAM\\packages\\orchestrator\\tests\\task-graph.test.ts",
+    "Hash": "C606C56E1DA67BF7BD87CCB974DEED7E0BBC4DAB2BE3A1D0230C41C66C5F1C55"
+  },
+  {
+    "Path": "D:\\WORK-TEAM\\packages\\browser-manager\\src\\provider-health.ts",
+    "Hash": "4708EFB20F6980087635F7AB8609286B2F2CE5F1971136905CA313FD563FE564"
+  },
+  {
+    "Path": "D:\\WORK-TEAM\\packages\\browser-manager\\src\\provider-session.ts",
+    "Hash": "C48949A1269AC0EFF630DAA4030981C16704D2831C5C0779A8513B5951FA00EE"
+  }
+]
