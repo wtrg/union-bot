@@ -37,6 +37,7 @@ const { ArtifactHandoffService } = require('./services/artifact-handoff-service.
 const { PlanRegistryService } = require('./services/plan-registry-service.cjs');
 const { WorkflowSupervisor } = require('./services/workflow-supervisor.cjs');
 const { GitReviewService } = require('./services/git-review-service.cjs');
+const { BrowserUseBridge } = require('./services/browser-use-bridge.cjs');
 
 // Custom test userData override for isolated multi-process E2E testing
 const customUserDataArg = process.argv.find((a) => a.startsWith('--test-user-data=') || a.startsWith('--user-data-dir='));
@@ -149,6 +150,7 @@ const artifactHandoffService = new ArtifactHandoffService(storage, artifactStore
 const planRegistryService = new PlanRegistryService(storage);
 const workflowSupervisor = new WorkflowSupervisor({ storage, planRegistry: planRegistryService, conversationRouter, costGuard });
 const gitReviewService = new GitReviewService({ repoRoot: process.cwd() });
+const browserUseBridge = new BrowserUseBridge({ browserManager });
 
 taskGraphService.on('graph-event', (evt) => {
   if (mainWindow && !mainWindow.isDestroyed()) {
@@ -5727,6 +5729,52 @@ ipcMain.handle('union-bot:parse-review-feedback', async (event, payload) => {
     return gitReviewService.parseReviewFeedback(payload.feedbackText, payload.changeSetId);
   } catch (err) {
     return { status: 'ERROR', error: err.message, findings: [] };
+  }
+});
+
+// Phase V4: Real Browser-Use & Context Bridge (UB-V4-U09)
+ipcMain.handle('union-bot:acquire-browser-controller-lease', async (event, payload) => {
+  if (!checkSenderAuthorized(event)) return { success: false, error: 'Unauthorized IPC sender' };
+  try {
+    return browserUseBridge.acquireControllerLease(payload.tabId, payload.controllerId);
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('union-bot:renew-browser-controller-lease', async (event, payload) => {
+  if (!checkSenderAuthorized(event)) return { success: false, error: 'Unauthorized IPC sender' };
+  try {
+    return browserUseBridge.renewControllerLease(payload.tabId, payload.leaseToken);
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('union-bot:release-browser-controller-lease', async (event, payload) => {
+  if (!checkSenderAuthorized(event)) return false;
+  try {
+    return browserUseBridge.releaseControllerLease(payload.tabId, payload.leaseToken);
+  } catch (err) {
+    return false;
+  }
+});
+
+ipcMain.handle('union-bot:create-safe-dom-snapshot', async (event, payload) => {
+  if (!checkSenderAuthorized(event)) return { snapshotSha256: '', snapshot: null };
+  try {
+    return browserUseBridge.createSafeDomSnapshot(payload || {});
+  } catch (err) {
+    return { snapshotSha256: '', error: err.message };
+  }
+});
+
+ipcMain.handle('union-bot:execute-browser-action', async (event, payload) => {
+  if (!checkSenderAuthorized(event)) return { success: false, error: 'Unauthorized IPC sender' };
+  try {
+    return browserUseBridge.executeAction(payload || {});
+  } catch (err) {
+    return { success: false, error: err.message };
   }
 });
 

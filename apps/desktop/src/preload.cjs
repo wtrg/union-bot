@@ -271,6 +271,23 @@ const api = {
     return ipcRenderer.invoke('union-bot:parse-review-feedback', payload);
   },
 
+  // Phase V4: Real Browser-Use & Context Bridge (UB-V4-U09)
+  acquireBrowserControllerLease: async (payload) => {
+    return ipcRenderer.invoke('union-bot:acquire-browser-controller-lease', payload);
+  },
+  renewBrowserControllerLease: async (payload) => {
+    return ipcRenderer.invoke('union-bot:renew-browser-controller-lease', payload);
+  },
+  releaseBrowserControllerLease: async (payload) => {
+    return ipcRenderer.invoke('union-bot:release-browser-controller-lease', payload);
+  },
+  createSafeDomSnapshot: async (payload) => {
+    return ipcRenderer.invoke('union-bot:create-safe-dom-snapshot', payload);
+  },
+  executeBrowserAction: async (payload) => {
+    return ipcRenderer.invoke('union-bot:execute-browser-action', payload);
+  },
+
   // Phase P4: Embedded Chromium Browser API
   browserGetState: async () => {
     return ipcRenderer.invoke('union-bot:browser-get-state');

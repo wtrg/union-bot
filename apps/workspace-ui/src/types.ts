@@ -219,6 +219,13 @@ export interface UnionBotAPI {
   computePushDigest?: (payload: { branch: string; headSha: string; commitMessage?: string; filesChanged?: string[] }) => Promise<{ digest: string; canonicalPayload: string }>;
   generateReviewPacket?: (payload: { gate: string; name: string; ticketIds?: string[]; headSha: string; baseSha?: string; branch?: string; summary?: string[]; criteriaEvidence?: string[] }) => Promise<string>;
   parseReviewFeedback?: (payload: { feedbackText: string; changeSetId?: string }) => Promise<{ status: string; findingsCount: number; hasBlockingSev1: boolean; findings: any[] }>;
+
+  // Phase V4: Real Browser-Use & Context Bridge (UB-V4-U09)
+  acquireBrowserControllerLease?: (payload: { tabId: string; controllerId: string }) => Promise<{ success: boolean; tabId?: string; controllerId?: string; leaseToken?: string; expiresAt?: number; holder?: string; error?: string; code?: string }>;
+  renewBrowserControllerLease?: (payload: { tabId: string; leaseToken: string }) => Promise<{ success: boolean; tabId?: string; expiresAt?: number; error?: string; code?: string }>;
+  releaseBrowserControllerLease?: (payload: { tabId: string; leaseToken: string }) => Promise<boolean>;
+  createSafeDomSnapshot?: (payload: { tabId: string; url?: string; title?: string; rawDomText?: string; interactiveElements?: any[]; viewport?: { width: number; height: number } }) => Promise<{ snapshotSha256: string; snapshot: any }>;
+  executeBrowserAction?: (payload: { tabId: string; leaseToken: string; actionType: string; coordinates?: { x: number; y: number }; text?: string; url?: string; viewport?: { width: number; height: number } }) => Promise<{ success: boolean; actionType?: string; error?: string; code?: string }>;
   readAttachment: (sha256: string) => Promise<{ success: boolean; sha256?: string; dataBase64?: string; sizeBytes?: number; error?: string }>;
   openFileDialog: () => Promise<{ success: boolean; canceled?: boolean; attachment?: AttachmentInfo; error?: string }>;
   exportWorkspace: (options?: any) => Promise<{ success: boolean; exportJson?: string; exportMarkdown?: string; projectCount?: number; roomCount?: number; taskCount?: number; totalEnvelopes?: number; error?: string }>;
