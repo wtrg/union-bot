@@ -389,11 +389,17 @@ describe('Union Bot Phase P6: Native Codex Agent Adapter Suite', () => {
       /ERR_COST_GUARD_REQUIRED/
     );
 
-    // 9. P9-R04-005: Rejects guard that permits paid API endpoints
-    const leakyCostGuard = {
-      isUrlAllowed: (url: string) => url.includes('openai.com'),
+    // 9. P9-R04-005 & P9-R04-006: Rejects hostname-based permissive guard fail-closed
+    const permissiveCostGuard = {
+      isUrlAllowed: (rawUrl: string) => {
+        try {
+          return new URL(rawUrl).hostname === 'api.openai.com';
+        } catch {
+          return false;
+        }
+      },
     };
-    const leakyAdapter = new CodexAdapter({ workspaceRoot, costGuard: leakyCostGuard as any });
+    const leakyAdapter = new CodexAdapter({ workspaceRoot, costGuard: permissiveCostGuard as any });
     assert.throws(
       () => leakyAdapter.executeVerification({ files: ['package.json'] }),
       /ERR_ZERO_COST_VIOLATION/

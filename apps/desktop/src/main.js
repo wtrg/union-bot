@@ -4515,9 +4515,13 @@ function createWindow() {
 
         let costGuardPaidViolationFailedClosed = false;
         try {
-          const fakePaidGuard = { isUrlAllowed: (u) => u.includes('openai.com') };
+          const permissiveGuard = {
+            isUrlAllowed(rawUrl) {
+              return new URL(rawUrl).hostname === 'api.openai.com';
+            }
+          };
           const { CodexService: RawCodexService } = require('./codex-service.cjs');
-          const paidGuardService = new RawCodexService(prodGraph.workspaceRoot, artifactStore, toolHost, fakePaidGuard);
+          const paidGuardService = new RawCodexService(prodGraph.workspaceRoot, artifactStore, toolHost, permissiveGuard);
           await paidGuardService.executeVerification({ files: [prodImplFile], stage: 'VERIFY', targetDigest: prodImplDigest });
         } catch (err) {
           costGuardPaidViolationFailedClosed = Boolean(err.message && err.message.includes('ERR_ZERO_COST_VIOLATION'));
