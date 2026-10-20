@@ -20,8 +20,8 @@
 | **U04** | Two-Way Conversation Router & Thread Receipts | VERIFIED | RU04 | Router, DeliveryAttempt, freshness watermarks | SELF_VERIFIED |
 | **U05** | Artifact Handoff & Multimodal Fidelity | VERIFIED | RU05 | CAS bytes, MIME validation, screenshot fidelity | SELF_VERIFIED |
 | **U06** | `/work`: Plan Registry, Critical Review & Goal Approval | VERIFIED | RU06 | Plan revision, frozen brief digest, approval gate | SELF_VERIFIED |
-| **U07** | WorkflowSupervisor: Continuous Durable Orchestration | IN_PROGRESS | RU07 | Durable leases, recovery, task progression | PENDING_REVIEW |
-| **U08** | GitHub Push Approval & ChatGPT Code Review Loop | QUEUED | RU08 | Push consent, SHA binding, review packet intake | PENDING_REVIEW |
+| **U07** | WorkflowSupervisor: Continuous Durable Orchestration | VERIFIED | RU07 | Durable leases, recovery, task progression | SELF_VERIFIED |
+| **U08** | GitHub Push Approval & ChatGPT Code Review Loop | IN_PROGRESS | RU08 | Push consent, SHA binding, review packet intake | PENDING_REVIEW |
 | **U09** | Real Browser-Use & Context Bridge | QUEUED | RU09 | Controller lease, safe observation, redaction | PENDING_REVIEW |
 | **U10** | Pragmatic Low-Noise UX & Accessibility | QUEUED | RU10 | /chat vs /work UI, Compact Activity feed | PENDING_REVIEW |
 | **U11** | Security, Reliability, Observability & Performance | QUEUED | RU11 | Prompt injection, 0đ egress, crash recovery | PENDING_REVIEW |
@@ -88,3 +88,11 @@
 - [x] `U06-004`: Owner Approval Gate (`approvePlanRevision`): fail-closed blocking when open SEV1 critical findings exist (`ERR_SEV1_BLOCKING`); transitions goal to `ACTIVE` upon resolution
 - [x] `U06-005`: Milestone Evidence Tracking: append durable execution and commit references to milestones (`evidence_refs_json`)
 - [x] `U06-006`: Safe IPC exposure (`create-plan-revision`, `approve-plan-revision`, `record-review-finding`, `resolve-review-finding`, `list-review-findings`, `update-milestone-state`) and unit tests (4/4 PASS)
+
+### U07 — WorkflowSupervisor: Continuous Durable Orchestration
+- [x] `U07-001`: `WorkflowSupervisor` service: execution lease management (`acquireLease`, `renewLease`, `releaseLease`) with TTL and concurrency conflict protection (`ERR_LEASE_CONFLICT`)
+- [x] `U07-002`: Autonomous milestone progression: sequentially advances through DAG-ordered milestones without user prompt interruption
+- [x] `U07-003`: Milestone completion & Goal transition: marks milestones `COMPLETED` with verified commit/PR evidence references, auto-completes Goal when finished
+- [x] `U07-004`: Execution controls: `/pause`, `/resume`, `/stop` workflow state management with fail-closed progression halt
+- [x] `U07-005`: Crash recovery: recovers dangling goals, resets unleased `IN_PROGRESS` milestones to `PENDING` for safe restart, cleans expired leases
+- [x] `U07-006`: Safe IPC exposure and unit tests (4/4 PASS)

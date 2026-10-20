@@ -202,6 +202,15 @@ export interface UnionBotAPI {
   resolveReviewFinding?: (id: string) => Promise<{ success: boolean; error?: string }>;
   listReviewFindings?: (payload?: { changeSetId?: string; state?: string }) => Promise<any[]>;
   updateMilestoneState?: (payload: { milestoneId: string; state: string; evidenceRef?: string }) => Promise<{ success: boolean; error?: string }>;
+  // Phase V4: WorkflowSupervisor Continuous Durable Orchestration (UB-V4-U07)
+  acquireWorkflowLease?: (payload: { goalId: string; workerId?: string }) => Promise<{ success: boolean; goalId?: string; leaseToken?: string; workerId?: string; expiresAt?: number; error?: string; code?: string }>;
+  renewWorkflowLease?: (payload: { goalId: string; token: string }) => Promise<{ success: boolean; goalId?: string; expiresAt?: number; error?: string; code?: string }>;
+  releaseWorkflowLease?: (payload: { goalId: string; token: string }) => Promise<boolean>;
+  progressNextMilestone?: (payload: { goalId: string; workerId?: string }) => Promise<{ success: boolean; goalCompleted?: boolean; message?: string; milestone?: any; activeMilestones?: any[]; error?: string; code?: string }>;
+  completeMilestoneExecution?: (payload: { goalId: string; milestoneId: string; evidenceRef?: string }) => Promise<{ success: boolean; milestoneId?: string; state?: string; evidenceRefs?: string[]; error?: string }>;
+  pauseWorkflow?: () => Promise<{ success: boolean; state: string }>;
+  resumeWorkflow?: () => Promise<{ success: boolean; state: string }>;
+  getWorkflowStatus?: () => Promise<{ state: string; activeLeasesCount: number; activeLeases: any[] }>;
   listMilestones?: (goalId: string) => Promise<MilestoneInfo[]>;
   listActivityEvents?: (payload: { projectId: string; goalId?: string }) => Promise<ActivityEventInfo[]>;
   readAttachment: (sha256: string) => Promise<{ success: boolean; sha256?: string; dataBase64?: string; sizeBytes?: number; error?: string }>;

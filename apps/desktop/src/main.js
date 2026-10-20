@@ -35,6 +35,7 @@ const { CapabilityRegistry } = require('./services/capability-registry.cjs');
 const { ConversationRouter } = require('./services/conversation-router.cjs');
 const { ArtifactHandoffService } = require('./services/artifact-handoff-service.cjs');
 const { PlanRegistryService } = require('./services/plan-registry-service.cjs');
+const { WorkflowSupervisor } = require('./services/workflow-supervisor.cjs');
 
 // Custom test userData override for isolated multi-process E2E testing
 const customUserDataArg = process.argv.find((a) => a.startsWith('--test-user-data=') || a.startsWith('--user-data-dir='));
@@ -145,6 +146,7 @@ const capabilityRegistry = new CapabilityRegistry({ antigravityService, codexSer
 const conversationRouter = new ConversationRouter(storage);
 const artifactHandoffService = new ArtifactHandoffService(storage, artifactStore);
 const planRegistryService = new PlanRegistryService(storage);
+const workflowSupervisor = new WorkflowSupervisor({ storage, planRegistry: planRegistryService, conversationRouter, costGuard });
 
 taskGraphService.on('graph-event', (evt) => {
   if (mainWindow && !mainWindow.isDestroyed()) {
@@ -5592,6 +5594,72 @@ ipcMain.handle('union-bot:update-milestone-state', async (event, payload) => {
   } catch (err) {
     return { success: false, error: err.message };
   }
+});
+
+// Phase V4: WorkflowSupervisor Continuous Durable Orchestration (UB-V4-U07)
+ipcMain.handle('union-bot:acquire-workflow-lease', async (event, payload) => {
+  if (!checkSenderAuthorized(event)) return { success: false, error: 'Unauthorized IPC sender' };
+  if (appStatus !== 'READY') return { success: false, error: 'Storage offline' };
+  try {
+    return workflowSupervisor.acquireLease(payload.goalId, payload.workerId);
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('union-bot:renew-workflow-lease', async (event, payload) => {
+  if (!checkSenderAuthorized(event)) return { success: false, error: 'Unauthorized IPC sender' };
+  if (appStatus !== 'READY') return { success: false, error: 'Storage offline' };
+  try {
+    return workflowSupervisor.renewLease(payload.goalId, payload.token);
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('union-bot:release-workflow-lease', async (event, payload) => {
+  if (!checkSenderAuthorized(event)) return false;
+  if (appStatus !== 'READY') return false;
+  try {
+    return workflowSupervisor.releaseLease(payload.goalId, payload.token);
+  } catch (err) {
+    return false;
+  }
+});
+
+ipcMain.handle('union-bot:progress-next-milestone', async (event, payload) => {
+  if (!checkSenderAuthorized(event)) return { success: false, error: 'Unauthorized IPC sender' };
+  if (appStatus !== 'READY') return { success: false, error: 'Storage offline' };
+  try {
+    return workflowSupervisor.progressNextMilestone(payload.goalId, payload.workerId);
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('union-bot:complete-milestone-execution', async (event, payload) => {
+  if (!checkSenderAuthorized(event)) return { success: false, error: 'Unauthorized IPC sender' };
+  if (appStatus !== 'READY') return { success: false, error: 'Storage offline' };
+  try {
+    return workflowSupervisor.completeMilestone(payload.goalId, payload.milestoneId, payload.evidenceRef);
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('union-bot:pause-workflow', async (event) => {
+  if (!checkSenderAuthorized(event)) return { success: false, error: 'Unauthorized IPC sender' };
+  return workflowSupervisor.pauseWorkflow();
+});
+
+ipcMain.handle('union-bot:resume-workflow', async (event) => {
+  if (!checkSenderAuthorized(event)) return { success: false, error: 'Unauthorized IPC sender' };
+  return workflowSupervisor.resumeWorkflow();
+});
+
+ipcMain.handle('union-bot:get-workflow-status', async (event) => {
+  if (!checkSenderAuthorized(event)) return { state: 'UNKNOWN', activeLeasesCount: 0, activeLeases: [] };
+  return workflowSupervisor.getWorkflowStatus();
 });
 
 ipcMain.handle('union-bot:list-activity-events', async (event, payload) => {

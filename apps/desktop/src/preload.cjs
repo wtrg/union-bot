@@ -225,6 +225,31 @@ const api = {
   updateMilestoneState: async (payload) => {
     return ipcRenderer.invoke('union-bot:update-milestone-state', payload);
   },
+  // Phase V4: WorkflowSupervisor Continuous Durable Orchestration (UB-V4-U07)
+  acquireWorkflowLease: async (payload) => {
+    return ipcRenderer.invoke('union-bot:acquire-workflow-lease', payload);
+  },
+  renewWorkflowLease: async (payload) => {
+    return ipcRenderer.invoke('union-bot:renew-workflow-lease', payload);
+  },
+  releaseWorkflowLease: async (payload) => {
+    return ipcRenderer.invoke('union-bot:release-workflow-lease', payload);
+  },
+  progressNextMilestone: async (payload) => {
+    return ipcRenderer.invoke('union-bot:progress-next-milestone', payload);
+  },
+  completeMilestoneExecution: async (payload) => {
+    return ipcRenderer.invoke('union-bot:complete-milestone-execution', payload);
+  },
+  pauseWorkflow: async () => {
+    return ipcRenderer.invoke('union-bot:pause-workflow');
+  },
+  resumeWorkflow: async () => {
+    return ipcRenderer.invoke('union-bot:resume-workflow');
+  },
+  getWorkflowStatus: async () => {
+    return ipcRenderer.invoke('union-bot:get-workflow-status');
+  },
   listMilestones: async (goalId) => {
     return ipcRenderer.invoke('union-bot:list-milestones', goalId);
   },
