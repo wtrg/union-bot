@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-10-20T07:27:11.105Z",
+  "timestamp": "2026-10-20T08:11:54.343Z",
   "environment": "Real Windows Electron (Phase P9 Web Provider Extensions & 6-AI Collaboration)",
   "nodeEnv": "test",
   "results": {
@@ -29,8 +29,175 @@
     "sixAiHasImplement": true,
     "sixAiHasReview": true,
     "sixAiHasVerify": true,
+    "reviewersBoundToSessions": true,
+    "fakeStaticVoteDenied": true,
+    "mismatchedRoleVoteDenied": true,
+    "removedSessionVoteDenied": true,
     "premature6AiVoteDenied": true,
-    "sixAiRunCompleted": true
+    "stepDebug": {
+      "s1": {
+        "success": true,
+        "node": {
+          "id": "node-scope",
+          "stage": "PLAN",
+          "status": "COMPLETED"
+        }
+      },
+      "s2": {
+        "success": true,
+        "node": {
+          "id": "node-research",
+          "stage": "PLAN",
+          "status": "COMPLETED"
+        }
+      },
+      "s3": {
+        "success": true,
+        "node": {
+          "id": "node-arch",
+          "stage": "PLAN",
+          "status": "COMPLETED"
+        }
+      },
+      "impStepRes": {
+        "success": true,
+        "node": {
+          "id": "node-implement",
+          "stage": "IMPLEMENT",
+          "status": "COMPLETED",
+          "outputDigest": "9454bd26712acfa27352623c5f3a8e39ad76057e2002e17c78b5e21123fcb1e2"
+        }
+      }
+    },
+    "implementProducedAuthenticDigest": true,
+    "authenticDeepseekVoteAccepted": true,
+    "authenticCodexVoteAccepted": true,
+    "runDebug": {
+      "success": true,
+      "status": "COMPLETED",
+      "graphId": "p9-e2e-6ai-pipeline",
+      "completedAt": 1792483914341,
+      "nodes": [
+        {
+          "id": "node-scope",
+          "stage": "PLAN",
+          "status": "COMPLETED",
+          "result": {
+            "scope": "Desktop Workspace 6-AI Collaborative Integration",
+            "taskPrompt": "Build production zero-cost collaborative workspace",
+            "threadId": "/c/e2e-chatgpt-scope",
+            "sessionId": "wps_chatgpt_5a8cb639f5bb",
+            "providerId": "chatgpt",
+            "role": "LEADER",
+            "provenance": "LIVE_WEB"
+          },
+          "votes": []
+        },
+        {
+          "id": "node-research",
+          "stage": "PLAN",
+          "status": "COMPLETED",
+          "result": {
+            "researchFindings": "Evaluated multi-agent consensus security and zero-cost constraints.",
+            "sources": [
+              "https://gemini.google.com/app"
+            ],
+            "threadId": "/app/e2e-gemini-research",
+            "sessionId": "wps_gemini_a9c2da7a1ba4",
+            "providerId": "gemini",
+            "role": "RESEARCHER",
+            "provenance": "LIVE_WEB"
+          },
+          "votes": []
+        },
+        {
+          "id": "node-arch",
+          "stage": "PLAN",
+          "status": "COMPLETED",
+          "result": {
+            "architectureSpec": "6-Node DAG with cryptographic session identity binding and anti-spoofing.",
+            "threadId": "/chat/e2e-claude-arch",
+            "sessionId": "wps_claude_3c8d90904262",
+            "providerId": "claude",
+            "role": "ARCHITECT",
+            "provenance": "LIVE_WEB"
+          },
+          "votes": []
+        },
+        {
+          "id": "node-implement",
+          "stage": "IMPLEMENT",
+          "status": "COMPLETED",
+          "result": {
+            "artifactPath": "src/core.ts",
+            "digest": "9454bd26712acfa27352623c5f3a8e39ad76057e2002e17c78b5e21123fcb1e2",
+            "bytesWritten": 204,
+            "sessionId": "wps_antigravity_978584105290",
+            "providerId": "antigravity",
+            "role": "IMPLEMENTER",
+            "provenance": "LOCAL_AGENT"
+          },
+          "votes": []
+        },
+        {
+          "id": "node-algo-review",
+          "stage": "REVIEW",
+          "status": "COMPLETED",
+          "result": {
+            "reviewStatus": "APPROVED",
+            "algorithmAudit": "Algorithmic efficiency verified: zero unnecessary iterations, O(1) hash validations.",
+            "sessionId": "wps_deepseek_8182637b72a8",
+            "providerId": "deepseek",
+            "role": "REVIEWER",
+            "provenance": "LIVE_WEB"
+          },
+          "votes": [
+            {
+              "voterId": "wps_deepseek_8182637b72a8",
+              "voterRole": "REVIEWER",
+              "decision": "APPROVE",
+              "rationale": "Algorithm efficiency approved by live DeepSeek session",
+              "reviewedDigest": "9454bd26712acfa27352623c5f3a8e39ad76057e2002e17c78b5e21123fcb1e2",
+              "timestamp": 1792483914340
+            },
+            {
+              "voterId": "wps_codex_2e2f89719e4f",
+              "voterRole": "QA_SECURITY",
+              "decision": "APPROVE",
+              "rationale": "Security boundary and zero-cost verified by live Codex session",
+              "reviewedDigest": "9454bd26712acfa27352623c5f3a8e39ad76057e2002e17c78b5e21123fcb1e2",
+              "timestamp": 1792483914340
+            }
+          ]
+        },
+        {
+          "id": "node-qa-verify",
+          "stage": "VERIFY",
+          "status": "COMPLETED",
+          "result": {
+            "testsPassed": true,
+            "auditStatus": "ALL_SECURITY_CHECKS_PASSED",
+            "sessionId": "wps_codex_2e2f89719e4f",
+            "providerId": "codex",
+            "role": "QA_SECURITY",
+            "provenance": "LOCAL_AGENT",
+            "verified": true,
+            "verificationEvidence": {
+              "verifierSessionId": "wps_codex_2e2f89719e4f",
+              "syntaxVerified": true,
+              "securityBoundaryVerified": true,
+              "zeroCostConfirmed": true,
+              "timestamp": 1792483914341
+            }
+          },
+          "votes": []
+        }
+      ],
+      "historyLength": 18
+    },
+    "sixAiRunCompleted": true,
+    "codexVerificationEvidencePresent": true,
+    "allNodesHaveProviderProvenance": true
   },
   "allPassed": true
 }

@@ -170,8 +170,17 @@ describe('Union Bot Phase P9 Gate: Windows Real Electron E2E Suite', () => {
     assert.equal(evidence.results.sixAiHasImplement, true, 'P9-006: Must have Antigravity Implementation node');
     assert.equal(evidence.results.sixAiHasReview, true, 'P9-006: Must have DeepSeek Review node');
     assert.equal(evidence.results.sixAiHasVerify, true, 'P9-006: Must have Codex Verification node');
+    assert.equal(evidence.results.reviewersBoundToSessions, true, 'P9-R01-001: Authorized reviewers must be bound to active session IDs');
+    assert.equal(evidence.results.fakeStaticVoteDenied, true, 'P9-R01-001: Fake static voter session_deepseek_reviewer must be denied');
+    assert.equal(evidence.results.mismatchedRoleVoteDenied, true, 'P9-R01-001: DeepSeek claiming QA_SECURITY must be denied (ERR_ROLE_MISMATCH)');
+    assert.equal(evidence.results.removedSessionVoteDenied, true, 'P9-R01-001: Old/removed session must be denied');
     assert.equal(evidence.results.premature6AiVoteDenied, true, 'P9-006: Premature review vote before implementation digest must be denied');
+    assert.equal(evidence.results.implementProducedAuthenticDigest, true, 'P9-R01-002: Implement node must produce authentic output digest');
+    assert.equal(evidence.results.authenticDeepseekVoteAccepted, true, 'P9-R01-001: Authentic DeepSeek session vote must be accepted');
+    assert.equal(evidence.results.authenticCodexVoteAccepted, true, 'P9-R01-001: Authentic Codex session vote must be accepted');
     assert.equal(evidence.results.sixAiRunCompleted, true, 'P9-006: 6-AI pipeline execution must reach COMPLETED status');
+    assert.equal(evidence.results.codexVerificationEvidencePresent, true, 'P9-R01-002: Codex verification evidence must be recorded');
+    assert.equal(evidence.results.allNodesHaveProviderProvenance, true, 'P9-R01-002: All nodes must contain authentic provider session provenance');
 
     // Verify stdout log checks
     assert.match(stdout, /\[P9-E2E\] Check allSessionsRetrieved: true/);
@@ -200,8 +209,17 @@ describe('Union Bot Phase P9 Gate: Windows Real Electron E2E Suite', () => {
     assert.match(stdout, /\[P9-E2E\] Check sixAiHasImplement: true/);
     assert.match(stdout, /\[P9-E2E\] Check sixAiHasReview: true/);
     assert.match(stdout, /\[P9-E2E\] Check sixAiHasVerify: true/);
+    assert.match(stdout, /\[P9-E2E\] Check reviewersBoundToSessions: true/);
+    assert.match(stdout, /\[P9-E2E\] Check fakeStaticVoteDenied: true/);
+    assert.match(stdout, /\[P9-E2E\] Check mismatchedRoleVoteDenied: true/);
+    assert.match(stdout, /\[P9-E2E\] Check removedSessionVoteDenied: true/);
     assert.match(stdout, /\[P9-E2E\] Check premature6AiVoteDenied: true/);
+    assert.match(stdout, /\[P9-E2E\] Check implementProducedAuthenticDigest: true/);
+    assert.match(stdout, /\[P9-E2E\] Check authenticDeepseekVoteAccepted: true/);
+    assert.match(stdout, /\[P9-E2E\] Check authenticCodexVoteAccepted: true/);
     assert.match(stdout, /\[P9-E2E\] Check sixAiRunCompleted: true/);
+    assert.match(stdout, /\[P9-E2E\] Check codexVerificationEvidencePresent: true/);
+    assert.match(stdout, /\[P9-E2E\] Check allNodesHaveProviderProvenance: true/);
 
     // Clean up test directory
     try {

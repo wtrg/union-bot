@@ -374,6 +374,7 @@ export type ConsensusDecision = z.infer<typeof ConsensusDecisionSchema>;
 export const AuthorizedReviewerSchema = z.object({
   voterId: z.string().min(1),
   role: RoleSchema,
+  providerId: z.string().optional(),
 });
 export type AuthorizedReviewer = z.infer<typeof AuthorizedReviewerSchema>;
 
@@ -512,6 +513,7 @@ export const UnionBotErrorCodeSchema = z.enum([
   'ERR_PROVIDER_SERVICE_UNAVAILABLE',
   'ERR_PROVIDER_AUTOMATION_DISABLED',
   'ERR_PROVIDER_SESSION_NOT_FOUND',
+  'ERR_PROVIDER_HANDLER_UNAVAILABLE',
   'ERR_INVALID_FILE_SIZE',
   'ERR_INVALID_MIME_TYPE',
 ]);

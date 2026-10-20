@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-10-20T07:27:07.071Z",
+  "timestamp": "2026-10-20T08:11:50.621Z",
   "environment": "Real Windows Electron (Phase P8 Multi-Agent Task Graph & Consensus Engine)",
   "nodeEnv": "test",
   "results": {
@@ -15,6 +15,11 @@
     "junctionEscapeDenied": true,
     "cycleDetectionEnforced": true,
     "fakeQaRegistrationDenied": true,
+    "preApprovalDebug": {
+      "success": false,
+      "error": "Cannot submit vote on review node 'node-review': target code digest is not yet ready or locked by upstream implementation",
+      "code": "ERR_REVIEW_TARGET_NOT_READY"
+    },
     "preApprovalDenied": true,
     "forgedVoteDenied": true,
     "prematureStepDenied": true,

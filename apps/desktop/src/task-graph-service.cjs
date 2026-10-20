@@ -51,6 +51,7 @@ const ConsensusDecisionSchema = z.enum(['APPROVE', 'REJECT', 'ABSTAIN']);
 const AuthorizedReviewerSchema = z.object({
   voterId: z.string().min(1),
   role: RoleSchema,
+  providerId: z.string().optional(),
 });
 
 const ConsensusVoteSchema = z.object({
@@ -97,10 +98,20 @@ class TaskGraphEngineCJS extends EventEmitter {
     this.graphs = new Map();
     this.storage = options.storage;
     this.costGuard = options.costGuard || new CostGuard();
+    this.sessionRegistry = options.sessionRegistry;
+    this.providerHandlers = new Map();
     this.admissionGate = new AdmissionPolicyGate({
       costGuard: this.costGuard,
       paidApiEnabled: options.paidApiEnabled || false,
     });
+  }
+
+  setSessionRegistry(registry) {
+    this.sessionRegistry = registry;
+  }
+
+  registerProviderHandler(providerIdOrNodeId, handler) {
+    this.providerHandlers.set(providerIdOrNodeId, handler);
   }
 
   static getCanonicalPath(targetPath) {
@@ -521,6 +532,30 @@ class TaskGraphEngineCJS extends EventEmitter {
       err.code = 'ERR_UNAUTHORIZED_VOTER';
       throw err;
     }
+
+    // Backend authoritative provider session identity check (P9-R01-001)
+    const isProviderBound = Boolean(authorized.providerId || (typeof vote.voterId === 'string' && vote.voterId.startsWith('wps_')));
+    if (this.sessionRegistry && isProviderBound) {
+      const session = this.sessionRegistry.getSessionById
+        ? this.sessionRegistry.getSessionById(vote.voterId)
+        : null;
+      if (!session) {
+        const err = new Error(`ERR_PROVIDER_SESSION_NOT_FOUND: Voter '${vote.voterId}' does not correspond to an active authenticated backend provider session`);
+        err.code = 'ERR_PROVIDER_SESSION_NOT_FOUND';
+        throw err;
+      }
+      if (vote.voterRole && vote.voterRole !== session.assignedRole) {
+        const err = new Error(`ERR_ROLE_MISMATCH: Voter session '${vote.voterId}' has authoritative role '${session.assignedRole}', cannot claim role '${vote.voterRole}'`);
+        err.code = 'ERR_ROLE_MISMATCH';
+        throw err;
+      }
+      if (authorized.providerId && authorized.providerId !== session.providerId) {
+        const err = new Error(`ERR_UNAUTHORIZED_ACTION: Session provider '${session.providerId}' does not match authorized reviewer provider '${authorized.providerId}'`);
+        err.code = 'ERR_UNAUTHORIZED_ACTION';
+        throw err;
+      }
+    }
+
     if (vote.voterRole && vote.voterRole !== authorized.role) {
       const err = new Error(`Voter '${vote.voterId}' claimed role '${vote.voterRole}', but is registered as '${authorized.role}'`);
       err.code = 'ERR_ROLE_MISMATCH';
@@ -663,17 +698,30 @@ class TaskGraphEngineCJS extends EventEmitter {
       }
     }
 
+    const activeHandler = handler || this.providerHandlers.get(node.id) || (node.assignedProvider ? this.providerHandlers.get(node.assignedProvider) : undefined);
+
+    // For provider-assigned nodes, fail-closed if no handler or session transport is available (P9-R01-002)
+    if (node.assignedProvider && !activeHandler) {
+      node.status = 'FAILED';
+      node.error = `ERR_PROVIDER_HANDLER_UNAVAILABLE: No execution handler or session transport registered for provider '${node.assignedProvider}' on node '${node.id}'`;
+      this.recordHistory(graph, 'TASK_NODE_FAILED', node.id, { error: node.error });
+      const err = new Error(node.error);
+      err.code = 'ERR_PROVIDER_HANDLER_UNAVAILABLE';
+      throw err;
+    }
+
     try {
       const context = {
         graph,
         workspaceRoot: graph.workspaceRoot,
         costGuard: this.costGuard,
         admissionGate: this.admissionGate,
+        sessionRegistry: this.sessionRegistry,
         emitEvent: (evt, p) => this.recordHistory(graph, evt, node.id, p),
       };
 
-      const executionResult = handler
-        ? await handler(node, context)
+      const executionResult = activeHandler
+        ? await activeHandler(node, context)
         : { result: `Node ${node.id} executed successfully` };
 
       if (executionResult.error) {
@@ -683,7 +731,19 @@ class TaskGraphEngineCJS extends EventEmitter {
         return node;
       }
 
-      node.result = executionResult.result;
+      if (node.assignedProvider) {
+        const session = this.sessionRegistry && this.sessionRegistry.getSessionByProvider(node.assignedProvider);
+        node.result = {
+          ...(typeof executionResult.result === 'object' && executionResult.result !== null ? executionResult.result : { output: executionResult.result }),
+          sessionId: executionResult.sessionId || (session && session.sessionId),
+          providerId: node.assignedProvider,
+          role: node.assignedRole,
+          provenance: executionResult.provenance || (node.assignedProvider === 'codex' || node.assignedProvider === 'antigravity' ? 'LOCAL_AGENT' : 'LIVE_WEB'),
+        };
+      } else {
+        node.result = executionResult.result;
+      }
+
       node.outputDigest = executionResult.outputDigest;
       node.modifiedFiles = executionResult.modifiedFiles;
 
@@ -755,7 +815,15 @@ class TaskGraphEngineCJS extends EventEmitter {
       } else if (node.stage === 'IMPLEMENT') {
         node.status = 'COMPLETED';
         node.completedAt = Date.now();
-        node.outputDigest = executionResult.outputDigest || crypto.createHash('sha256').update(JSON.stringify(node.result || `${node.id}-v1`)).digest('hex');
+        if (!executionResult.outputDigest) {
+          node.status = 'FAILED';
+          node.error = `ERR_MISSING_OUTPUT_DIGEST: IMPLEMENT node must produce an authentic output digest from actual artifact execution`;
+          this.recordHistory(graph, 'TASK_NODE_FAILED', node.id, { error: node.error });
+          const err = new Error(node.error);
+          err.code = 'ERR_TASK_GRAPH_FAILED';
+          throw err;
+        }
+        node.outputDigest = executionResult.outputDigest;
 
         // Propagate outputDigest to downstream REVIEW nodes as their targetDigest (P8-R02-001)
         for (const candidate of graph.nodes.values()) {
@@ -799,6 +867,22 @@ class TaskGraphEngineCJS extends EventEmitter {
         if (modFiles.length > 0) {
           this.invalidateDownstreamReviews(graph, node.id, modFiles);
         }
+      } else if (node.stage === 'VERIFY') {
+        node.status = 'COMPLETED';
+        node.completedAt = Date.now();
+        if (node.assignedProvider && !executionResult.verificationEvidence && !executionResult.evidence) {
+          node.status = 'FAILED';
+          node.error = `ERR_MISSING_VERIFY_EVIDENCE: VERIFY node executed by provider '${node.assignedProvider}' must produce authentic verification evidence`;
+          this.recordHistory(graph, 'TASK_NODE_FAILED', node.id, { error: node.error });
+          const err = new Error(node.error);
+          err.code = 'ERR_TASK_GRAPH_FAILED';
+          throw err;
+        }
+        node.result = {
+          ...(typeof node.result === 'object' && node.result !== null ? node.result : {}),
+          verified: true,
+          verificationEvidence: executionResult.verificationEvidence || executionResult.evidence,
+        };
       } else {
         node.status = 'COMPLETED';
         node.completedAt = Date.now();
@@ -856,7 +940,10 @@ class TaskGraphEngineCJS extends EventEmitter {
           const anyFailed = Array.from(graph.nodes.values()).some((n) => n.status === 'FAILED');
           if (anyFailed) {
             graph.status = 'FAILED';
-            graph.error = 'Task graph stalled with failed node(s)';
+            if (!graph.error) {
+              const failedNode = Array.from(graph.nodes.values()).find((n) => n.status === 'FAILED' && n.error);
+              graph.error = failedNode?.error || 'Task graph stalled with failed node(s)';
+            }
             this.recordHistory(graph, 'TASK_GRAPH_FAILED', undefined, { error: graph.error });
           } else {
             graph.status = 'FAILED';
@@ -869,7 +956,7 @@ class TaskGraphEngineCJS extends EventEmitter {
 
       await Promise.all(
         runnable.map(async (node) => {
-          const handler = handlers[node.id] || handlers[node.stage];
+          const handler = handlers[node.id] || (node.assignedProvider ? handlers[node.assignedProvider] : undefined) || handlers[node.stage];
           try {
             await this.executeNode(graph, node, handler);
           } catch (execErr) {
@@ -969,20 +1056,33 @@ class TaskGraphEngineCJS extends EventEmitter {
   }
 
   static create6AIPipeline(params) {
-    const defaultAuthorizedReviewers = [
-      { voterId: 'session_chatgpt_leader', role: 'LEADER' },
-      { voterId: 'session_claude_architect', role: 'ARCHITECT' },
-      { voterId: 'session_deepseek_reviewer', role: 'REVIEWER' },
-      { voterId: 'session_codex_qa', role: 'QA_SECURITY' },
-    ];
+    let authorizedReviewers = [];
+
+    if (params.sessionRegistry) {
+      const chatgpt = params.sessionRegistry.getSessionByProvider('chatgpt');
+      const claude = params.sessionRegistry.getSessionByProvider('claude');
+      const deepseek = params.sessionRegistry.getSessionByProvider('deepseek');
+      const codex = params.sessionRegistry.getSessionByProvider('codex');
+
+      if (chatgpt) authorizedReviewers.push({ voterId: chatgpt.sessionId, role: chatgpt.assignedRole || 'LEADER', providerId: 'chatgpt' });
+      if (claude) authorizedReviewers.push({ voterId: claude.sessionId, role: claude.assignedRole || 'ARCHITECT', providerId: 'claude' });
+      if (deepseek) authorizedReviewers.push({ voterId: deepseek.sessionId, role: deepseek.assignedRole || 'REVIEWER', providerId: 'deepseek' });
+      if (codex) authorizedReviewers.push({ voterId: codex.sessionId, role: codex.assignedRole || 'QA_SECURITY', providerId: 'codex' });
+    } else if (Array.isArray(params.sessions) && params.sessions.length > 0) {
+      authorizedReviewers = params.sessions.map((s) => ({
+        voterId: s.sessionId,
+        role: s.assignedRole,
+        providerId: s.providerId,
+      }));
+    } else if (params.consensusPolicy && Array.isArray(params.consensusPolicy.authorizedReviewers) && params.consensusPolicy.authorizedReviewers.length > 0) {
+      authorizedReviewers = params.consensusPolicy.authorizedReviewers;
+    }
 
     const policy = {
       type: (params.consensusPolicy && params.consensusPolicy.type) || 'majority',
       minThreshold: params.consensusPolicy && params.consensusPolicy.minThreshold,
       requiredRoles: (params.consensusPolicy && params.consensusPolicy.requiredRoles) || ['REVIEWER', 'QA_SECURITY'],
-      authorizedReviewers: (params.consensusPolicy && params.consensusPolicy.authorizedReviewers !== undefined)
-        ? params.consensusPolicy.authorizedReviewers
-        : defaultAuthorizedReviewers,
+      authorizedReviewers,
     };
 
     return {
@@ -1051,14 +1151,24 @@ class TaskGraphEngineCJS extends EventEmitter {
  * TaskGraphService wraps TaskGraphEngine for the Electron main process
  */
 class TaskGraphService extends EventEmitter {
-  constructor(workspaceRoot, costGuard, storage) {
+  constructor(workspaceRoot, costGuard, storage, sessionRegistry) {
     super();
     this.workspaceRoot = path.resolve(workspaceRoot || process.cwd());
-    this.engine = new TaskGraphEngineCJS({ costGuard, storage });
+    this.sessionRegistry = sessionRegistry;
+    this.engine = new TaskGraphEngineCJS({ costGuard, storage, sessionRegistry });
 
     this.engine.on('graph-event', (evt) => {
       this.emit('graph-event', evt);
     });
+  }
+
+  setSessionRegistry(sessionRegistry) {
+    this.sessionRegistry = sessionRegistry;
+    this.engine.setSessionRegistry(sessionRegistry);
+  }
+
+  registerProviderHandler(providerIdOrNodeId, handler) {
+    return this.engine.registerProviderHandler(providerIdOrNodeId, handler);
   }
 
   createGraph(def) {
@@ -1104,6 +1214,7 @@ class TaskGraphService extends EventEmitter {
     return TaskGraphEngineCJS.create6AIPipeline({
       ...params,
       workspaceRoot: params.workspaceRoot || this.workspaceRoot,
+      sessionRegistry: params.sessionRegistry || this.sessionRegistry,
     });
   }
 }

@@ -371,6 +371,12 @@ if (process.env.UNION_BOT_E2E_HARNESS === '1' && process.env.NODE_ENV === 'test'
   api.testSpoofVoterIdentity = async (payload) => {
     return ipcRenderer.invoke('union-bot:test-spoof-voter-identity', payload);
   };
+  api.testCreateSession = async (payload) => {
+    return ipcRenderer.invoke('union-bot:test-create-session', payload);
+  };
+  api.testRemoveSession = async (tabId) => {
+    return ipcRenderer.invoke('union-bot:test-remove-session', tabId);
+  };
 }
 
 contextBridge.exposeInMainWorld('unionBotAPI', api);

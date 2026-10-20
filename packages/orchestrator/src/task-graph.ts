@@ -101,6 +101,7 @@ export interface TaskExecutionContext {
   workspaceRoot: string;
   costGuard: CostGuard;
   admissionGate: AdmissionPolicyGate;
+  sessionRegistry?: any;
   emitEvent: (eventType: string, payload: Record<string, unknown>) => void;
 }
 
@@ -113,6 +114,11 @@ export type TaskNodeHandler = (
   outputDigest?: string;
   votes?: ConsensusVote[];
   error?: string;
+  sessionId?: string;
+  providerId?: string;
+  provenance?: string;
+  verificationEvidence?: Record<string, unknown>;
+  evidence?: Record<string, unknown>;
 }>;
 
 export interface TaskGraphEngineOptions {
@@ -120,6 +126,7 @@ export interface TaskGraphEngineOptions {
   eventStore?: EventStore;
   costGuard?: CostGuard;
   paidApiEnabled?: boolean;
+  sessionRegistry?: any;
 }
 
 /**
@@ -131,16 +138,27 @@ export class TaskGraphEngine extends EventEmitter {
   public readonly eventStore?: EventStore;
   public readonly costGuard: CostGuard;
   public readonly admissionGate: AdmissionPolicyGate;
+  public sessionRegistry?: any;
+  private providerHandlers: Map<string, TaskNodeHandler> = new Map();
 
   constructor(options: TaskGraphEngineOptions = {}) {
     super();
     this.storage = options.storage;
     this.eventStore = options.eventStore ?? (this.storage ? new EventStore(this.storage) : undefined);
     this.costGuard = options.costGuard ?? new CostGuard();
+    this.sessionRegistry = options.sessionRegistry;
     this.admissionGate = new AdmissionPolicyGate({
       costGuard: this.costGuard,
       paidApiEnabled: options.paidApiEnabled ?? false,
     });
+  }
+
+  public setSessionRegistry(registry: any): void {
+    this.sessionRegistry = registry;
+  }
+
+  public registerProviderHandler(providerIdOrNodeId: string, handler: TaskNodeHandler): void {
+    this.providerHandlers.set(providerIdOrNodeId, handler);
   }
 
   // =========================================================================
@@ -688,6 +706,33 @@ export class TaskGraphEngine extends EventEmitter {
         message: `Voter '${vote.voterId}' is not an authorized reviewer for graph '${graphId}'`,
       });
     }
+
+    // Backend authoritative provider session identity check (P9-R01-001)
+    const isProviderBound = Boolean(authorized.providerId || (typeof vote.voterId === 'string' && vote.voterId.startsWith('wps_')));
+    if (this.sessionRegistry && isProviderBound) {
+      const session = this.sessionRegistry.getSessionById
+        ? this.sessionRegistry.getSessionById(vote.voterId)
+        : null;
+      if (!session) {
+        throw new UnionBotError({
+          code: 'ERR_PROVIDER_SESSION_NOT_FOUND',
+          message: `ERR_PROVIDER_SESSION_NOT_FOUND: Voter '${vote.voterId}' does not correspond to an active authenticated backend provider session`,
+        });
+      }
+      if (vote.voterRole && vote.voterRole !== session.assignedRole) {
+        throw new UnionBotError({
+          code: 'ERR_ROLE_MISMATCH',
+          message: `ERR_ROLE_MISMATCH: Voter session '${vote.voterId}' has authoritative role '${session.assignedRole}', cannot claim role '${vote.voterRole}'`,
+        });
+      }
+      if (authorized.providerId && authorized.providerId !== session.providerId) {
+        throw new UnionBotError({
+          code: 'ERR_UNAUTHORIZED_ACTION',
+          message: `ERR_UNAUTHORIZED_ACTION: Session provider '${session.providerId}' does not match authorized reviewer provider '${authorized.providerId}'`,
+        });
+      }
+    }
+
     if (vote.voterRole && vote.voterRole !== authorized.role) {
       throw new UnionBotError({
         code: 'ERR_ROLE_MISMATCH',
@@ -860,6 +905,19 @@ export class TaskGraphEngine extends EventEmitter {
       }
     }
 
+    const activeHandler = handler || this.providerHandlers.get(node.id) || (node.assignedProvider ? this.providerHandlers.get(node.assignedProvider) : undefined);
+
+    // For provider-assigned nodes, fail-closed if no handler or session transport is available (P9-R01-002)
+    if (node.assignedProvider && !activeHandler) {
+      node.status = 'FAILED';
+      node.error = `ERR_PROVIDER_HANDLER_UNAVAILABLE: No execution handler or session transport registered for provider '${node.assignedProvider}' on node '${node.id}'`;
+      this.recordHistory(graph, 'TASK_NODE_FAILED', node.id, { error: node.error });
+      throw new UnionBotError({
+        code: 'ERR_PROVIDER_HANDLER_UNAVAILABLE',
+        message: node.error,
+      });
+    }
+
     // 2. Execute Handler
     try {
       const context: TaskExecutionContext = {
@@ -867,11 +925,12 @@ export class TaskGraphEngine extends EventEmitter {
         workspaceRoot: graph.workspaceRoot,
         costGuard: this.costGuard,
         admissionGate: this.admissionGate,
+        sessionRegistry: this.sessionRegistry,
         emitEvent: (evt, p) => this.recordHistory(graph, evt, node.id, p),
       };
 
-      const executionResult = handler
-        ? await handler(node, context)
+      const executionResult = activeHandler
+        ? await activeHandler(node, context)
         : { result: `Node ${node.id} executed successfully` };
 
       if (executionResult.error) {
@@ -881,7 +940,19 @@ export class TaskGraphEngine extends EventEmitter {
         return node;
       }
 
-      node.result = executionResult.result;
+      if (node.assignedProvider) {
+        const session = this.sessionRegistry?.getSessionByProvider?.(node.assignedProvider);
+        node.result = {
+          ...(typeof executionResult.result === 'object' && executionResult.result !== null ? executionResult.result : { output: executionResult.result }),
+          sessionId: executionResult.sessionId || session?.sessionId,
+          providerId: node.assignedProvider,
+          role: node.assignedRole,
+          provenance: executionResult.provenance || (node.assignedProvider === 'codex' || node.assignedProvider === 'antigravity' ? 'LOCAL_AGENT' : 'LIVE_WEB'),
+        };
+      } else {
+        node.result = executionResult.result;
+      }
+
       node.outputDigest = executionResult.outputDigest;
       node.modifiedFiles = executionResult.modifiedFiles;
 
@@ -957,7 +1028,17 @@ export class TaskGraphEngine extends EventEmitter {
       } else if (node.stage === 'IMPLEMENT') {
         node.status = 'COMPLETED';
         node.completedAt = Date.now();
-        node.outputDigest = executionResult.outputDigest || crypto.createHash('sha256').update(JSON.stringify(node.result || `${node.id}-v1`)).digest('hex');
+        // Authentic output digest required (P9-R01-002)
+        if (!executionResult.outputDigest) {
+          node.status = 'FAILED';
+          node.error = `ERR_MISSING_OUTPUT_DIGEST: IMPLEMENT node must produce an authentic output digest from actual artifact execution`;
+          this.recordHistory(graph, 'TASK_NODE_FAILED', node.id, { error: node.error });
+          throw new UnionBotError({
+            code: 'ERR_TASK_GRAPH_FAILED',
+            message: node.error,
+          });
+        }
+        node.outputDigest = executionResult.outputDigest;
 
         // Propagate outputDigest to downstream REVIEW nodes as their targetDigest (P8-R02-001)
         for (const candidate of graph.nodes.values()) {
@@ -1001,6 +1082,23 @@ export class TaskGraphEngine extends EventEmitter {
         if (modFiles.length > 0) {
           this.invalidateDownstreamReviews(graph, node.id, modFiles);
         }
+      } else if (node.stage === 'VERIFY') {
+        node.status = 'COMPLETED';
+        node.completedAt = Date.now();
+        if (node.assignedProvider && !executionResult.verificationEvidence && !executionResult.evidence) {
+          node.status = 'FAILED';
+          node.error = `ERR_MISSING_VERIFY_EVIDENCE: VERIFY node executed by provider '${node.assignedProvider}' must produce authentic verification evidence`;
+          this.recordHistory(graph, 'TASK_NODE_FAILED', node.id, { error: node.error });
+          throw new UnionBotError({
+            code: 'ERR_TASK_GRAPH_FAILED',
+            message: node.error,
+          });
+        }
+        node.result = {
+          ...(typeof node.result === 'object' && node.result !== null ? node.result : {}),
+          verified: true,
+          verificationEvidence: executionResult.verificationEvidence || executionResult.evidence,
+        };
       } else {
         node.status = 'COMPLETED';
         node.completedAt = Date.now();
@@ -1067,7 +1165,10 @@ export class TaskGraphEngine extends EventEmitter {
           const anyFailed = Array.from(graph.nodes.values()).some((n) => n.status === 'FAILED');
           if (anyFailed) {
             graph.status = 'FAILED';
-            graph.error = 'Task graph stalled with failed node(s)';
+            if (!graph.error) {
+              const failedNode = Array.from(graph.nodes.values()).find((n) => n.status === 'FAILED' && n.error);
+              graph.error = failedNode?.error || 'Task graph stalled with failed node(s)';
+            }
             this.recordHistory(graph, 'TASK_GRAPH_FAILED', undefined, { error: graph.error });
           } else {
             // Stalled without runnable nodes
@@ -1082,7 +1183,7 @@ export class TaskGraphEngine extends EventEmitter {
       // Execute runnable nodes in parallel (or serial if desired)
       await Promise.all(
         runnable.map(async (node) => {
-          const handler = handlers[node.id] || handlers[node.stage];
+          const handler = handlers[node.id] || (node.assignedProvider ? handlers[node.assignedProvider] : undefined) || handlers[node.stage];
           try {
             await this.executeNode(graph, node, handler);
           } catch (execErr: any) {
@@ -1246,21 +1347,36 @@ export class TaskGraphEngine extends EventEmitter {
     targetFiles?: string[];
     consensusPolicy?: ConsensusPolicy;
     maxFixAttempts?: number;
+    sessionRegistry?: { getSessionByProvider: (providerId: string) => { sessionId: string; assignedRole?: string; providerId: string } | null };
+    sessions?: Array<{ sessionId: string; assignedRole: string; providerId: string }>;
   }): TaskGraphDefinition {
-    const defaultAuthorizedReviewers: AuthorizedReviewer[] = [
-      { voterId: 'session_chatgpt_leader', role: 'LEADER' },
-      { voterId: 'session_claude_architect', role: 'ARCHITECT' },
-      { voterId: 'session_deepseek_reviewer', role: 'REVIEWER' },
-      { voterId: 'session_codex_qa', role: 'QA_SECURITY' },
-    ];
+    let authorizedReviewers: AuthorizedReviewer[] = [];
+
+    if (params.sessionRegistry) {
+      const chatgpt = params.sessionRegistry.getSessionByProvider('chatgpt');
+      const claude = params.sessionRegistry.getSessionByProvider('claude');
+      const deepseek = params.sessionRegistry.getSessionByProvider('deepseek');
+      const codex = params.sessionRegistry.getSessionByProvider('codex');
+
+      if (chatgpt) authorizedReviewers.push({ voterId: chatgpt.sessionId, role: (chatgpt.assignedRole as Role) || 'LEADER', providerId: 'chatgpt' });
+      if (claude) authorizedReviewers.push({ voterId: claude.sessionId, role: (claude.assignedRole as Role) || 'ARCHITECT', providerId: 'claude' });
+      if (deepseek) authorizedReviewers.push({ voterId: deepseek.sessionId, role: (deepseek.assignedRole as Role) || 'REVIEWER', providerId: 'deepseek' });
+      if (codex) authorizedReviewers.push({ voterId: codex.sessionId, role: (codex.assignedRole as Role) || 'QA_SECURITY', providerId: 'codex' });
+    } else if (params.sessions && params.sessions.length > 0) {
+      authorizedReviewers = params.sessions.map((s) => ({
+        voterId: s.sessionId,
+        role: s.assignedRole as Role,
+        providerId: s.providerId,
+      }));
+    } else if (params.consensusPolicy?.authorizedReviewers && params.consensusPolicy.authorizedReviewers.length > 0) {
+      authorizedReviewers = params.consensusPolicy.authorizedReviewers;
+    }
 
     const policy: ConsensusPolicy = {
       type: params.consensusPolicy?.type || 'majority',
       minThreshold: params.consensusPolicy?.minThreshold,
       requiredRoles: params.consensusPolicy?.requiredRoles || ['REVIEWER', 'QA_SECURITY'],
-      authorizedReviewers: params.consensusPolicy?.authorizedReviewers !== undefined
-        ? params.consensusPolicy.authorizedReviewers
-        : defaultAuthorizedReviewers,
+      authorizedReviewers,
     };
 
     return {

@@ -84,6 +84,9 @@ describe('Phase P9: 6-AI Collaborative Workflow Engine Tests', () => {
       name: 'Anti Pre-Approval Test',
       workspaceRoot: process.cwd(),
       taskPrompt: 'Test task',
+      sessions: [
+        { sessionId: 'wps_deepseek_9999', assignedRole: 'REVIEWER', providerId: 'deepseek' },
+      ],
     });
 
     const engine = new TaskGraphEngine();
@@ -93,7 +96,7 @@ describe('Phase P9: 6-AI Collaborative Workflow Engine Tests', () => {
     assert.throws(
       () => {
         engine.submitVote(graph.id, 'node-algo-review', {
-          voterId: 'session_deepseek_reviewer',
+          voterId: 'wps_deepseek_9999',
           voterRole: 'REVIEWER',
           decision: 'APPROVE',
           rationale: 'Premature approval attempt',
@@ -108,11 +111,19 @@ describe('Phase P9: 6-AI Collaborative Workflow Engine Tests', () => {
   });
 
   it('P9-6AI-04: Full 6-AI collaboration runs to COMPLETED when consensus is reached', async () => {
+    const mockSessions = [
+      { sessionId: 'wps_chatgpt_001', assignedRole: 'LEADER', providerId: 'chatgpt' },
+      { sessionId: 'wps_claude_002', assignedRole: 'ARCHITECT', providerId: 'claude' },
+      { sessionId: 'wps_deepseek_003', assignedRole: 'REVIEWER', providerId: 'deepseek' },
+      { sessionId: 'wps_codex_004', assignedRole: 'QA_SECURITY', providerId: 'codex' },
+    ];
+
     const pipeline = TaskGraphEngine.create6AIPipeline({
       id: 'pipeline-run-6ai',
       name: 'Full 6-AI Run',
       workspaceRoot: process.cwd(),
       taskPrompt: 'Full collaboration test',
+      sessions: mockSessions,
     });
 
     const engine = new TaskGraphEngine();
@@ -139,7 +150,7 @@ describe('Phase P9: 6-AI Collaborative Workflow Engine Tests', () => {
         result: { review: 'Algorithms optimal, no leaks' },
         votes: [
           {
-            voterId: 'session_deepseek_reviewer',
+            voterId: 'wps_deepseek_003',
             voterRole: 'REVIEWER' as const,
             decision: 'APPROVE' as const,
             rationale: 'Algorithmic efficiency verified',
@@ -147,7 +158,7 @@ describe('Phase P9: 6-AI Collaborative Workflow Engine Tests', () => {
             timestamp: Date.now(),
           },
           {
-            voterId: 'session_codex_qa',
+            voterId: 'wps_codex_004',
             voterRole: 'QA_SECURITY' as const,
             decision: 'APPROVE' as const,
             rationale: 'Security and edge case verification pass',
@@ -158,6 +169,11 @@ describe('Phase P9: 6-AI Collaborative Workflow Engine Tests', () => {
       }),
       'node-qa-verify': async () => ({
         result: { verification: '100% tests passing' },
+        verificationEvidence: {
+          testCoverage: 100,
+          zeroCostVerified: true,
+          securityAuditPass: true,
+        },
       }),
     };
 
@@ -167,5 +183,160 @@ describe('Phase P9: 6-AI Collaborative Workflow Engine Tests', () => {
     for (const node of completedGraph.nodes.values()) {
       assert.equal(node.status, 'COMPLETED');
     }
+  });
+
+  it('P9-6AI-05: Missing provider handler fails closed with ERR_PROVIDER_HANDLER_UNAVAILABLE', async () => {
+    const pipeline = TaskGraphEngine.create6AIPipeline({
+      id: 'pipeline-fail-closed',
+      name: 'Fail Closed Provider Handler Test',
+      workspaceRoot: process.cwd(),
+      taskPrompt: 'Fail closed test',
+    });
+
+    const engine = new TaskGraphEngine();
+    const graph = engine.createGraph(pipeline);
+    const nodeScope = graph.nodes.get('node-scope')!;
+
+    // 1. Calling executeNode directly rejects fail-closed
+    await assert.rejects(
+      async () => {
+        await engine.executeNode(graph, nodeScope);
+      },
+      (err: any) => {
+        return err.code === 'ERR_PROVIDER_HANDLER_UNAVAILABLE';
+      }
+    );
+
+    // 2. Calling runGraph captures failure and sets graph.status = 'FAILED'
+    const resultGraph = await engine.runGraph(graph.id, {});
+    assert.equal(resultGraph.status, 'FAILED');
+    assert.match(resultGraph.error || '', /ERR_PROVIDER_HANDLER_UNAVAILABLE/);
+  });
+
+  it('P9-6AI-06: IMPLEMENT stage missing outputDigest fails closed', async () => {
+    const pipeline = TaskGraphEngine.create6AIPipeline({
+      id: 'pipeline-missing-digest',
+      name: 'Missing Digest Test',
+      workspaceRoot: process.cwd(),
+      taskPrompt: 'Missing digest test',
+    });
+
+    const engine = new TaskGraphEngine();
+    const graph = engine.createGraph(pipeline);
+    const nodeImplement = graph.nodes.get('node-implement')!;
+
+    // 1. Calling executeNode directly rejects fail-closed
+    await assert.rejects(
+      async () => {
+        await engine.executeNode(graph, nodeImplement, async () => ({
+          result: { code: 'done' }, // No outputDigest!
+        }));
+      },
+      (err: any) => {
+        return err.message && err.message.includes('must produce an authentic output digest');
+      }
+    );
+
+    // 2. Calling runGraph with an implementer lacking outputDigest sets graph.status = 'FAILED'
+    const handlers = {
+      'node-scope': async () => ({ result: {} }),
+      'node-research': async () => ({ result: {} }),
+      'node-arch': async () => ({ result: {} }),
+      'node-implement': async () => ({ result: { code: 'done' } }), // No outputDigest!
+    };
+    const resultGraph = await engine.runGraph(graph.id, handlers);
+    assert.equal(resultGraph.status, 'FAILED');
+    assert.match(resultGraph.error || '', /must produce an authentic output digest/);
+  });
+
+  it('P9-6AI-07: Dynamic session verification strictly enforces live session registry and roles', () => {
+    const mockSessionMap = new Map<string, any>([
+      ['wps_deepseek_live', { sessionId: 'wps_deepseek_live', providerId: 'deepseek', assignedRole: 'REVIEWER' }],
+      ['wps_codex_live', { sessionId: 'wps_codex_live', providerId: 'codex', assignedRole: 'QA_SECURITY' }],
+    ]);
+
+    const mockRegistry = {
+      getSessionById: (id: string) => mockSessionMap.get(id) || null,
+      getSessionByProvider: (provider: string) => {
+        for (const s of mockSessionMap.values()) {
+          if (s.providerId === provider) return s;
+        }
+        return null;
+      },
+    };
+
+    const pipeline = TaskGraphEngine.create6AIPipeline({
+      id: 'pipeline-session-enforcement',
+      name: 'Session Enforcement Test',
+      workspaceRoot: process.cwd(),
+      taskPrompt: 'Session enforcement test',
+      sessionRegistry: mockRegistry,
+    });
+
+    const engine = new TaskGraphEngine({ sessionRegistry: mockRegistry });
+    const graph = engine.createGraph(pipeline);
+
+    // Set target digest on review node to bypass pre-approval check
+    const reviewNode = graph.nodes.get('node-algo-review')!;
+    reviewNode.targetDigest = 'a'.repeat(64);
+
+    // 1. Static fake voter ID must be denied fail-closed
+    assert.throws(
+      () => {
+        engine.submitVote(graph.id, 'node-algo-review', {
+          voterId: 'session_deepseek_fake',
+          voterRole: 'REVIEWER',
+          decision: 'APPROVE',
+          rationale: 'Fake voter',
+          reviewedDigest: 'a'.repeat(64),
+          timestamp: Date.now(),
+        });
+      },
+      (err: any) => err.code === 'ERR_UNAUTHORIZED_VOTER'
+    );
+
+    // 2. Mismatched role must be denied fail-closed
+    assert.throws(
+      () => {
+        engine.submitVote(graph.id, 'node-algo-review', {
+          voterId: 'wps_deepseek_live',
+          voterRole: 'QA_SECURITY' as any, // Trying to vote as QA_SECURITY
+          decision: 'APPROVE',
+          rationale: 'Role spoof',
+          reviewedDigest: 'a'.repeat(64),
+          timestamp: Date.now(),
+        });
+      },
+      (err: any) => err.code === 'ERR_ROLE_MISMATCH'
+    );
+
+    // 3. Removed session must be denied fail-closed
+    mockSessionMap.delete('wps_deepseek_live');
+    assert.throws(
+      () => {
+        engine.submitVote(graph.id, 'node-algo-review', {
+          voterId: 'wps_deepseek_live',
+          voterRole: 'REVIEWER',
+          decision: 'APPROVE',
+          rationale: 'Vote after removal',
+          reviewedDigest: 'a'.repeat(64),
+          timestamp: Date.now(),
+        });
+      },
+      (err: any) => err.code === 'ERR_PROVIDER_SESSION_NOT_FOUND'
+    );
+
+    // 4. Authentic active session is accepted
+    engine.submitVote(graph.id, 'node-algo-review', {
+      voterId: 'wps_codex_live',
+      voterRole: 'QA_SECURITY',
+      decision: 'APPROVE',
+      rationale: 'Authentic QA verification',
+      reviewedDigest: 'a'.repeat(64),
+      timestamp: Date.now(),
+    });
+
+    assert.equal(reviewNode.votes.length, 1);
+    assert.equal(reviewNode.votes[0].voterId, 'wps_codex_live');
   });
 });

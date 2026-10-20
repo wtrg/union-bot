@@ -868,6 +868,12 @@ class ProviderSessionRegistry {
     this.sessionsById.delete(session.sessionId);
     if (this.sessionsByProvider.get(session.providerId)?.sessionId === session.sessionId) {
       this.sessionsByProvider.delete(session.providerId);
+      for (const remaining of this.sessionsById.values()) {
+        if (remaining.providerId === session.providerId) {
+          this.sessionsByProvider.set(session.providerId, remaining);
+          break;
+        }
+      }
     }
     return true;
   }
