@@ -134,6 +134,9 @@ describe('Union Bot Phase P10 Gate: Windows Real Electron UI UAT Suite', () => {
     assert.ok(fs.existsSync(evidencePath), 'P10 UAT evidence JSON must be written');
     const evidence = JSON.parse(fs.readFileSync(evidencePath, 'utf8'));
     assert.equal(evidence.allPassed, true);
+    assert.equal(evidence.testMode, 'ELECTRON_INTEGRATION_MOCK_NATIVE_TRANSPORT', 'Test mode must honestly declare mock native transport');
+    assert.equal(evidence.t1LiveStatus, 'NOT_LIVE_VERIFIED', 'T1 must be marked NOT_LIVE_VERIFIED during mock harness');
+    assert.equal(evidence.zeroCostConfirmed, true, 'Zero-cost constraint must be confirmed');
 
     // Assert individual UAT capabilities
     assert.equal(evidence.results.hasUnionBotAPI, true, 'UAT: Preload unionBotAPI must expose executeTask');
@@ -150,6 +153,11 @@ describe('Union Bot Phase P10 Gate: Windows Real Electron UI UAT Suite', () => {
     assert.equal(evidence.results.persistedCompleted, true, 'UAT: Task must remain completed across listTasks query');
     assert.equal(evidence.results.traversalDenied, true, 'UAT: Path traversal must be blocked fail-closed');
     assert.equal(evidence.results.localUtilityVerified, true, 'UAT: Local utility tasks must be honestly labeled LOCAL_UTILITY (not native)');
+    assert.equal(evidence.results.emptyAgentOutputFailedClosed, true, 'UAT: Empty agent output must fail closed with ERR_EMPTY_AGENT_OUTPUT');
+    assert.equal(evidence.results.emptyFileNotCreatedOnDisk, true, 'UAT: Failed empty output task must not create file on disk');
+    assert.equal(evidence.results.emptyOverwriteAttemptFailedClosed, true, 'UAT: Empty output task must not succeed against existing artifact');
+    assert.equal(evidence.results.existingArtifactPreserved, true, 'UAT: Existing artifact must NOT be overwritten by empty agent output');
+    assert.equal(evidence.results.verificationFailureFailedClosed, true, 'UAT: Mandatory Codex verification failure must fail closed with ERR_CODEX_VERIFICATION_FAILED');
     assert.equal(evidence.results.diskFileCreated, true, 'UAT: scratch/hello.txt must be created on disk');
     assert.equal(evidence.results.diskContentMatches, true, 'UAT: scratch/hello.txt content must match exact bytes');
     assert.equal(evidence.results.diskByteSizeMatches, true, 'UAT: scratch/hello.txt must be 15 bytes');

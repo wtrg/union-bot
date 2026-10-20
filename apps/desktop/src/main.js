@@ -4641,6 +4641,16 @@ function createWindow() {
         if (fs.existsSync(targetCalc)) {
           try { fs.unlinkSync(targetCalc); } catch {}
         }
+        const protectedArtifact = path.resolve(targetWorkspace, 'scratch/protected_artifact.txt');
+        fs.writeFileSync(protectedArtifact, 'ORIGINAL_PROTECTED_CONTENT', 'utf8');
+        const emptyTargetAbs = path.resolve(targetWorkspace, 'scratch/empty_test_target.txt');
+        if (fs.existsSync(emptyTargetAbs)) {
+          try { fs.unlinkSync(emptyTargetAbs); } catch {}
+        }
+        const corruptTargetAbs = path.resolve(targetWorkspace, 'scratch/corrupt_syntax.ts');
+        if (fs.existsSync(corruptTargetAbs)) {
+          try { fs.unlinkSync(corruptTargetAbs); } catch {}
+        }
 
         // In E2E harness, enable deterministic mock transport for native Antigravity pipeline
         if (process.env.UNION_BOT_E2E_HARNESS === '1' && antigravityService) {
@@ -4736,10 +4746,10 @@ function createWindow() {
             });
             const cancelId = cancelTask && cancelTask.task ? cancelTask.task.id : null;
             const cancelExecPromise = window.unionBotAPI.executeTask({ taskId: cancelId });
-            await new Promise(r => setTimeout(r, 10));
             const cancelReqRes = await window.unionBotAPI.cancelTask({ taskId: cancelId });
             res.cancelRequestedTransition = Boolean(cancelReqRes && cancelReqRes.success && cancelReqRes.status === 'cancel_requested');
             const cancelFinal = await cancelExecPromise;
+            res.cancelFinalRaw = cancelFinal;
             res.cancelFinalizedAsCancelled = Boolean(cancelFinal && cancelFinal.status === 'cancelled');
 
             // 8. Persistence check across listTasks
@@ -4774,6 +4784,63 @@ function createWindow() {
               calcExec.executionResult.isNativeAgent === false
             );
 
+            // 11. Negative Test: Empty Agent Output Fail-Closed (ERR_EMPTY_AGENT_OUTPUT)
+            if (window.unionBotAPI.testSetAntigravityMock) {
+              await window.unionBotAPI.testSetAntigravityMock([
+                JSON.stringify({ event: 'init', init: { cwd: '.', tools: [] } }),
+                JSON.stringify({
+                  event: 'result',
+                  result: { conversation_id: 'conv-empty-fail', status: 'SUCCESS', response: '   ', duration_seconds: 0.1, num_turns: 1, usage: { input_tokens: 5, output_tokens: 0, total_tokens: 5 } }
+                })
+              ]);
+            }
+            const emptyTask = await window.unionBotAPI.createTask({
+              title: 'Tạo file scratch/empty_test_target.txt chứa nội dung rỗng',
+              status: 'pending',
+              progress: 0,
+              metadata: { role: 'IMPLEMENTER', provider: 'antigravity' }
+            });
+            const emptyExecRes = await window.unionBotAPI.executeTask({ taskId: emptyTask?.task?.id });
+            res.emptyExecRes = emptyExecRes;
+            res.emptyAgentOutputFailedClosed = Boolean(
+              emptyExecRes &&
+              emptyExecRes.success === false &&
+              emptyExecRes.status === 'failed' &&
+              emptyExecRes.errorCode === 'ERR_EMPTY_AGENT_OUTPUT'
+            );
+
+            // 12. Negative Test: Existing Artifact Not Overwritten by Empty Output Task
+            const overwriteAttemptTask = await window.unionBotAPI.createTask({
+              title: 'Tạo file scratch/protected_artifact.txt với nội dung rỗng',
+              status: 'pending',
+              progress: 0,
+              metadata: { role: 'IMPLEMENTER', provider: 'antigravity' }
+            });
+            const overwriteExecRes = await window.unionBotAPI.executeTask({ taskId: overwriteAttemptTask?.task?.id });
+            res.overwriteExecRes = overwriteExecRes;
+            res.emptyOverwriteAttemptFailedClosed = Boolean(
+              overwriteExecRes &&
+              overwriteExecRes.success === false &&
+              overwriteExecRes.status === 'failed' &&
+              overwriteExecRes.errorCode === 'ERR_EMPTY_AGENT_OUTPUT'
+            );
+
+            // 13. Negative Test: Mandatory Codex Verification Failure Fail-Closed (Corrupt TS Syntax)
+            const corruptTask = await window.unionBotAPI.createTask({
+              title: 'Tạo file scratch/corrupt_syntax.ts nội dung { invalid ts syntax const = ;',
+              status: 'pending',
+              progress: 0,
+              metadata: { role: 'LOCAL_UTILITY', provider: 'LOCAL_UTILITY', requireVerification: true }
+            });
+            const corruptExecRes = await window.unionBotAPI.executeTask({ taskId: corruptTask?.task?.id });
+            res.corruptExecRes = corruptExecRes;
+            res.verificationFailureFailedClosed = Boolean(
+              corruptExecRes &&
+              corruptExecRes.success === false &&
+              corruptExecRes.status === 'failed' &&
+              corruptExecRes.errorCode === 'ERR_CODEX_VERIFICATION_FAILED'
+            );
+
             if (unsub) unsub();
             return res;
           })()
@@ -4796,6 +4863,9 @@ function createWindow() {
           persistedCompleted: Boolean(uatResult?.persistedCompleted),
           traversalDenied: Boolean(uatResult?.traversalDenied),
           localUtilityVerified: Boolean(uatResult?.localUtilityVerified),
+          emptyAgentOutputFailedClosed: Boolean(uatResult?.emptyAgentOutputFailedClosed),
+          emptyOverwriteAttemptFailedClosed: Boolean(uatResult?.emptyOverwriteAttemptFailedClosed),
+          verificationFailureFailedClosed: Boolean(uatResult?.verificationFailureFailedClosed),
         };
 
         // File system verification on main process side
@@ -4809,6 +4879,11 @@ function createWindow() {
         results.diskContentMatches = helloContent === 'HELLO UNION BOT';
         results.diskByteSizeMatches = helloSize === 15;
         results.diskDigestMatches = helloDigest === expectedDigest;
+
+        // Negative test disk assertions
+        results.emptyFileNotCreatedOnDisk = !fs.existsSync(emptyTargetAbs);
+        const protectedContent = fs.existsSync(protectedArtifact) ? fs.readFileSync(protectedArtifact, 'utf8') : '';
+        results.existingArtifactPreserved = protectedContent === 'ORIGINAL_PROTECTED_CONTENT';
 
         // Codex verification evidence
         const execResult = uatResult?.executionResult;
@@ -4838,6 +4913,11 @@ function createWindow() {
           'persistedCompleted',
           'traversalDenied',
           'localUtilityVerified',
+          'emptyAgentOutputFailedClosed',
+          'emptyFileNotCreatedOnDisk',
+          'emptyOverwriteAttemptFailedClosed',
+          'existingArtifactPreserved',
+          'verificationFailureFailedClosed',
           'diskFileCreated',
           'diskContentMatches',
           'diskByteSizeMatches',
@@ -4862,6 +4942,10 @@ function createWindow() {
         fs.writeFileSync(evidencePath, JSON.stringify({
           timestamp: new Date().toISOString(),
           environment: 'Real Windows Electron (Phase P10 UI Task Execution UAT)',
+          testMode: 'ELECTRON_INTEGRATION_MOCK_NATIVE_TRANSPORT',
+          t1LiveStatus: 'NOT_LIVE_VERIFIED',
+          zeroCostConfirmed: true,
+          harnessNote: 'E2E harness uses deterministic mock native transport to strictly enforce zero-cost constraint. Live model calls remain gated until zero-cost/quota is verified.',
           nodeEnv: process.env.NODE_ENV || 'production',
           allPassed,
           results,
@@ -5336,6 +5420,9 @@ ipcMain.handle('union-bot:task-execute', async (event, payload) => {
     });
     broadcastTaskUpdate(taskId, { status: 'running', progress: 10 });
 
+    let verifyEvidence = null;
+    let verifiedByCodex = false;
+
     try {
       let outputContent = '';
       let bytesWritten = 0;
@@ -5346,6 +5433,10 @@ ipcMain.handle('union-bot:task-execute', async (event, payload) => {
       const targetAbsFile = path.resolve(targetWorkspace, targetRelFile);
       const parentDir = path.dirname(targetAbsFile);
       if (!fs.existsSync(parentDir)) fs.mkdirSync(parentDir, { recursive: true });
+
+      // Track pre-execution state of target artifact on disk
+      const initialFileExists = fs.existsSync(targetAbsFile);
+      const initialStat = initialFileExists ? fs.statSync(targetAbsFile) : null;
 
       if (isLocalUtility) {
         // LOCAL DETERMINISTIC UTILITY (Not native AI agent, honest provider label)
@@ -5371,30 +5462,88 @@ ipcMain.handle('union-bot:task-execute', async (event, payload) => {
           utilityOutput = `Local utility execution for: ${task.title}`;
         }
         outputContent = utilityOutput;
+        fs.writeFileSync(targetAbsFile, outputContent, 'utf8');
+        bytesWritten = Buffer.byteLength(outputContent, 'utf8');
+        outputDigest = crypto.createHash('sha256').update(fs.readFileSync(targetAbsFile)).digest('hex');
       } else if (assignedProvider === 'antigravity') {
         // AUTHENTIC NATIVE AGENT ROUTE (No shortcuts)
         cancelFn = () => {
           isCancelled = true;
+          cancelRequested = true;
           executionEntry.isCancelled = true;
+          executionEntry.cancelRequested = true;
           if (antigravityService) antigravityService.cancelTurn();
         };
         const turnRes = await antigravityService.executePrompt(task.title, { cwd: targetWorkspace, timeoutMs: 30000 });
         if (!turnRes || turnRes.success === false) {
           throw new Error(turnRes?.error || 'ERR_ANTIGRAVITY_EXECUTION_FAILED');
         }
-        outputContent = turnRes.response || '';
+
+        // Check if agent directly created or modified the authentic target artifact on disk
+        const currentFileExists = fs.existsSync(targetAbsFile);
+        const currentStat = currentFileExists ? fs.statSync(targetAbsFile) : null;
+        const fileCreatedDirectly = currentFileExists && currentStat.size > 0 && (
+          !initialStat ||
+          currentStat.mtimeMs > initialStat.mtimeMs ||
+          currentStat.size !== initialStat.size
+        );
+
+        if (fileCreatedDirectly) {
+          // Authentic workspace artifact produced directly by the agent
+          // DO NOT overwrite with conversational response!
+          const fileBuf = fs.readFileSync(targetAbsFile);
+          outputContent = fileBuf.toString('utf8');
+          bytesWritten = currentStat.size;
+          outputDigest = crypto.createHash('sha256').update(fileBuf).digest('hex');
+        } else {
+          // Agent returned content in turnRes.response
+          const responseText = (turnRes.response || '').trim();
+          if (!responseText) {
+            // Fail-closed: empty/no meaningful output and no file artifact created
+            throw new Error('ERR_EMPTY_AGENT_OUTPUT: Native agent turn returned empty response and no target artifact was created on disk');
+          }
+          outputContent = turnRes.response;
+          fs.writeFileSync(targetAbsFile, outputContent, 'utf8');
+          bytesWritten = Buffer.byteLength(outputContent, 'utf8');
+          outputDigest = crypto.createHash('sha256').update(fs.readFileSync(targetAbsFile)).digest('hex');
+        }
       } else if (assignedProvider === 'codex') {
         // AUTHENTIC CODEX AGENT ROUTE (No shortcuts)
         cancelFn = () => {
           isCancelled = true;
+          cancelRequested = true;
           executionEntry.isCancelled = true;
+          executionEntry.cancelRequested = true;
           if (codexService) codexService.cancelTurn();
         };
         const turnRes = await codexService.executeTurn(task.title, { cwd: targetWorkspace });
         if (!turnRes || turnRes.success === false) {
           throw new Error(turnRes?.error || 'ERR_CODEX_EXECUTION_FAILED');
         }
-        outputContent = turnRes.response || '';
+
+        const currentFileExists = fs.existsSync(targetAbsFile);
+        const currentStat = currentFileExists ? fs.statSync(targetAbsFile) : null;
+        const fileCreatedDirectly = currentFileExists && currentStat.size > 0 && (
+          !initialStat ||
+          currentStat.mtimeMs > initialStat.mtimeMs ||
+          currentStat.size !== initialStat.size
+        );
+
+        if (fileCreatedDirectly) {
+          const fileBuf = fs.readFileSync(targetAbsFile);
+          outputContent = fileBuf.toString('utf8');
+          bytesWritten = currentStat.size;
+          outputDigest = crypto.createHash('sha256').update(fileBuf).digest('hex');
+        } else {
+          const responseText = (turnRes.response || '').trim();
+          if (!responseText) {
+            throw new Error('ERR_EMPTY_AGENT_OUTPUT: Native agent turn returned empty response and no target artifact was created on disk');
+          }
+          outputContent = turnRes.response;
+          fs.writeFileSync(targetAbsFile, outputContent, 'utf8');
+          bytesWritten = Buffer.byteLength(outputContent, 'utf8');
+          outputDigest = crypto.createHash('sha256').update(fs.readFileSync(targetAbsFile)).digest('hex');
+        }
       } else {
         throw new Error(`ERR_PROVIDER_NOT_SUPPORTED: Provider '${assignedProvider}' is not supported for native task execution`);
       }
@@ -5402,10 +5551,6 @@ ipcMain.handle('union-bot:task-execute', async (event, payload) => {
       if (isCancelled || cancelRequested || executionEntry.cancelRequested) {
         throw new Error('ERR_TASK_CANCELLED: Task execution was cancelled by user');
       }
-
-      fs.writeFileSync(targetAbsFile, outputContent, 'utf8');
-      bytesWritten = Buffer.byteLength(outputContent, 'utf8');
-      outputDigest = crypto.createHash('sha256').update(outputContent).digest('hex');
 
       try {
         if (artifactStore && typeof artifactStore.put === 'function') {
@@ -5415,10 +5560,56 @@ ipcMain.handle('union-bot:task-execute', async (event, payload) => {
 
       broadcastTaskUpdate(taskId, { status: 'running', progress: 70, statusMessage: 'Codex verifying artifact...' });
 
-      let verifyEvidence = null;
-      let verifiedByCodex = false;
-      if (codexService && typeof codexService.executeVerification === 'function') {
+      verifyEvidence = null;
+      verifiedByCodex = false;
+
+      // Verification requirement: Native agents or tasks with requireVerification require mandatory Codex verification
+      const requiresCodexVerification = !isLocalUtility || Boolean(task.metadata?.requireVerification);
+
+      if (requiresCodexVerification) {
+        if (!codexService || typeof codexService.executeVerification !== 'function') {
+          throw new Error('ERR_CODEX_HANDLER_UNAVAILABLE: Native codexService is required for mandatory verification but is unavailable');
+        }
+
         cancelFn = () => { isCancelled = true; if (codexService) codexService.cancelTurn(); };
+
+        let verifyRes;
+        try {
+          verifyRes = await codexService.executeVerification({
+            files: [targetRelFile],
+            workspaceRoot: targetWorkspace,
+            targetDigest: outputDigest,
+            requireTargetDigest: true,
+            stage: 'VERIFY',
+          });
+        } catch (vErr) {
+          throw new Error(`ERR_CODEX_VERIFICATION_FAILED: Verification execution error: ${vErr.message}`);
+        }
+
+        if (!verifyRes || !verifyRes.success) {
+          throw new Error(`ERR_CODEX_VERIFICATION_FAILED: ${verifyRes?.error || 'Codex verification rejected artifact'}`);
+        }
+
+        verifyEvidence = {
+          verified: true,
+          syntaxVerified: targetRelFile.endsWith('.txt') ? 'NOT_APPLICABLE' : Boolean(verifyRes.syntaxVerified),
+          securityBoundaryVerified: Boolean(verifyRes.securityBoundaryVerified),
+          zeroCostConfirmed: Boolean(verifyRes.zeroCostConfirmed),
+          digestVerified: Boolean(verifyRes.digestVerified),
+          targetDigest: outputDigest,
+        };
+
+        verifiedByCodex = Boolean(
+          verifyEvidence.verified &&
+          verifyEvidence.securityBoundaryVerified &&
+          verifyEvidence.digestVerified &&
+          verifyEvidence.zeroCostConfirmed
+        );
+
+        if (!verifiedByCodex) {
+          throw new Error('ERR_CODEX_VERIFICATION_FAILED: Artifact failed security, digest, or zero-cost verification checks');
+        }
+      } else if (codexService && typeof codexService.executeVerification === 'function') {
         try {
           const verifyRes = await codexService.executeVerification({
             files: [targetRelFile],
@@ -5427,7 +5618,6 @@ ipcMain.handle('union-bot:task-execute', async (event, payload) => {
             requireTargetDigest: true,
             stage: 'VERIFY',
           });
-
           if (verifyRes && verifyRes.success) {
             verifyEvidence = {
               verified: true,
@@ -5443,18 +5633,8 @@ ipcMain.handle('union-bot:task-execute', async (event, payload) => {
               verifyEvidence.digestVerified &&
               verifyEvidence.zeroCostConfirmed
             );
-          } else {
-            verifyEvidence = {
-              verified: false,
-              error: verifyRes?.error || 'Codex verification failed',
-            };
-            verifiedByCodex = false;
           }
-        } catch (vErr) {
-          console.warn('[UnionBot] Codex verification error:', vErr);
-          verifyEvidence = { verified: false, error: vErr.message };
-          verifiedByCodex = false;
-        }
+        } catch {}
       }
 
       if (isCancelled || cancelRequested || executionEntry.cancelRequested) {
@@ -5474,6 +5654,10 @@ ipcMain.handle('union-bot:task-execute', async (event, payload) => {
         isNativeAgent: !isLocalUtility,
         completedAt: Date.now(),
       };
+
+      if (isCancelled || cancelRequested || executionEntry.cancelRequested || executionEntry.isCancelled) {
+        throw new Error('ERR_TASK_CANCELLED: Task execution was cancelled by user');
+      }
 
       await storage.updateTask(taskId, {
         status: 'completed',
@@ -5501,9 +5685,10 @@ ipcMain.handle('union-bot:task-execute', async (event, payload) => {
         executionResult,
       };
     } catch (err) {
-      const isCancel = isCancelled || cancelRequested || executionEntry.cancelRequested || err.message?.includes('ERR_TASK_CANCELLED');
+      const isCancel = isCancelled || cancelRequested || executionEntry.cancelRequested || executionEntry.isCancelled || err.message?.includes('ERR_TASK_CANCELLED') || err.message?.includes('CANCEL');
       const finalStatus = isCancel ? 'cancelled' : 'failed';
       const statusMessage = isCancel ? 'Execution cancelled by user' : `Execution failed: ${err.message}`;
+      const errorCode = err.code || (err.message?.startsWith('ERR_') ? err.message.split(':')[0].trim() : 'ERR_EXECUTION_FAILED');
 
       await storage.updateTask(taskId, {
         status: finalStatus,
@@ -5511,7 +5696,10 @@ ipcMain.handle('union-bot:task-execute', async (event, payload) => {
         metadata: {
           ...(task.metadata || {}),
           error: err.message,
+          errorCode,
           statusMessage,
+          verifiedByCodex: false,
+          verificationEvidence: verifyEvidence || { verified: false, error: err.message },
         }
       });
 
@@ -5519,7 +5707,9 @@ ipcMain.handle('union-bot:task-execute', async (event, payload) => {
         status: finalStatus,
         progress: 0,
         error: err.message,
+        errorCode,
         statusMessage,
+        verifiedByCodex: false,
       });
 
       return {
@@ -5527,6 +5717,7 @@ ipcMain.handle('union-bot:task-execute', async (event, payload) => {
         taskId,
         status: finalStatus,
         error: err.message,
+        errorCode,
       };
     } finally {
       activeTaskExecutions.delete(taskId);

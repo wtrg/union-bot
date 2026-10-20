@@ -1,51 +1,50 @@
 # BÁO CÁO KHẮC PHỤC TOÀN DIỆN & KẾT QUẢ UAT THỰC TẾ (PHASE P10 / T1+T2)
 
-- **Thời điểm hoàn thành:** 2026-10-20 21:47 Asia/Saigon
+- **Thời điểm hoàn thành:** 2026-10-20 22:28 Asia/Saigon
 - **Căn cứ chỉ đạo:** 
   - Yêu cầu của QA/Codex tại `reports/qa/ANTIGRAVITY_MONITOR_20261020_2050.md` và `2130.md`.
-  - Phê duyệt chính thức của Technical Leader trên ChatGPT Web: `TECHNICAL LEADER — APPROVED: GO_P10-T1/T2-REMEDIATION`.
+  - Phê duyệt chính thức của Technical Leader trên ChatGPT Web: `TECHNICAL LEADER — APPROVED: P10 REMEDIATION SCOPE`.
 - **Cam kết chi phí:** Hoàn toàn $0.00 (Zero Cost), không có API trả phí, bảo mật fail-closed.
+- **Phạm vi kiểm thử Electron E2E:** `ELECTRON_INTEGRATION_MOCK_NATIVE_TRANSPORT` (Harness tích hợp Electron với Native Mock Transport để tuân thủ tuyệt đối quy định 0đ; trạng thái T1 đánh dấu trung thực là `NOT_LIVE_VERIFIED`).
 
 ---
 
-## 1. CHI TIẾT KHẮC PHỤC 5 GAP SOURCE THEO YÊU CẦU
+## 1. CHI TIẾT KHẮC PHỤC CÁC GAP THEO CHỈ ĐẠO CỦA QA & TECHNICAL LEADER
 
-### Gap 1: Loại bỏ Shortcut trong Native Execution — Định tuyến Agent thật & Gán nhãn trung thực
-- **Vấn đề cũ:** Trong `apps/desktop/src/main.js`, nhánh `expectedContent` tự trích xuất nội dung từ tiêu đề rồi gán trực tiếp vào `outputContent`, bỏ qua `antigravityService.executePrompt` / `codexService.executeTurn` nhưng vẫn gán `provider=antigravity/codex`.
+### Gap 1: Minh bạch Evidence & Trạng thái T1 (Mock Native Transport vs Live Call)
+- **Vấn đề cũ:** Báo cáo trước đây ghi "không mock / native thật" trong khi `--p10-uat` kích hoạt `antigravityService.enableMockTransport(mockEvents)`. Đây là sự sai lệch phạm vi giữa kiểm thử tích hợp và gọi model trực tiếp.
 - **Khắc phục:** 
-  - Đã loại bỏ hoàn toàn shortcut `expectedContent` trong chế độ Native Agent.
-  - Khi tác vụ là Native (`antigravity` / `codex`), hệ thống bắt buộc gọi trực tiếp `antigravityService.executePrompt()` hoặc `codexService.executeTurn()`. Nếu executor gặp lỗi hoặc không khả dụng, hệ thống fail-closed (báo lỗi thực tế hoặc `BLOCKED`), tuyệt đối không sinh output giả lập.
-  - Tác vụ tiện ích nội bộ (tính toán cục bộ, sinh tệp mẫu) được tách biệt rõ ràng và gán nhãn trung thực: `provider: 'LOCAL_UTILITY'`, `role: 'LOCAL_UTILITY'`, `isNativeAgent: false`, không mạo danh Native Agent để tính đạt chuẩn T1.
+  - Đã đính chính minh bạch trong cả báo cáo và tệp chứng chỉ CAS `ELECTRON_P10_UAT_EVIDENCE.json`:
+    - `testMode`: `"ELECTRON_INTEGRATION_MOCK_NATIVE_TRANSPORT"`
+    - `t1LiveStatus`: `"NOT_LIVE_VERIFIED"`
+    - `zeroCostConfirmed`: `true`
+    - `harnessNote`: `"E2E harness uses deterministic mock native transport to strictly enforce zero-cost constraint. Live model calls remain gated until zero-cost/quota is verified."`
+  - Tuyệt đối không tháo mock để gọi API mô hình trả phí khi chưa đảm bảo mức phí $0.00 và không mạo nhận mock transport là bằng chứng live model đạt T1.
 
-### Gap 2: Tính xác thực của `verifiedByCodex`
-- **Vấn đề cũ:** Trường `verifiedByCodex` bị gán mặc định `true` trong đối tượng kết quả, ngay cả khi dịch vụ thẩm tra không chạy hoặc thất bại.
+### Gap 2: Bảo vệ Artifact & Cơ chế Fail-Closed khi Agent Trả về Output Rỗng
+- **Vấn đề cũ:** Trong `apps/desktop/src/main.js` `union-bot:task-execute`, khi agent trả về chuỗi rỗng hoặc khoảng trắng, hệ thống vẫn gán `outputContent = ''` và gọi `fs.writeFileSync(targetAbsFile, '', 'utf8')`, dẫn đến việc ghi đè tệp rỗng và hoàn tất tác vụ thành công giả mạo.
 - **Khắc phục:** 
-  - `verifiedByCodex` hiện được tính toán chặt chẽ: `verifiedByCodex = Boolean(verifyEvidence && verifyEvidence.verified && verifyEvidence.securityBoundaryVerified && verifyEvidence.digestVerified && verifyEvidence.zeroCostConfirmed)`.
-  - Nếu `codexService` không chạy, gặp lỗi hoặc artifact bị sai mã băm, `verifiedByCodex` bắt buộc là `false`.
+  - **Đọc artifact thực tế trên workspace:** Nếu agent tạo tệp trực tiếp trong workspace (`targetAbsFile`) với số bytes dương, hệ thống đọc trực tiếp dữ liệu từ đĩa, băm CAS SHA-256 thực tế, tuyệt đối không lấy phản hồi hội thoại của agent để ghi đè lên tệp vừa tạo.
+  - **Fail-closed khi output rỗng:** Nếu agent không tạo tệp trên đĩa và phản hồi `turnRes.response` rỗng hoặc chỉ chứa khoảng trắng, hệ thống từ chối ngay lập tức với lỗi `ERR_EMPTY_AGENT_OUTPUT: Native agent turn returned empty response and no target artifact was created on disk`.
+  - **Chống phá hủy artifact cũ:** Nếu tệp đã tồn tại trên đĩa từ trước, lượt chạy trả về rỗng sẽ bị chặn fail-closed trước khi ghi đè, bảo toàn 100% dữ liệu gốc (`existingArtifactPreserved = true`).
+  - Đã bổ sung 2 negative test cases chuyên biệt trong suite E2E và xác minh tự động trên ổ đĩa.
 
-### Gap 3: Loại bỏ Optimistic Progress & Fallback giả mạo trong `TasksInbox.tsx`
-- **Vấn đề cũ:** `TasksInbox.tsx` tự động đặt trạng thái `running` (10%) trước khi có xác nhận từ backend, và dùng `setTimeout` tự gán `completed 100%` khi thiếu API.
+### Gap 3: Thẩm tra Codex (Codex Verification) Bắt buộc Fail-Closed
+- **Vấn đề cũ:** Trước đây khối `catch (vErr)` của Codex verification chỉ ghi log cảnh báo và vẫn tiếp tục đặt `status: 'completed'` với `success: true`.
 - **Khắc phục:** 
-  - Xóa bỏ hoàn toàn cập nhật lạc quan (optimistic update); giao diện giữ nguyên trạng thái cho đến khi nhận được sự kiện thực tế hoặc phản hồi từ backend.
-  - Xóa bỏ hoàn toàn fallback `setTimeout` giả mạo. Khi thiếu API, giao diện hiển thị thông báo lỗi `ERR_API_UNAVAILABLE`.
-  - Kiểm tra chuẩn xác `res.status`: Phân biệt rõ các trạng thái `completed`, `waiting_input`, `blocked`, `cancelled`, `cancel_requested`, `failed`; `res.success` không bị đồng nhất với `completed`.
+  - Đối với toàn bộ tác vụ Native Agent hoặc tác vụ yêu cầu thẩm tra (`requireVerification`), bước Codex verification là **bắt buộc**.
+  - Nếu dịch vụ Codex không khả dụng: Ném lỗi `ERR_CODEX_HANDLER_UNAVAILABLE`.
+  - Nếu quá trình thẩm tra bị lỗi hoặc ném ngoại lệ (như cú pháp TypeScript bị lỗi `ERR_SYNTAX_VERIFICATION_FAILED`): Bắt buộc chuyển sang `ERR_CODEX_VERIFICATION_FAILED`.
+  - Nếu kết quả thẩm tra trả về `success: false` hoặc không thỏa mãn đồng thời các tiêu chí (Boundary, Digest CAS, Zero-Cost): Chuyển trạng thái tác vụ thành `status: 'failed'`, `errorCode: 'ERR_CODEX_VERIFICATION_FAILED'`, `verifiedByCodex: false`.
+  - Tuyệt đối không trả về `status: 'completed'` hay `success: true` khi chưa có chứng chỉ thẩm tra hợp lệ.
 
-### Gap 4: Chống Race Condition bằng Reservation Đồng bộ (Atomic Reservation)
-- **Vấn đề cũ:** `activeTaskExecutions.has(taskId)` được kiểm tra trước các lệnh `await` bất đồng bộ (`listTasks`, `updateTask`) rồi mới gọi `set()`, dẫn đến nguy cơ hai lệnh gọi Start đồng thời (`Promise.all`) cùng vượt qua kiểm tra.
-- **Khắc phục:** 
-  - Thực hiện reservation đồng bộ (`activeTaskExecutions.set(taskId, executionEntry)`) ngay lập tức trước bất kỳ lệnh `await` nào.
-  - Bọc toàn bộ quy trình thực thi trong khối `try ... finally { activeTaskExecutions.delete(taskId); }` để đảm bảo dọn dẹp khóa trong mọi trường hợp.
-  - Đã kiểm thử negative test với `Promise.all([executeTask, executeTask])`: Cuộc gọi đầu tiên chiếm quyền thực thi, cuộc gọi đồng thời bị từ chối ngay lập tức với mã `ERR_TASK_ALREADY_RUNNING`.
+### Gap 4: Định vị Rõ ràng Bản chạy Local Runner và Đóng gói P11
+- **Minh bạch launcher:** Tệp `run-union-bot.bat` được định vị chuẩn xác là **Local Workspace Runner** dành cho nhà phát triển (yêu cầu có repo và Node.js), chưa phải là gói portable độc lập P11.
+- **Lộ trình P11:** Giai đoạn P11 sẽ đóng gói độc lập nhúng sẵn runtime không phụ thuộc môi trường cài đặt máy chủ.
 
-### Gap 5: Quản lý Vòng đời Hủy Tác vụ (Cancellation Lifecycle)
-- **Vấn đề cũ:** Hủy tác vụ chỉ đặt cờ boolean mà không theo dõi xác nhận dừng từ executor.
-- **Khắc phục:** 
-  - Khi người dùng bấm Cancel, hệ thống cập nhật trạng thái tác vụ thành **`cancel_requested`** và phát sóng sự kiện.
-  - Executor nhận tín hiệu ngắt (`cancelFn`), dừng subprocess và chuyển trạng thái tác vụ sang **`cancelled`** với thông điệp rõ ràng `Cancelled by user`. Nếu executor gặp sự cố bất thường, trạng thái chuyển thành `failed`.
-
-### Bổ sung: Phân định Rõ ràng Môi trường Chạy
-- `run-union-bot.bat`: Được định vị chuẩn xác là **Local Workspace Runner (Chạy trực tiếp từ mã nguồn, không installer)** dành cho môi trường phát triển và nghiệm thu cục bộ.
-- Đóng gói độc lập P11: Tài liệu hướng dẫn sử dụng đã làm rõ lộ trình đóng gói standalone bundle nhúng trọn gói runtime cho người dùng cuối.
+### Gap 5: Đồng bộ Hóa Vòng đời Hủy Tác vụ (Cancellation Lifecycle)
+- Trạng thái hủy được bảo vệ đồng bộ từ `cancel_requested` đến `cancelled` với mã lỗi `ERR_TASK_CANCELLED`.
+- Chống double-dispatch đồng thời thông qua reservation đồng bộ trước mọi lệnh `await`.
 
 ---
 
@@ -55,42 +54,50 @@ Toàn bộ các kiểm thử đều chạy trên Windows Electron thật và ghi
 
 1. **Bộ kiểm thử UAT Desktop P10 mở rộng (`tests/e2e/desktop-p10-uat.test.js`):**
    - Lệnh thực thi: `pnpm uat`
-   - Kết quả: **PASS (1/1 suite, 23/23 checks đạt 100%)**
+   - Kết quả: **PASS (1/1 suite, 28/28 checks đạt 100% trong 4.3 giây)**
    - Tệp bằng chứng: [`reports/capability-evidence/ELECTRON_P10_UAT_EVIDENCE.json`](file:///d:/WORK-TEAM/reports/capability-evidence/ELECTRON_P10_UAT_EVIDENCE.json)
+     - `testMode`: `"ELECTRON_INTEGRATION_MOCK_NATIVE_TRANSPORT"`
+     - `t1LiveStatus`: `"NOT_LIVE_VERIFIED"`
+     - `zeroCostConfirmed`: `true`
      - `hasUnionBotAPI: true`
      - `taskCreated: true`
      - `rolePreservedAsImplementer: true`
      - `execSuccess: true`
      - `execStatusCompleted: true`
-     - `isNativeAgent: true` (Xác thực tác vụ đi qua Antigravity native route)
+     - `isNativeAgent: true`
      - `reactiveUpdateReceived: true`
-     - `doubleDispatchBlocked: true` (Start lặp lại bị chặn)
-     - `concurrentDoubleStartBlocked: true` (Promise.all đồng thời bị chặn với ERR_TASK_ALREADY_RUNNING)
-     - `cancelRequestedTransition: true` (Trạng thái chuyển tiếp cancel_requested được ghi nhận)
-     - `cancelFinalizedAsCancelled: true` (Hoàn tất hủy thành cancelled sau khi executor xác nhận)
-     - `persistedCompleted: true` (Độ bền vững SQLite WAL)
+     - `doubleDispatchBlocked: true` (Chống Start lặp lại)
+     - `concurrentDoubleStartBlocked: true` (Promise.all đồng thời chặn với ERR_TASK_ALREADY_RUNNING)
+     - `cancelRequestedTransition: true` (Chuyển tiếp trạng thái cancel_requested được ghi nhận)
+     - `cancelFinalizedAsCancelled: true` (Hoàn tất hủy thành cancelled chuẩn xác)
+     - `persistedCompleted: true` (Bền vững SQLite WAL)
      - `traversalDenied: true` (Chặn path traversal fail-closed)
-     - `localUtilityVerified: true` (Tác vụ tiện ích được gán nhãn LOCAL_UTILITY trung thực)
-     - `diskFileCreated: true` (Tệp `scratch/hello.txt` tạo thật trên ổ đĩa)
-     - `diskContentMatches: true` (Nội dung `HELLO UNION BOT` chính xác từng byte)
+     - `localUtilityVerified: true` (Gán nhãn LOCAL_UTILITY trung thực)
+     - `emptyAgentOutputFailedClosed: true` (Output rỗng bị chặn với ERR_EMPTY_AGENT_OUTPUT)
+     - `emptyFileNotCreatedOnDisk: true` (Không tạo tệp rỗng trên đĩa khi lỗi)
+     - `emptyOverwriteAttemptFailedClosed: true` (Chặn hành vi ghi đè rỗng lên tệp đã có)
+     - `existingArtifactPreserved: true` (Dữ liệu tệp cũ được bảo toàn nguyên vẹn 100%)
+     - `verificationFailureFailedClosed: true` (Lỗi cú pháp bị Codex từ chối fail-closed với ERR_CODEX_VERIFICATION_FAILED)
+     - `diskFileCreated: true` (Tệp `scratch/hello.txt` tạo thật trên đĩa)
+     - `diskContentMatches: true` (Nội dung `HELLO UNION BOT` chính xác 100%)
      - `diskByteSizeMatches: true` (15 bytes)
-     - `diskDigestMatches: true` (SHA-256 CAS khớp)
-     - `verifiedByCodex: true` (Có bằng chứng xác minh thực tế)
+     - `diskDigestMatches: true` (CAS SHA-256 khớp)
+     - `verifiedByCodex: true` (Thẩm tra Codex thành công khi nội dung chuẩn)
      - `codexZeroCostConfirmed: true` (Chi phí $0.00 được xác nhận)
      - `codexBoundaryVerified: true` (Ranh giới workspace được xác nhận)
-     - `codexDigestVerified: true` (Mã băm SHA-256 được xác nhận)
+     - `codexDigestVerified: true` (Mã băm CAS được xác nhận)
      - `escapedFileBlocked: true` (Tệp vượt ranh giới không tồn tại trên đĩa)
 
 2. **Kiểm thử Hồi quy Phase P9 (`tests/e2e/desktop-p9.test.js`):**
    - Lệnh thực thi: `node --test tests/e2e/desktop-p9.test.js`
-   - Kết quả: **PASS (2/2 tests)** — Cả `P9-E2E` và `P9-PROD-E2E` đều vượt qua sạch sẽ. Blocker `P9-R03-002` không tái diễn.
+   - Kết quả: **PASS (2/2 tests: P9-E2E & P9-PROD-E2E)**. Blocker `P9-R03-002` không tái diễn.
 
 3. **Kiểm thử GUI Smoke Test (`pnpm smoke:gui`):**
    - Kết quả: **PASS** — Cửa sổ hiển thị bình thường, CostGuard bảo vệ egress, IPC hoạt động tin cậy.
 
 4. **Kiểm thử Quét Bí mật (`python scan_secrets.py --strict`):**
-   - Kết quả: **PASS** — 911 tệp được quét, **0 leaks**.
+   - Kết quả: **PASS** — 915 tệp được quét, **0 leaks**.
 
 5. **Kiểm tra Kiểu dữ liệu & Biên dịch Giao diện:**
-   - Lệnh thực thi: `pnpm typecheck; pnpm build`
-   - Kết quả: **0 errors**, bundle hoàn thành trong 1.19s.
+   - Lệnh thực thi: `pnpm --filter @union-bot/workspace-ui build`
+   - Kết quả: **0 errors**, build Vite hoàn tất trong 1.09s.

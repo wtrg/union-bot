@@ -17,22 +17,25 @@ Chào mừng bạn đến với **Union Bot** — Nền tảng điều phối đ
 
 ## 2. CÁCH KHỞI CHẠY ỨNG DỤNG (WORKSPACE RUNNER & ĐÓNG GÓI P11)
 
-### A. Local Workspace Runner (Chạy trực tiếp từ mã nguồn, không installer)
-1. **Chạy bằng file Batch:**
+### A. Local Workspace Runner (Chạy trực tiếp từ mã nguồn, cần Node.js, không installer)
+1. **Định danh chính xác:**
+   - `run-union-bot.bat` là **Local Workspace Runner** dành cho nhà phát triển và nghiệm thu cục bộ, yêu cầu có sẵn kho mã nguồn và Node.js trên máy.
+   - Đây **chưa phải là gói cài đặt độc lập standalone (P11)**.
+2. **Chạy bằng file Batch:**
    - Mở thư mục gốc `D:\WORK-TEAM`.
    - Nhấp đúp chuột vào tệp **`run-union-bot.bat`**.
-   - Launcher sẽ kiểm tra runtime, chuẩn bị vùng cô lập `scratch/` và khởi chạy giao diện Union Bot.
-2. **Chạy từ dòng lệnh (PowerShell):**
+   - Launcher sẽ kiểm tra runtime Node.js, chuẩn bị vùng cô lập `scratch/` và khởi chạy giao diện Union Bot.
+3. **Chạy từ dòng lệnh (PowerShell):**
    ```powershell
    pnpm start
    ```
    *(hoặc: `node apps/desktop/scripts/launch.js`)*
-3. **Chạy với Profile kiểm thử độc lập (Không ghi đè dữ liệu cũ):**
+4. **Chạy với Profile kiểm thử độc lập (Không ghi đè dữ liệu cũ):**
    ```powershell
    node apps/desktop/scripts/launch.js --test-user-data=C:/Temp/union-bot-test-profile
    ```
 
-### B. Bản đóng gói độc lập P11 (Standalone Portable Distribution)
+### B. Bản đóng gói độc lập P11 (Standalone Portable Distribution — Tương lai)
 - Trong giai đoạn P11, sản phẩm sẽ được xuất xưởng dưới dạng thư mục portable trọn gói nhúng sẵn runtime và binary, người dùng tải về giải nén và nhấp đúp chạy ngay trên bất kỳ máy tính Windows nào mà không cần cài đặt Node.js hay bộ cài installer hệ thống.
 
 ---
@@ -94,7 +97,7 @@ Dành cho kiểm thử viên hoặc khi cần xác minh toàn bộ các cửa ch
 
 | Lệnh | Mục đích kiểm tra | Kết quả chuẩn |
 |---|---|---|
-| `pnpm uat` | Chạy bộ kiểm thử UAT Desktop P10 tự động trên Windows Electron thật | `PASS (23/23 checks)` |
+| `pnpm uat` | Chạy bộ kiểm thử UAT Desktop P10 tự động trên Windows Electron thật (Mock Native Transport 0đ, NOT_LIVE_VERIFIED) | `PASS (28/28 checks, bao gồm 5 negative tests)` |
 | `node --test tests/e2e/desktop-p9.test.js` | Chạy kiểm thử hồi quy Phase P9 (E2E & Prod E2E) | `PASS (2/2 tests)` |
 | `pnpm smoke:gui` | Khởi chạy giao diện và kiểm tra IPC, CostGuard, Orchestrator | `PASS` |
 | `pnpm typecheck` | Kiểm tra tính nhất quán TypeScript monorepo | `0 errors` |

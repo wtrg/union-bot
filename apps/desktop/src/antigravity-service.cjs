@@ -54,7 +54,8 @@ class AntigravityService extends EventEmitter {
    */
   async enableMockTransport(mockMessages = []) {
     const { MockAntigravityTransport } = getAntigravityModules();
-    this.setCustomTransport(new MockAntigravityTransport(mockMessages));
+    this.mockMessages = Array.isArray(mockMessages) ? [...mockMessages] : (mockMessages?.messages || []);
+    this.setCustomTransport(new MockAntigravityTransport(this.mockMessages));
     return true;
   }
 
@@ -62,6 +63,7 @@ class AntigravityService extends EventEmitter {
    * Restores normal discovery and stdio transport.
    */
   disableMockTransport() {
+    this.mockMessages = null;
     this.setCustomTransport(null);
     return true;
   }
@@ -116,6 +118,12 @@ class AntigravityService extends EventEmitter {
     const adapter = await this.getAdapter();
     const effectiveDir = options.cwd || this.workspaceRoot;
 
+    let transport = this.customTransport;
+    if (this.mockMessages && this.mockMessages.length > 0) {
+      const { MockAntigravityTransport } = getAntigravityModules();
+      transport = new MockAntigravityTransport(this.mockMessages);
+    }
+
     return await adapter.execute({
       prompt,
       workspaceRoot: this.workspaceRoot,
@@ -123,7 +131,7 @@ class AntigravityService extends EventEmitter {
       customExecutablePath: options.customExecutablePath,
       conversationId: options.conversationId,
       forbiddenFlags: options.forbiddenFlags,
-      mockTransport: this.customTransport,
+      mockTransport: transport,
       timeoutMs: options.timeoutMs,
     });
   }
