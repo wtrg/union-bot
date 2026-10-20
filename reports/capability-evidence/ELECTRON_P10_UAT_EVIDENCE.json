@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-10-20T15:27:46.017Z",
+  "timestamp": "2026-10-20T16:10:58.902Z",
   "environment": "Real Windows Electron (Phase P10 UI Task Execution UAT)",
   "testMode": "ELECTRON_INTEGRATION_MOCK_NATIVE_TRANSPORT",
   "t1LiveStatus": "NOT_LIVE_VERIFIED",
@@ -31,6 +31,8 @@
     "diskDigestMatches": true,
     "emptyFileNotCreatedOnDisk": true,
     "existingArtifactPreserved": true,
+    "harnessWorkspaceIsolated": true,
+    "repoScratchPreserved": true,
     "verifiedByCodex": true,
     "codexZeroCostConfirmed": true,
     "codexBoundaryVerified": true,

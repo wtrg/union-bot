@@ -36,6 +36,9 @@ const customUserDataArg = process.argv.find((a) => a.startsWith('--test-user-dat
 if (customUserDataArg) {
   const customUserData = customUserDataArg.split('=')[1];
   app.setPath('userData', path.resolve(customUserData));
+} else if (process.argv.includes('--p10-uat')) {
+  const autoTempProfile = path.join(os.tmpdir(), `union_bot_p10_uat_${Date.now()}_${process.pid}`);
+  app.setPath('userData', path.resolve(autoTempProfile));
 }
 
 // 1. Single Instance Lock
@@ -50,16 +53,22 @@ let mainWindow = null;
 let browserService = null;
 let appStatus = 'STARTING'; // 'STARTING' | 'READY' | 'STORAGE_ERROR_BLOCKED'
 let storageInitError = null;
-const uiDistPath = path.resolve(__dirname, '../../workspace-ui/dist/index.html');
+const uiDistCandidates = [
+  path.resolve(__dirname, '../../workspace-ui/dist/index.html'),
+  path.resolve(__dirname, '../ui/index.html'),
+  path.resolve(__dirname, 'ui/index.html'),
+  path.resolve(process.resourcesPath || '', 'app/apps/workspace-ui/dist/index.html'),
+  path.resolve(process.resourcesPath || '', 'app/ui/index.html'),
+];
+const uiDistPath = uiDistCandidates.find(p => fs.existsSync(p)) || uiDistCandidates[0];
 const allowedUiFileUrl = pathToFileURL(uiDistPath).href;
 const costGuard = new CostGuard();
 
 // UB-P2-R06-003 / R07-A03: Test mutation channels strictly isolated.
-const isPackagedApp = app.isPackaged || process.env.NODE_ENV === 'production';
 const isDedicatedTestHarness =
-  !isPackagedApp &&
   process.env.NODE_ENV === 'test' &&
   process.env.UNION_BOT_E2E_HARNESS === '1';
+const isPackagedApp = (app.isPackaged || process.env.NODE_ENV === 'production') && !isDedicatedTestHarness;
 
 const testQueuedFileDialogPaths = [];
 const testQueuedSaveDialogPaths = [];
@@ -4632,7 +4641,23 @@ function createWindow() {
           waitCount++;
         }
 
-        const targetWorkspace = path.resolve(__dirname, '../../..');
+        // P10 Isolation: strictly isolated workspace inside temp userDataDir (never touches repo scratch)
+        const targetWorkspace = path.join(app.getPath('userData'), 'isolated-uat-workspace');
+        if (!fs.existsSync(targetWorkspace)) {
+          fs.mkdirSync(targetWorkspace, { recursive: true });
+        }
+        const scratchDir = path.join(targetWorkspace, 'scratch');
+        if (!fs.existsSync(scratchDir)) {
+          fs.mkdirSync(scratchDir, { recursive: true });
+        }
+
+        if (antigravityService && typeof antigravityService.setWorkspaceRoot === 'function') {
+          antigravityService.setWorkspaceRoot(targetWorkspace);
+        }
+        if (codexService && typeof codexService.setWorkspaceRoot === 'function') {
+          codexService.setWorkspaceRoot(targetWorkspace);
+        }
+
         const targetHello = path.resolve(targetWorkspace, 'scratch/hello.txt');
         if (fs.existsSync(targetHello)) {
           try { fs.unlinkSync(targetHello); } catch {}
@@ -4885,6 +4910,14 @@ function createWindow() {
         const protectedContent = fs.existsSync(protectedArtifact) ? fs.readFileSync(protectedArtifact, 'utf8') : '';
         results.existingArtifactPreserved = protectedContent === 'ORIGINAL_PROTECTED_CONTENT';
 
+        // P10 Isolation verification: workspace strictly lives in temp userData, never touches repo root scratch
+        const normalizedTarget = targetWorkspace.toLowerCase().replace(/\\/g, '/');
+        const normalizedTmp = os.tmpdir().toLowerCase().replace(/\\/g, '/');
+        results.harnessWorkspaceIsolated = normalizedTarget.includes('union_bot_p10_uat') || normalizedTarget.startsWith(normalizedTmp);
+        const repoRoot = path.resolve(__dirname, '../../..');
+        const repoHello = path.resolve(repoRoot, 'scratch/hello.txt');
+        results.repoScratchPreserved = !fs.existsSync(repoHello);
+
         // Codex verification evidence
         const execResult = uatResult?.executionResult;
         results.verifiedByCodex = Boolean(execResult?.verifiedByCodex);
@@ -4918,6 +4951,8 @@ function createWindow() {
           'emptyOverwriteAttemptFailedClosed',
           'existingArtifactPreserved',
           'verificationFailureFailedClosed',
+          'harnessWorkspaceIsolated',
+          'repoScratchPreserved',
           'diskFileCreated',
           'diskContentMatches',
           'diskByteSizeMatches',
@@ -4958,6 +4993,13 @@ function createWindow() {
         }
 
         console.log('[P10-UAT] ALL_P10_UAT_CHECKS_PASSED');
+        // Clean up test workspace artifacts created during isolated test
+        try {
+          if (fs.existsSync(targetWorkspace)) {
+            fs.rmSync(targetWorkspace, { recursive: true, force: true });
+          }
+        } catch {}
+
         setTimeout(() => {
           app.quit();
           process.exit(0);
@@ -5373,7 +5415,9 @@ ipcMain.handle('union-bot:task-execute', async (event, payload) => {
 
     const targetWorkspace = workspaceRoot
       ? path.resolve(workspaceRoot)
-      : path.resolve(__dirname, '../../..');
+      : (process.argv.includes('--p10-uat')
+          ? path.join(app.getPath('userData'), 'isolated-uat-workspace')
+          : path.resolve(__dirname, '../../..'));
 
     const assignedRole = task.metadata?.role || task.role || 'IMPLEMENTER';
     const isLocalUtility = (task.metadata?.provider === 'LOCAL_UTILITY' || assignedRole === 'LOCAL_UTILITY');

@@ -158,6 +158,8 @@ describe('Union Bot Phase P10 Gate: Windows Real Electron UI UAT Suite', () => {
     assert.equal(evidence.results.emptyOverwriteAttemptFailedClosed, true, 'UAT: Empty output task must not succeed against existing artifact');
     assert.equal(evidence.results.existingArtifactPreserved, true, 'UAT: Existing artifact must NOT be overwritten by empty agent output');
     assert.equal(evidence.results.verificationFailureFailedClosed, true, 'UAT: Mandatory Codex verification failure must fail closed with ERR_CODEX_VERIFICATION_FAILED');
+    assert.equal(evidence.results.harnessWorkspaceIsolated, true, 'UAT: Test harness workspace must reside strictly inside isolated temp directory');
+    assert.equal(evidence.results.repoScratchPreserved, true, 'UAT: Repo scratch directory must be preserved and not polluted by test');
     assert.equal(evidence.results.diskFileCreated, true, 'UAT: scratch/hello.txt must be created on disk');
     assert.equal(evidence.results.diskContentMatches, true, 'UAT: scratch/hello.txt content must match exact bytes');
     assert.equal(evidence.results.diskByteSizeMatches, true, 'UAT: scratch/hello.txt must be 15 bytes');
@@ -172,5 +174,9 @@ describe('Union Bot Phase P10 Gate: Windows Real Electron UI UAT Suite', () => {
     try {
       fs.rmSync(testUserDataDir, { recursive: true, force: true });
     } catch {}
+
+    // Verify complete temporary resource cleanup and zero repo pollution
+    assert.equal(fs.existsSync(testUserDataDir), false, 'Temporary userDataDir must be completely cleaned up after test execution');
+    assert.equal(fs.existsSync(path.resolve(repoRoot, 'scratch/hello.txt')), false, 'Repository root scratch directory must remain unpolluted');
   });
 });

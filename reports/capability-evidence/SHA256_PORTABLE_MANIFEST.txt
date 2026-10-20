@@ -1,0 +1,52 @@
+# UNION BOT WINDOWS X64 PORTABLE CAS MANIFEST
+# Generated: 2026-10-20T16:12:40.415Z
+# Package: release/union-bot-portable-win-x64
+# Cost: $0.00 (Zero-Cost, strictly verified)
+# T1 Live Status: NOT_LIVE_VERIFIED
+# System Requirements: Windows 10/11 x64 (No Node.js, pnpm, git, or admin required)
+# -----------------------------------------------------------------------------
+SHA256                                                           FILE_SIZE   RELATIVE_PATH
+---------------------------------------------------------------- ----------- ----------------------------------------
+a659ee9eb38636f85f5336587c578fb29740d3effaff9b92852c8a210e92978c      151599 chrome_100_percent.pak
+2c1b3e4b8a0cf837ae0a390fca54f45d7d22418e040f1dfea979622383acced6      228644 chrome_200_percent.pak
+af7b99be1b8770c0e4d18e43b04e81d11bdeb667fa6b07ade7a88f4c5676bf9a     4916728 d3dcompiler_47.dll
+1925f358e7f0e9675a5ac4198fb076613f0db318da56d388799a97be74a5b19c   188784128 electron.exe
+4fcdedbc68eae4b4cfe0eed275316fdf66c9d4a57a98d29a77d0e8f4149cfcbc     2927616 ffmpeg.dll
+9ae98c06cbb0ea43c5cd6b5725310c008c65e46072421a1118cb88e1de9a8b92    10468208 icudtl.dat
+d9d2f5b5fae60a63523f92c07539dd93893ff7d9ffa41f0bb57caca4be9f2220      493056 libEGL.dll
+4b4dcbc7bb19449ec89d2bf06e7b05af9352a4e6f97f4444183dc3080e6c0f1d     8417792 libGLESv2.dll
+5154e165bd6c2cc0cfbcd8916498c7abab0497923bafcd5cb07673fe8480087d        1096 LICENSE
+c6080d60736384a4a8fdd23404d59ae2d939e5124d80df89f8fd4e450bb9bd6f     9170910 LICENSES.chromium.html
+46efd961009a80c6174726f5349acc4c1bd1a23542202fdded24924e510630cb        5312 resources/app/apps/desktop/src/antigravity-service.cjs
+2ad56fa69d9e6217062f170c32ce133c08ba3d47ec25a86bff8ddad3367b96b3        1486 resources/app/apps/desktop/src/auth-check.cjs
+7d933343dbfac8267ce4f4f148f5280ac8ef2099a13d9b4c7f9d53d60c8b74fc       38965 resources/app/apps/desktop/src/browser-service.cjs
+75b8f0a05b686f3d380d83764a0aabfa81762d2668bd2ddf6f98504d56063f47        4467 resources/app/apps/desktop/src/canonical-json.cjs
+3fcf77340c41194a01d9e8c1f7e66032ecc7d49e5fe7b57929c807923958aa93       11164 resources/app/apps/desktop/src/codex-service.cjs
+d0eb3281de6dbe4d0a3515bd240654a5a1e9488710ddf3696352fc73390451cd        3803 resources/app/apps/desktop/src/cost-guard.cjs
+464d5961c71e3db313142f638a9b8bd2902139d1299fac446dbce88090d0ed0d      346332 resources/app/apps/desktop/src/main.js
+277fe57f9d8bd61972407f5bfdef41c9b50c8c994bc6d0b6eb6e8b68e1c71525        8946 resources/app/apps/desktop/src/mcp-service.cjs
+1411e63902087ee8136c39d4190c01694b0e8e8699e487e716fdaeb21ecd732a       28035 resources/app/apps/desktop/src/orchestrator.cjs
+9cfaeb0a7a98371a061ea807e8842393e58a56c69f6b81680e4cc3c551250058       14537 resources/app/apps/desktop/src/preload.cjs
+41964ff74b4012c595a651136660669f60149c5742dc58e7090a1ff3c0f48ae8        3022 resources/app/apps/desktop/src/safe-external.js
+bc72f30d0c7c55c360a780032893c99368ad079ef7abbda4e2d84fcc64064551         417 resources/app/apps/desktop/src/schema-definition.cjs
+84a9549207934da5b9f0c014b0198e40001f7884a7321d7f9a4ff896d80e2d90       58126 resources/app/apps/desktop/src/storage-service.cjs
+f85ae0cb1b8df35090c0e5de2c29589ac55039c938d0066c09ba78661c243b2d       33164 resources/app/apps/desktop/src/storage-worker.cjs
+c616d8cb0990ba5ce46574f7f070f22e6e197c1b70b5e3c817aaec9b4226afd2       44462 resources/app/apps/desktop/src/task-graph-service.cjs
+b775799ed3609f60744059dae3c0aa40e789357cbda45ccee136ab30e500b876       13258 resources/app/apps/desktop/src/tool-host.cjs
+e1c7d3c9886b19b504f67677b27bde009cf83daa77b76a7c26178d16e91b3923      232442 resources/app/apps/workspace-ui/dist/assets/index-C85P7R8V.js
+57281b6c25e29ba5032da53b9354cfeddee76617846ad2f79bb94d54fc4cffc0        9995 resources/app/apps/workspace-ui/dist/assets/index-CKJuQJYg.css
+7eb3ec49f65d21986be3d699a9e65b127041d2cd7fb48d2838f47fac9af268ac         715 resources/app/apps/workspace-ui/dist/index.html
+db9534084be42b51b1a21336f8a52359089d2f66f3f55680ce1c6fe42d34bc04         211 resources/app/package.json
+9aed4e4409bc8977ea5b03837173387c835ab3b155e8a041c8648eed9b2790d2         437 resources/app/reports/capability-evidence/ELECTRON_GUI_SMOKE_EVIDENCE.json
+8a19192d0041d47885e25b4a5a1725aadbe050fac1053df96c04c07047edb899        1529 resources/app/reports/capability-evidence/ELECTRON_P10_UAT_EVIDENCE.json
+ffaeea94c6594d4e66fc523c218c161c58aee1f59b9cb006bbb45d9a49e3a6a1     5756465 resources.pak
+b23f9477af721a7138149035f642bd8597efc020992241d41ac65a898e9ba8dd         242 run-smoke-test.bat
+c6335d08331c23d68b9f2b18adb102002d76ef150b47248e954c507e0d033664    92299080 runtime/node.exe
+397bfb1c55eb98bc8c1e1ba1155e24efc105c155def665c678ac3a135f4bbcc7      316538 snapshot_blob.bin
+f3f82d5b0b58944c889a64d5c88abe29eadf209d812b021cd81782955c95d2e0         993 union-bot.bat
+1925f358e7f0e9675a5ac4198fb076613f0db318da56d388799a97be74a5b19c   188784128 union-bot.exe
+e8fac5817d9b33ae78b0bd2863750047cbbda211bc28342d0cbea97a07656757      687473 v8_context_snapshot.bin
+00eeb0d932f38c1eaea38cc0011aecd10bcd2d06db67ec7e2d36258840b940b6           7 version
+409a0fa76f055a87ae70434414586d144502beb25fa3004866ee70abd9a8547e     5533184 vk_swiftshader.dll
+32d83ff113fef532a9f97e0d2831f8656628ab1c99e9060f0332b1532839afd9         106 vk_swiftshader_icd.json
+f6c99137c3d6af45bc2262815867d6d37f5dcb0552caffc90cd77fb6561b7491      894976 vulkan-1.dll

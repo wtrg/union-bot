@@ -13,8 +13,20 @@ const { computeEnvelopeDigest, canonicalizeJson, computeCanonicalDigest } = requ
 const { runSchemaMigrations } = require('./schema-definition.cjs');
 
 function findSystemNode() {
-  if (process.env.SYSTEM_NODE_PATH) {
+  if (process.env.SYSTEM_NODE_PATH && fs.existsSync(process.env.SYSTEM_NODE_PATH)) {
     return process.env.SYSTEM_NODE_PATH;
+  }
+  const portableCandidates = [
+    path.resolve(__dirname, '../../../runtime/node.exe'),
+    path.resolve(__dirname, '../../runtime/node.exe'),
+    path.resolve(__dirname, '../runtime/node.exe'),
+    path.resolve(process.resourcesPath || '', '../runtime/node.exe'),
+    path.resolve(process.resourcesPath || '', 'runtime/node.exe'),
+  ];
+  for (const c of portableCandidates) {
+    if (c && fs.existsSync(c)) {
+      return c;
+    }
   }
   const defaultWindowsNode = 'C:\\Program Files\\nodejs\\node.exe';
   if (fs.existsSync(defaultWindowsNode)) {

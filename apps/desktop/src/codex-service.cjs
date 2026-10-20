@@ -44,6 +44,17 @@ class CodexService extends EventEmitter {
   }
 
   /**
+   * Updates workspace root (e.g. for isolated test harness).
+   */
+  setWorkspaceRoot(newRoot) {
+    this.workspaceRoot = path.resolve(newRoot);
+    if (this.adapter) {
+      this.adapter.close();
+      this.adapter = null;
+    }
+  }
+
+  /**
    * Sets or clears a custom transport (e.g. for testing or mock execution).
    */
   setCustomTransport(transport) {

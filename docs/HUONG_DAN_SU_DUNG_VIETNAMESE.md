@@ -35,8 +35,38 @@ Chào mừng bạn đến với **Union Bot** — Nền tảng điều phối đ
    node apps/desktop/scripts/launch.js --test-user-data=C:/Temp/union-bot-test-profile
    ```
 
-### B. Bản đóng gói độc lập P11 (Standalone Portable Distribution — Tương lai)
-- Trong giai đoạn P11, sản phẩm sẽ được xuất xưởng dưới dạng thư mục portable trọn gói nhúng sẵn runtime và binary, người dùng tải về giải nén và nhấp đúp chạy ngay trên bất kỳ máy tính Windows nào mà không cần cài đặt Node.js hay bộ cài installer hệ thống.
+### B. Bản Đóng Gói Độc Lập P11 (Standalone Portable Distribution — ĐÃ HOÀN TẤT)
+
+Phiên bản đóng gói độc lập **Windows x64 Portable** đã được tạo tại thư mục:
+`release/union-bot-portable-win-x64`
+
+1. **Đặc điểm nổi bật:**
+   - **Tự chứa hoàn toàn (Fully Self-Contained):** Đã tích hợp sẵn runtime **Electron 33.4.11** và **Node.js 24.17.0** (`runtime/node.exe`) với hỗ trợ chuẩn `node:sqlite DatabaseSync`.
+   - **Không phụ thuộc môi trường:** Hoạt động độc lập 100% khỏi git repository, **không yêu cầu cài đặt Node.js**, không cần `pnpm`, không cần `git` hay trình thông dịch toàn cục.
+   - **Không cần quyền Admin & Không sửa Registry:** Hoàn toàn là ứng dụng di động (portable), không can thiệp vào registry Windows, không cài đặt driver hay file rác vào `Program Files`.
+   - **Cô lập dữ liệu di động (Portable Data):** Toàn bộ dữ liệu SQLite WAL, session và cấu hình được lưu cục bộ trong thư mục `data/` đi kèm gói portable, không làm xáo trộn cấu hình hệ thống người dùng.
+   - **Chi phí $0.00:** Được đóng gói từ tài nguyên sẵn có, không tải thêm thư viện ngoài, không phát sinh chi phí.
+
+2. **Cách khởi chạy bản Portable:**
+   - **Cách 1 (Khuyên dùng):** Nhấp đúp chuột vào tệp **`union-bot.exe`** hoặc **`union-bot.bat`** trong thư mục `release/union-bot-portable-win-x64`.
+   - **Cách 2 (Dòng lệnh cmd/powershell):**
+     ```cmd
+     cd release\union-bot-portable-win-x64
+     union-bot.bat
+     ```
+   - **Cách 3 (Kiểm tra Smoke Test nhanh không mở cửa sổ giao diện):**
+     ```cmd
+     run-smoke-test.bat
+     ```
+
+3. **Thẩm tra tính toàn vẹn mật mã (CAS Manifest):**
+   - Danh sách mã băm SHA-256 của toàn bộ tệp binary và mã nguồn đóng gói được lưu tại:
+     - `release/SHA256_PORTABLE_MANIFEST.txt`
+     - `release/union-bot-portable-win-x64/SHA256_MANIFEST.txt`
+   - Ví dụ một số mã băm cốt lõi:
+     - `union-bot.exe` (188,784,128 bytes): `1925f358e7f0e9675a5ac4198fb076613f0db318da56d388799a97be74a5b19c`
+     - `runtime/node.exe` (92,299,080 bytes): `c6335d08331c23d68b9f2b18adb102002d76ef150b47248e954c507e0d033664`
+     - `union-bot.bat` (671 bytes): `e6feca59417a39435134440c34c992c1524daadea6eaf986a109dbfb5f04a84e`
 
 ---
 

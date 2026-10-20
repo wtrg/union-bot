@@ -22,7 +22,8 @@
     "test:e2e": "node --test --test-concurrency=1 tests/e2e/desktop-r04.test.js tests/e2e/desktop-r05.test.js tests/e2e/desktop-r06.test.js tests/e2e/desktop-r07.test.js tests/e2e/desktop-p3.test.js tests/e2e/desktop-p4.test.js tests/e2e/desktop-p5.test.js tests/e2e/desktop-p6.test.js tests/e2e/desktop-p7.test.js tests/e2e/desktop-p8.test.js tests/e2e/desktop-p9.test.js",
     "smoke:gui": "node apps/desktop/scripts/launch.js --smoke",
     "secret-scan": "python scan_secrets.py --strict",
-    "verify": "pnpm lint && pnpm typecheck && pnpm build && pnpm test && pnpm smoke:gui && pnpm secret-scan"
+    "verify": "pnpm lint && pnpm typecheck && pnpm build && pnpm test && pnpm smoke:gui && pnpm secret-scan",
+    "assemble:portable": "node scripts/assemble-portable.cjs"
   },
   "keywords": [
     "union-bot",
