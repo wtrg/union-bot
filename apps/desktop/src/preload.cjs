@@ -175,6 +175,12 @@ const api = {
   compactDiscoveryContext: async (discoveryId) => {
     return ipcRenderer.invoke('union-bot:compact-discovery-context', discoveryId);
   },
+  getCapabilities: async () => {
+    return ipcRenderer.invoke('union-bot:get-capabilities');
+  },
+  probeCapability: async (providerId) => {
+    return ipcRenderer.invoke('union-bot:probe-capability', providerId);
+  },
   listGoals: async (projectId) => {
     return ipcRenderer.invoke('union-bot:list-goals', projectId);
   },

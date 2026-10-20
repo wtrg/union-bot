@@ -325,27 +325,30 @@ export const Sidebar: React.FC<SidebarProps> = ({
         <div className="section-label" style={{ padding: '4px 0 8px 0' }}>
           Local Team & Standby
         </div>
-        {agents.map((agent) => (
-          <div key={agent.id} className="provider-item">
-            <div>
-              <span style={{ fontWeight: 600 }}>{agent.name}</span>
-              <span style={{ color: 'var(--text-muted)', marginLeft: 6, fontSize: 10 }}>
-                {agent.role}
+        {agents.map((agent) => {
+          const badgeText = agent.badge || agent.status.toUpperCase();
+          let statusClass = 'status-auth';
+          if (agent.status === 'active') statusClass = 'status-active';
+          else if (agent.status === 'ready' || agent.status === 'ready_automated') statusClass = 'status-ready';
+          else if (agent.status === 'free_local') statusClass = 'status-free-local';
+          else if (agent.status === 'ready_manual') statusClass = 'status-ready-manual';
+          else if (agent.status === 'unavailable_in_session' || agent.status === 'unavailable') statusClass = 'status-unavailable';
+          else if (agent.status === 'challenge_required') statusClass = 'status-challenge';
+
+          return (
+            <div key={agent.id} className="provider-item" title={agent.details || agent.role}>
+              <div>
+                <span style={{ fontWeight: 600 }}>{agent.name}</span>
+                <span style={{ color: 'var(--text-muted)', marginLeft: 6, fontSize: 10 }}>
+                  {agent.role}
+                </span>
+              </div>
+              <span className={`provider-status ${statusClass}`}>
+                {badgeText}
               </span>
             </div>
-            <span
-              className={`provider-status ${
-                agent.status === 'active'
-                  ? 'status-active'
-                  : agent.status === 'ready'
-                  ? 'status-ready'
-                  : 'status-auth'
-              }`}
-            >
-              {agent.status.toUpperCase()}
-            </span>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       {/* Settings / Preferences Footer */}

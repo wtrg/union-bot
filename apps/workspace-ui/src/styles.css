@@ -167,6 +167,26 @@ body {
   color: #fbbf24;
 }
 
+.status-free-local {
+  background: rgba(45, 212, 191, 0.2);
+  color: #2dd4bf;
+}
+
+.status-ready-manual {
+  background: rgba(129, 140, 248, 0.2);
+  color: #818cf8;
+}
+
+.status-unavailable {
+  background: rgba(148, 163, 184, 0.15);
+  color: #94a3b8;
+}
+
+.status-challenge {
+  background: rgba(244, 63, 94, 0.2);
+  color: #f43f5e;
+}
+
 /* Main Area */
 .main-content {
   flex: 1;

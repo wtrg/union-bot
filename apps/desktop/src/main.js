@@ -31,6 +31,7 @@ const { CodexService } = require('./codex-service.cjs');
 const { AntigravityService } = require('./antigravity-service.cjs');
 const { TaskGraphService } = require('./task-graph-service.cjs');
 const { DiscoveryService } = require('./services/discovery-service.cjs');
+const { CapabilityRegistry } = require('./services/capability-registry.cjs');
 
 // Custom test userData override for isolated multi-process E2E testing
 const customUserDataArg = process.argv.find((a) => a.startsWith('--test-user-data=') || a.startsWith('--user-data-dir='));
@@ -137,6 +138,7 @@ antigravityService.on('error', (err) => {
 });
 
 const taskGraphService = new TaskGraphService(path.resolve(__dirname, '../../..'), costGuard, storage);
+const capabilityRegistry = new CapabilityRegistry({ antigravityService, codexService });
 
 taskGraphService.on('graph-event', (evt) => {
   if (mainWindow && !mainWindow.isDestroyed()) {
@@ -833,6 +835,7 @@ function createWindow() {
   // Phase P4: Embedded Chromium & AI Provider BrowserService
   try {
     browserService = new BrowserService(mainWindow, storage, artifactStore, path.resolve(__dirname, '../../..'));
+    capabilityRegistry.browserService = browserService;
     taskGraphService.setSessionRegistry(browserService.sessionRegistry);
 
     // Phase P9 Production Transport Registration: Synchronously registered across all runtime modes (P9-R02-001)
@@ -5353,6 +5356,30 @@ ipcMain.handle('union-bot:compact-discovery-context', async (event, discoveryId)
     return discoveryService.compactContext(discoveryId || 'disc_default');
   } catch (err) {
     return { facts: [], questions: [], digest: '', error: err.message };
+  }
+});
+
+// Phase V4: Provider Capability & Runtime Truth (UB-V4-U03)
+ipcMain.handle('union-bot:get-capabilities', async (event) => {
+  if (!checkSenderAuthorized(event)) return { success: false, error: 'Unauthorized IPC sender' };
+  try {
+    return {
+      success: true,
+      capabilities: capabilityRegistry.getAllCapabilities(),
+      agents: capabilityRegistry.toAgentInfoList(),
+    };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('union-bot:probe-capability', async (event, providerId) => {
+  if (!checkSenderAuthorized(event)) return { success: false, error: 'Unauthorized IPC sender' };
+  try {
+    const cap = capabilityRegistry.probeProvider(providerId);
+    return { success: true, capability: cap };
+  } catch (err) {
+    return { success: false, error: err.message };
   }
 });
 

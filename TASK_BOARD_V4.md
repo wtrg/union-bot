@@ -16,8 +16,8 @@
 | **U00** | Baseline, Risk Audit & Compatibility | VERIFIED | RU00 | Baseline report, local/remote audit, tests pass | SELF_VERIFIED |
 | **U01** | Schema V4, Event Authority & Core Contracts | VERIFIED | RU01 | Zod schemas, SQLite migrations (native+worker), unit tests pass | SELF_VERIFIED |
 | **U02** | `/chat`: Discovery, BA Questioning & Project Memory | VERIFIED | RU02 | Slash parser, Fact ledger, Decision compaction | SELF_VERIFIED |
-| **U03** | Provider Capability & Native Runtime Truth | IN_PROGRESS | RU03 | Capability registry per session, preflight checks | PENDING_REVIEW |
-| **U04** | Two-Way Conversation Router & Thread Receipts | QUEUED | RU04 | Router, DeliveryAttempt, freshness watermarks | PENDING_REVIEW |
+| **U03** | Provider Capability & Native Runtime Truth | VERIFIED | RU03 | Capability registry per session, preflight checks | SELF_VERIFIED |
+| **U04** | Two-Way Conversation Router & Thread Receipts | IN_PROGRESS | RU04 | Router, DeliveryAttempt, freshness watermarks | PENDING_REVIEW |
 | **U05** | Artifact Handoff & Multimodal Fidelity | QUEUED | RU05 | CAS bytes, MIME validation, screenshot fidelity | PENDING_REVIEW |
 | **U06** | `/work`: Plan Registry, Critical Review & Goal Approval | QUEUED | RU06 | Plan revision, frozen brief digest, approval gate | PENDING_REVIEW |
 | **U07** | WorkflowSupervisor: Continuous Durable Orchestration | QUEUED | RU07 | Durable leases, recovery, task progression | PENDING_REVIEW |
@@ -56,3 +56,11 @@
 - [x] `U02-005`: BA question planner: prioritization of missing blocking facts
 - [x] `U02-006`: `DiscoveryReadyGate` logic before transitioning to `/work`
 - [x] `U02-007`: UI Discovery sidebar/checklist/missing info in React workspace UI
+
+### U03 — Provider Capability & Native Runtime Truth
+- [x] `U03-001`: `CapabilityRegistry` service: in-memory + SQLite caching of provider-session capabilities with TTL, timestamped probe results, and last verified proof
+- [x] `U03-002`: Truthful state machine: zero fake green statuses, distinction between `READY_AUTOMATED`, `READY_MANUAL`, `CHALLENGE_REQUIRED`, `AUTH_REQUIRED`, `UNAVAILABLE_IN_SESSION`
+- [x] `U03-003`: Antigravity & Codex truthful probe: Antigravity `FREE_LOCAL` (0đ local runner 1.4.2); Codex `UNAVAILABLE_IN_SESSION` (`PENDING_QA`, never mocked)
+- [x] `U03-004`: Browser Web Session Probe: Cloudflare Turnstile detection, Login detection, and Authenticated workspace verification
+- [x] `U03-005`: Dynamic UI Badges in `Sidebar.tsx`, `BrowserPanel.tsx`, and `ChatRoom.tsx` (`.status-free-local`, `.status-ready-manual`, `.status-unavailable`, `.status-challenge`)
+- [x] `U03-006`: Safe IPC exposure (`union-bot:get-capabilities`, `union-bot:probe-capability`) and unit tests (5/5 PASS)

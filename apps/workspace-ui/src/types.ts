@@ -3,7 +3,9 @@ export interface AgentInfo {
   name: string;
   role: string;
   provider: string;
-  status: 'active' | 'ready' | 'auth_required' | 'standby' | 'idle';
+  status: 'active' | 'ready' | 'auth_required' | 'standby' | 'idle' | 'free_local' | 'ready_manual' | 'unavailable_in_session' | 'challenge_required' | string;
+  badge?: string;
+  details?: string;
 }
 
 export interface RoomInfo {
@@ -177,13 +179,15 @@ export interface UnionBotAPI {
   approveToken: (tokenId: string | { tokenId: string; decisionContext?: any }, decisionContext?: any) => Promise<{ success: boolean; error?: string; code?: string }>;
   rejectApproval: (tokenId: string, reason?: string) => Promise<{ success: boolean; tokenId?: string; error?: string }>;
   saveAttachment: (payload: { filename: string; mimeType?: string; dataBase64?: string; textContent?: string }) => Promise<{ success: boolean; attachment?: AttachmentInfo; error?: string }>;
-  // Phase V4: Goal-Driven Multi-Agent API (UB-V4-U01, U02)
+  // Phase V4: Goal-Driven Multi-Agent API (UB-V4-U01, U02, U03)
   getDiscoveryState?: (projectId: string) => Promise<{ success: boolean; session?: any; facts: RequirementFactInfo[]; questions: OpenQuestionInfo[] }>;
   saveRequirementFact?: (fact: any) => Promise<{ success: boolean; error?: string }>;
   saveOpenQuestion?: (question: any) => Promise<{ success: boolean; error?: string }>;
   resolveOpenQuestion?: (payload: { id: string; resolution: string }) => Promise<{ success: boolean; error?: string }>;
   checkDiscoveryReady?: (discoveryId?: string) => Promise<{ ready: boolean; reason?: string; blockingQuestions?: string[]; briefDigest?: string; factCount?: number; error?: string }>;
   compactDiscoveryContext?: (discoveryId?: string) => Promise<{ facts: any[]; openQuestions: any[]; digest: string; error?: string }>;
+  getCapabilities?: () => Promise<{ success: boolean; capabilities?: any; agents?: AgentInfo[]; error?: string }>;
+  probeCapability?: (providerId: string) => Promise<{ success: boolean; capability?: any; error?: string }>;
   listGoals?: (projectId: string) => Promise<GoalInfo[]>;
   saveGoal?: (goal: any) => Promise<{ success: boolean; error?: string }>;
   approvePlanRevision?: (payload: any) => Promise<{ success: boolean; error?: string }>;

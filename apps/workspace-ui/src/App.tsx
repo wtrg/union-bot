@@ -23,12 +23,12 @@ const INITIAL_ROOMS: RoomInfo[] = [
 ];
 
 const INITIAL_AGENTS: AgentInfo[] = [
-  { id: 'chatgpt_web', name: 'ChatGPT Web', role: 'Leader / Architect', provider: 'chatgpt', status: 'ready' },
-  { id: 'antigravity', name: 'Antigravity', role: 'Implementer', provider: 'antigravity', status: 'idle' },
-  { id: 'codex', name: 'Codex', role: 'QA & Security', provider: 'codex', status: 'idle' },
-  { id: 'gemini_web', name: 'Gemini Web', role: 'Researcher', provider: 'gemini', status: 'ready' },
-  { id: 'claude_web', name: 'Claude Web', role: 'Standby Member', provider: 'claude', status: 'auth_required' },
-  { id: 'deepseek_web', name: 'DeepSeek Web', role: 'Standby Member', provider: 'deepseek', status: 'auth_required' },
+  { id: 'chatgpt_web', name: 'ChatGPT Web', role: 'Leader / Architect', provider: 'chatgpt', status: 'ready_manual', badge: 'READY_MANUAL', details: 'Active web session' },
+  { id: 'antigravity', name: 'Antigravity', role: 'Implementer', provider: 'antigravity', status: 'free_local', badge: 'FREE_LOCAL', details: 'Local agy 1.4.2 runner (0đ)' },
+  { id: 'codex', name: 'Codex', role: 'QA & Security', provider: 'codex', status: 'unavailable_in_session', badge: 'PENDING_QA', details: 'Pending Independent QA' },
+  { id: 'gemini_web', name: 'Gemini Web', role: 'Researcher', provider: 'gemini', status: 'auth_required', badge: 'AUTH_REQUIRED', details: 'Login required' },
+  { id: 'claude_web', name: 'Claude Web', role: 'Standby Member', provider: 'claude', status: 'auth_required', badge: 'AUTH_REQUIRED', details: 'Standby' },
+  { id: 'deepseek_web', name: 'DeepSeek Web', role: 'Standby Member', provider: 'deepseek', status: 'auth_required', badge: 'AUTH_REQUIRED', details: 'Standby' },
 ];
 
 const EMPTY_ROOMS: Record<string, EnvelopeView[]> = {
@@ -298,6 +298,16 @@ export const App: React.FC = () => {
       loadRoomsForProject(selectedProjectId);
       loadDiscoveryState(selectedProjectId);
       refreshApprovalsCount();
+
+      if (typeof window.unionBotAPI.getCapabilities === 'function') {
+        window.unionBotAPI.getCapabilities().then((res) => {
+          if (res && res.success && Array.isArray(res.agents)) {
+            setAgents(res.agents);
+          }
+        }).catch((err) => {
+          console.warn('[App] Failed to load capabilities:', err);
+        });
+      }
 
       const unsubStatus = window.unionBotAPI.onAppStatusChanged((s) => {
         if (s) {
