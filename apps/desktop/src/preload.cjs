@@ -191,6 +191,16 @@ const api = {
   listDeliveryAttempts: async (payload) => {
     return ipcRenderer.invoke('union-bot:list-delivery-attempts', payload);
   },
+  // Phase V4: Artifact Handoff & Multimodal Fidelity (UB-V4-U05)
+  createHandoff: async (payload) => {
+    return ipcRenderer.invoke('union-bot:create-handoff', payload);
+  },
+  acknowledgeHandoff: async (payload) => {
+    return ipcRenderer.invoke('union-bot:acknowledge-handoff', payload);
+  },
+  listHandoffs: async (payload) => {
+    return ipcRenderer.invoke('union-bot:list-handoffs', payload);
+  },
   listGoals: async (projectId) => {
     return ipcRenderer.invoke('union-bot:list-goals', projectId);
   },

@@ -179,7 +179,7 @@ export interface UnionBotAPI {
   approveToken: (tokenId: string | { tokenId: string; decisionContext?: any }, decisionContext?: any) => Promise<{ success: boolean; error?: string; code?: string }>;
   rejectApproval: (tokenId: string, reason?: string) => Promise<{ success: boolean; tokenId?: string; error?: string }>;
   saveAttachment: (payload: { filename: string; mimeType?: string; dataBase64?: string; textContent?: string }) => Promise<{ success: boolean; attachment?: AttachmentInfo; error?: string }>;
-  // Phase V4: Goal-Driven Multi-Agent API (UB-V4-U01, U02, U03, U04)
+  // Phase V4: Goal-Driven Multi-Agent API (UB-V4-U01, U02, U03, U04, U05)
   getDiscoveryState?: (projectId: string) => Promise<{ success: boolean; session?: any; facts: RequirementFactInfo[]; questions: OpenQuestionInfo[] }>;
   saveRequirementFact?: (fact: any) => Promise<{ success: boolean; error?: string }>;
   saveOpenQuestion?: (question: any) => Promise<{ success: boolean; error?: string }>;
@@ -191,6 +191,9 @@ export interface UnionBotAPI {
   dispatchToProvider?: (payload: { messageId: string; projectId?: string; targetProvider?: string; correlationId?: string; watermark?: number }) => Promise<{ success: boolean; attempt?: any; error?: string }>;
   ingestProviderReply?: (payload: { correlationId: string; responseRef?: string; watermark?: number; replyPayload?: any }) => Promise<{ success: boolean; receipt?: any; error?: string; code?: string }>;
   listDeliveryAttempts?: (payload?: { projectId?: string; limit?: number }) => Promise<any[]>;
+  createHandoff?: (payload: { projectId?: string; goalId?: string; sourceProvider: string; sourceTurnRef?: string; targetProvider: string; sha256: string; byteSize: number; mimeType?: string; fidelity?: string; filename?: string }) => Promise<{ success: boolean; handoff?: any; handoffId?: string; state?: string; error?: string; code?: string }>;
+  acknowledgeHandoff?: (payload: { handoffId: string; receiverProvider: string; ackEvidenceRef?: string }) => Promise<{ success: boolean; handoffId?: string; state?: string; ackEvidenceRef?: string; error?: string; code?: string }>;
+  listHandoffs?: (payload?: { projectId?: string; limit?: number }) => Promise<any[]>;
   listGoals?: (projectId: string) => Promise<GoalInfo[]>;
   saveGoal?: (goal: any) => Promise<{ success: boolean; error?: string }>;
   approvePlanRevision?: (payload: any) => Promise<{ success: boolean; error?: string }>;

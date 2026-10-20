@@ -18,8 +18,8 @@
 | **U02** | `/chat`: Discovery, BA Questioning & Project Memory | VERIFIED | RU02 | Slash parser, Fact ledger, Decision compaction | SELF_VERIFIED |
 | **U03** | Provider Capability & Native Runtime Truth | VERIFIED | RU03 | Capability registry per session, preflight checks | SELF_VERIFIED |
 | **U04** | Two-Way Conversation Router & Thread Receipts | VERIFIED | RU04 | Router, DeliveryAttempt, freshness watermarks | SELF_VERIFIED |
-| **U05** | Artifact Handoff & Multimodal Fidelity | IN_PROGRESS | RU05 | CAS bytes, MIME validation, screenshot fidelity | PENDING_REVIEW |
-| **U06** | `/work`: Plan Registry, Critical Review & Goal Approval | QUEUED | RU06 | Plan revision, frozen brief digest, approval gate | PENDING_REVIEW |
+| **U05** | Artifact Handoff & Multimodal Fidelity | VERIFIED | RU05 | CAS bytes, MIME validation, screenshot fidelity | SELF_VERIFIED |
+| **U06** | `/work`: Plan Registry, Critical Review & Goal Approval | IN_PROGRESS | RU06 | Plan revision, frozen brief digest, approval gate | PENDING_REVIEW |
 | **U07** | WorkflowSupervisor: Continuous Durable Orchestration | QUEUED | RU07 | Durable leases, recovery, task progression | PENDING_REVIEW |
 | **U08** | GitHub Push Approval & ChatGPT Code Review Loop | QUEUED | RU08 | Push consent, SHA binding, review packet intake | PENDING_REVIEW |
 | **U09** | Real Browser-Use & Context Bridge | QUEUED | RU09 | Controller lease, safe observation, redaction | PENDING_REVIEW |
@@ -72,3 +72,11 @@
 - [x] `U04-004`: Deterministic Thread Receipts (`latencyMs`, `ack_at`, `verified: true`) and anti-duplicate reply prevention (`ERR_DUPLICATE_REPLY`)
 - [x] `U04-005`: Timeout and failure tracking: mark timed-out attempts, reject replies on expired correlations (`ERR_EXPIRED_CORRELATION`)
 - [x] `U04-006`: Safe IPC exposure (`union-bot:dispatch-to-provider`, `union-bot:ingest-provider-reply`, `union-bot:list-delivery-attempts`) and unit tests (6/6 PASS)
+
+### U05 — Artifact Handoff & Multimodal Fidelity
+- [x] `U05-001`: `ArtifactHandoffService`: cross-agent artifact exchange lifecycle (`READY_FOR_RECEIVER` -> `READ_ACKNOWLEDGED`) persisted in `handoff_records`
+- [x] `U05-002`: SHA-256 CAS verification and byte-level fidelity: rejects corrupted or invalid hash strings (`ERR_INVALID_CHECKSUM`)
+- [x] `U05-003`: Dangerous executable quarantine: isolates `.exe`, `.dll`, `.bat`, `.cmd`, `.ps1` and malicious MIME types into `REJECTED_QUARANTINE`
+- [x] `U05-004`: Receiver acknowledgment: target provider identity validation and turn evidence persistence (`ackEvidenceRef`)
+- [x] `U05-005`: Rejection and error tracking: mismatched receiver rejection (`ERR_TARGET_MISMATCH`) and explicit checksum rejection (`REJECTED_CHECKSUM`)
+- [x] `U05-006`: Safe IPC exposure (`union-bot:create-handoff`, `union-bot:acknowledge-handoff`, `union-bot:list-handoffs`) and unit tests (6/6 PASS)

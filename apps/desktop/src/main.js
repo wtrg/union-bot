@@ -33,6 +33,7 @@ const { TaskGraphService } = require('./task-graph-service.cjs');
 const { DiscoveryService } = require('./services/discovery-service.cjs');
 const { CapabilityRegistry } = require('./services/capability-registry.cjs');
 const { ConversationRouter } = require('./services/conversation-router.cjs');
+const { ArtifactHandoffService } = require('./services/artifact-handoff-service.cjs');
 
 // Custom test userData override for isolated multi-process E2E testing
 const customUserDataArg = process.argv.find((a) => a.startsWith('--test-user-data=') || a.startsWith('--user-data-dir='));
@@ -141,6 +142,7 @@ antigravityService.on('error', (err) => {
 const taskGraphService = new TaskGraphService(path.resolve(__dirname, '../../..'), costGuard, storage);
 const capabilityRegistry = new CapabilityRegistry({ antigravityService, codexService });
 const conversationRouter = new ConversationRouter(storage);
+const artifactHandoffService = new ArtifactHandoffService(storage, artifactStore);
 
 taskGraphService.on('graph-event', (evt) => {
   if (mainWindow && !mainWindow.isDestroyed()) {
@@ -5413,6 +5415,37 @@ ipcMain.handle('union-bot:list-delivery-attempts', async (event, payload) => {
   if (appStatus !== 'READY') return [];
   try {
     return conversationRouter.listAttempts(payload?.projectId || 'default', payload?.limit || 50);
+  } catch (err) {
+    return [];
+  }
+});
+
+// Phase V4: Artifact Handoff & Multimodal Fidelity (UB-V4-U05)
+ipcMain.handle('union-bot:create-handoff', async (event, payload) => {
+  if (!checkSenderAuthorized(event)) return { success: false, error: 'Unauthorized IPC sender' };
+  if (appStatus !== 'READY') return { success: false, error: 'Storage offline' };
+  try {
+    return artifactHandoffService.createHandoff(payload);
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('union-bot:acknowledge-handoff', async (event, payload) => {
+  if (!checkSenderAuthorized(event)) return { success: false, error: 'Unauthorized IPC sender' };
+  if (appStatus !== 'READY') return { success: false, error: 'Storage offline' };
+  try {
+    return artifactHandoffService.acknowledgeHandoff(payload);
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('union-bot:list-handoffs', async (event, payload) => {
+  if (!checkSenderAuthorized(event)) return [];
+  if (appStatus !== 'READY') return [];
+  try {
+    return artifactHandoffService.listHandoffs(payload?.projectId || 'default', payload?.limit || 50);
   } catch (err) {
     return [];
   }
