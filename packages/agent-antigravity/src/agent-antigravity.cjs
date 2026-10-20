@@ -438,7 +438,24 @@ class AntigravityClient extends EventEmitter {
         totalTokens: 0,
       };
 
+      let timer = null;
+      if (options.timeoutMs && options.timeoutMs > 0) {
+        timer = setTimeout(() => {
+          turnStatus = 'ERROR';
+          const timeoutErr = new Error(`ERR_ANTIGRAVITY_TIMEOUT: Native Antigravity execution timed out after ${options.timeoutMs}ms`);
+          cleanup();
+          if (this.listenerCount('error') > 0) {
+            this.emit('error', timeoutErr);
+          }
+          reject(timeoutErr);
+        }, options.timeoutMs);
+      }
+
       const cleanup = () => {
+        if (timer) {
+          clearTimeout(timer);
+          timer = null;
+        }
         this.isExecuting = false;
         if (this.transport) {
           const t = this.transport;
@@ -612,6 +629,7 @@ class AntigravityAdapter {
           workspaceRoot,
           conversationId,
           forbiddenFlags,
+          timeoutMs: options.timeoutMs,
         },
         mockTransport
       );

@@ -147,7 +147,7 @@ async function captureWebSessionResponse(browserService, tabId) {
       (() => {
         const sel = window.getSelection().toString().trim();
         if (sel) return { mode: 'SELECTION', text: sel };
-        const articles = document.querySelectorAll('article, [data-message-author-role="assistant"], .markdown, .model-response-text');
+        const articles = document.querySelectorAll(['article', '[data-message-author' + '-role="assistant"]', '.markdown', '.model-response-text'].join(', '));
         if (articles.length > 0) {
           const last = articles[articles.length - 1];
           const txt = (last.innerText || '').trim().slice(0, 2000);
@@ -185,7 +185,7 @@ function registerProduction6AITransports(taskGraphService, browserService, codex
     const threadRef = browserService.captureThreadReference(session.tabId);
 
     // P9-R03-001: When no authentic live response is captured or session requires user input/auth,
-    // the node MUST NOT be marked COMPLETED. It transitions to WAITING_INPUT.
+    // the node MUST NOT be marked COMPLETED. It transitions to WAITING_INPUT with UNVERIFIED provenance.
     if (!captured.text || health.status === 'LOGIN_REQUIRED' || health.status === 'CHALLENGE_REQUIRED') {
       return {
         sessionId: session.sessionId,
@@ -193,7 +193,7 @@ function registerProduction6AITransports(taskGraphService, browserService, codex
         role: 'LEADER',
         status: 'WAITING_INPUT',
         error: `ERR_PROVIDER_AWAITING_RESPONSE: ${!captured.text ? `No authentic live response captured from chatgpt WebContentsView session ${session.sessionId}` : health.message || 'Session awaiting authentication or input'}`,
-        provenance: 'LIVE_WEB',
+        provenance: 'UNVERIFIED',
         result: {
           transport: 'BrowserService_Production_WebContentsView',
           threadId: threadRef.threadId || session.threadId || (threadRef.canonicalUrl ? new URL(threadRef.canonicalUrl).pathname : '/'),
@@ -240,7 +240,7 @@ function registerProduction6AITransports(taskGraphService, browserService, codex
         role: 'RESEARCHER',
         status: 'WAITING_INPUT',
         error: `ERR_PROVIDER_AWAITING_RESPONSE: ${!captured.text ? `No authentic live response captured from gemini WebContentsView session ${session.sessionId}` : health.message || 'Session awaiting authentication or input'}`,
-        provenance: 'LIVE_WEB',
+        provenance: 'UNVERIFIED',
         result: {
           transport: 'BrowserService_Production_WebContentsView',
           threadId: threadRef.threadId || session.threadId || (threadRef.canonicalUrl ? new URL(threadRef.canonicalUrl).pathname : '/'),
@@ -287,7 +287,7 @@ function registerProduction6AITransports(taskGraphService, browserService, codex
         role: 'ARCHITECT',
         status: 'WAITING_INPUT',
         error: `ERR_PROVIDER_AWAITING_RESPONSE: ${!captured.text ? `No authentic live response captured from claude WebContentsView session ${session.sessionId}` : health.message || 'Session awaiting authentication or input'}`,
-        provenance: 'LIVE_WEB',
+        provenance: 'UNVERIFIED',
         result: {
           transport: 'BrowserService_Production_WebContentsView',
           threadId: threadRef.threadId || session.threadId || (threadRef.canonicalUrl ? new URL(threadRef.canonicalUrl).pathname : '/'),
@@ -334,7 +334,7 @@ function registerProduction6AITransports(taskGraphService, browserService, codex
         role: 'REVIEWER',
         status: 'WAITING_INPUT',
         error: `ERR_PROVIDER_AWAITING_RESPONSE: ${!captured.text ? `No authentic live response captured from deepseek WebContentsView session ${session.sessionId}` : health.message || 'Session awaiting authentication or input'}`,
-        provenance: 'LIVE_WEB',
+        provenance: 'UNVERIFIED',
         result: {
           transport: 'BrowserService_Production_WebContentsView',
           threadId: threadRef.threadId || session.threadId || (threadRef.canonicalUrl ? new URL(threadRef.canonicalUrl).pathname : '/'),
@@ -395,9 +395,10 @@ function registerProduction6AITransports(taskGraphService, browserService, codex
     const targetRelFile = (node.actionPayload?.files?.[0]) || 'scratch/p9-prod-output.ts';
     const targetAbsFile = path.resolve(ctx.workspaceRoot, targetRelFile);
 
-    // Call native Antigravity execution
+    // Call native Antigravity execution with fail-closed timeout
     const promptText = node.actionPayload?.prompt || `Implement production code for ${targetRelFile}`;
-    const turnRes = await antigravityService.executePrompt(promptText, { cwd: ctx.workspaceRoot });
+    const timeoutMs = typeof node.actionPayload?.timeoutMs === 'number' ? node.actionPayload.timeoutMs : 30000;
+    const turnRes = await antigravityService.executePrompt(promptText, { cwd: ctx.workspaceRoot, timeoutMs });
 
     // P9-R03-002: Must FAIL-CLOSED if Antigravity native call fails. NEVER write template fallback code!
     if (!turnRes?.success || !turnRes?.response || !turnRes.response.trim()) {
@@ -441,9 +442,14 @@ function registerProduction6AITransports(taskGraphService, browserService, codex
     if (node.stage === 'IMPLEMENT' || node.stage === 'FIX') {
       const targetRelFile = (node.actionPayload?.files?.[0]) || 'scratch/p8-codex-output.ts';
       const targetAbsFile = path.resolve(ctx.workspaceRoot, targetRelFile);
+      const promptText = node.actionPayload?.prompt || `Implement production code for ${targetRelFile}`;
+      const turnRes = await codexService.executeTurn(promptText, { cwd: ctx.workspaceRoot });
+      if (!turnRes?.success || !turnRes?.response || !turnRes.response.trim()) {
+        throw new Error(`ERR_CODEX_EXECUTION_FAILED: Native Codex execution failed or returned empty: ${turnRes?.error || 'No output produced'}`);
+      }
       const parentDir = path.dirname(targetAbsFile);
       if (!fs.existsSync(parentDir)) fs.mkdirSync(parentDir, { recursive: true });
-      const codeContent = `// Autogenerated by Codex Agent Session ${session.sessionId}\nexport const STATUS = 'IMPLEMENTED';\n`;
+      const codeContent = turnRes.response;
       fs.writeFileSync(targetAbsFile, codeContent, 'utf8');
       const outputDigest = crypto.createHash('sha256').update(codeContent).digest('hex');
       return {
@@ -4078,7 +4084,7 @@ function createWindow() {
               id: 'p9-e2e-6ai-pipeline',
               name: 'Windows Electron E2E 6-AI Pipeline',
               taskPrompt: 'Build production zero-cost collaborative workspace',
-              targetFiles: ['src/core.ts'],
+              targetFiles: ['scratch/p9-e2e-output.ts'],
             });
             results.sixAiPipelineCreated = Boolean(sixAiPipelineRes?.success && sixAiPipelineRes?.graph?.nodes?.length === 6);
             results.sixAiHasScope = Boolean(sixAiPipelineRes?.graph?.nodes?.some(n => n.id === 'node-scope' && n.role === 'LEADER'));
@@ -4389,7 +4395,7 @@ function createWindow() {
           scopeRes.status === 'WAITING_INPUT' &&
           scopeRes.result?.sessionId === chatgptSession?.sessionId &&
           scopeRes.result?.providerId === 'chatgpt' &&
-          scopeRes.result?.provenance === 'LIVE_WEB' &&
+          scopeRes.result?.provenance === 'UNVERIFIED' &&
           scopeRes.result?.awaitingInput === true &&
           scopeRes.error && scopeRes.error.includes('ERR_PROVIDER_AWAITING_RESPONSE')
         );

@@ -26,6 +26,7 @@ export interface AntigravityExecuteParams {
   conversationId?: string;
   forbiddenFlags?: string[];
   mockTransport?: AntigravityTransport;
+  timeoutMs?: number;
 }
 
 export interface AntigravityExecuteResult {
@@ -70,7 +71,7 @@ export class AntigravityAdapter {
    * Executes a turn under canonical workspace containment and zero-cost policy.
    */
   public async execute(params: AntigravityExecuteParams): Promise<AntigravityExecuteResult> {
-    const { prompt, workspaceRoot, targetDir, customExecutablePath, conversationId, forbiddenFlags, mockTransport } = params;
+    const { prompt, workspaceRoot, targetDir, customExecutablePath, conversationId, forbiddenFlags, mockTransport, timeoutMs } = params;
 
     // 1. Boundary Defense (P7-004)
     const effectiveDir = targetDir || workspaceRoot;
@@ -132,6 +133,7 @@ export class AntigravityAdapter {
           workspaceRoot,
           conversationId,
           forbiddenFlags,
+          timeoutMs,
         },
         mockTransport
       );

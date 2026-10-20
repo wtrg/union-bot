@@ -950,7 +950,7 @@ export class TaskGraphEngine extends EventEmitter {
             sessionId: executionResult.sessionId || session?.sessionId,
             providerId: node.assignedProvider,
             role: node.assignedRole,
-            provenance: executionResult.provenance || 'LIVE_WEB',
+            provenance: executionResult.provenance || 'UNVERIFIED',
           };
         }
         this.recordHistory(graph, 'TASK_NODE_WAITING_INPUT', node.id, {

@@ -124,6 +124,7 @@ class AntigravityService extends EventEmitter {
       conversationId: options.conversationId,
       forbiddenFlags: options.forbiddenFlags,
       mockTransport: this.customTransport,
+      timeoutMs: options.timeoutMs,
     });
   }
 
