@@ -598,3 +598,263 @@ export function createEnvelope(params: {
   };
   return EnvelopeSchema.parse(envelope);
 }
+
+
+// ============================================================================
+// Union Bot Phase V4: Goal-Driven Multi-Agent Protocol Contracts (UB-V4-U01)
+// ============================================================================
+
+export const DiscoverySessionStateSchema = z.enum(['DRAFT', 'ACTIVE', 'FROZEN', 'SUPERSEDED']);
+export type DiscoverySessionState = z.infer<typeof DiscoverySessionStateSchema>;
+
+export const DiscoverySessionSchema = z.object({
+  id: z.string().min(1),
+  projectId: z.string().min(1),
+  mode: z.enum(['DISCOVERY', 'WORK']).default('DISCOVERY'),
+  version: z.number().int().positive().default(1),
+  state: DiscoverySessionStateSchema.default('DRAFT'),
+  briefSha256: z.string().regex(/^[a-f0-9]{64}$/i).optional(),
+  createdAt: z.number().int().nonnegative(),
+  updatedAt: z.number().int().nonnegative(),
+});
+export type DiscoverySession = z.infer<typeof DiscoverySessionSchema>;
+
+export const RequirementFactStateSchema = z.enum(['PROPOSED', 'CONFIRMED', 'REJECTED', 'SUPERSEDED']);
+export type RequirementFactState = z.infer<typeof RequirementFactStateSchema>;
+
+export const RequirementFactSchema = z.object({
+  id: z.string().min(1),
+  discoveryId: z.string().min(1),
+  projectId: z.string().min(1),
+  key: z.string().min(1),
+  value: z.string().min(1),
+  sourceTurnRef: z.string().min(1),
+  confidence: z.number().min(0).max(1).default(1.0),
+  state: RequirementFactStateSchema.default('PROPOSED'),
+  confirmedBy: z.string().optional(),
+  createdAt: z.number().int().nonnegative(),
+  updatedAt: z.number().int().nonnegative(),
+});
+export type RequirementFact = z.infer<typeof RequirementFactSchema>;
+
+export const OpenQuestionPrioritySchema = z.enum(['CRITICAL', 'HIGH', 'MEDIUM', 'LOW']);
+export type OpenQuestionPriority = z.infer<typeof OpenQuestionPrioritySchema>;
+
+export const OpenQuestionSchema = z.object({
+  id: z.string().min(1),
+  discoveryId: z.string().min(1),
+  requirementKey: z.string().min(1),
+  question: z.string().min(1),
+  priority: OpenQuestionPrioritySchema.default('HIGH'),
+  blocking: z.boolean().default(true),
+  resolved: z.boolean().default(false),
+  resolution: z.string().optional(),
+  askedAt: z.number().int().nonnegative(),
+  resolvedAt: z.number().int().nonnegative().optional(),
+});
+export type OpenQuestion = z.infer<typeof OpenQuestionSchema>;
+
+export const GoalStateSchema = z.enum([
+  'DRAFT',
+  'DISCOVERY',
+  'READY_FOR_PLAN',
+  'PLAN_REVIEW',
+  'AWAITING_OWNER_APPROVAL',
+  'APPROVED',
+  'RUNNING',
+  'PAUSED_SAFE',
+  'VERIFYING',
+  'COMPLETED_VERIFIED',
+  'BLOCKED',
+  'CANCELLED',
+]);
+export type GoalState = z.infer<typeof GoalStateSchema>;
+
+export const GoalSchema = z.object({
+  id: z.string().min(1),
+  projectId: z.string().min(1),
+  title: z.string().min(1),
+  description: z.string().default(''),
+  activePlanRevision: z.number().int().nonnegative().default(0),
+  state: GoalStateSchema.default('DRAFT'),
+  ownerApprovalRef: z.string().optional(),
+  createdAt: z.number().int().nonnegative(),
+  updatedAt: z.number().int().nonnegative(),
+});
+export type Goal = z.infer<typeof GoalSchema>;
+
+export const PlanRevisionStateSchema = z.enum(['DRAFT', 'AWAITING_REVIEW', 'APPROVED', 'REJECTED', 'SUPERSEDED']);
+export type PlanRevisionState = z.infer<typeof PlanRevisionStateSchema>;
+
+export const PlanRevisionSchema = z.object({
+  id: z.string().min(1),
+  goalId: z.string().min(1),
+  revision: z.number().int().positive(),
+  discoveryDigest: z.string().regex(/^[a-f0-9]{64}$/i),
+  documentSha256: z.string().regex(/^[a-f0-9]{64}$/i),
+  status: PlanRevisionStateSchema.default('DRAFT'),
+  milestonesJson: z.string().default('[]'),
+  createdAt: z.number().int().nonnegative(),
+  approvedAt: z.number().int().nonnegative().optional(),
+});
+export type PlanRevision = z.infer<typeof PlanRevisionSchema>;
+
+export const MilestoneStateSchema = z.enum([
+  'PENDING',
+  'READY',
+  'RUNNING',
+  'VERIFYING',
+  'VERIFIED',
+  'BLOCKED',
+  'FAILED',
+]);
+export type MilestoneState = z.infer<typeof MilestoneStateSchema>;
+
+export const MilestoneSchema = z.object({
+  id: z.string().min(1),
+  goalId: z.string().min(1),
+  planRevision: z.number().int().positive(),
+  order: z.number().int().nonnegative(),
+  title: z.string().min(1),
+  dependsOn: z.array(z.string()).default([]),
+  state: MilestoneStateSchema.default('PENDING'),
+  evidenceRefs: z.array(z.string()).default([]),
+  createdAt: z.number().int().nonnegative(),
+  updatedAt: z.number().int().nonnegative(),
+});
+export type Milestone = z.infer<typeof MilestoneSchema>;
+
+export const DeliveryAttemptStateSchema = z.enum([
+  'CREATED',
+  'PERSISTED',
+  'QUEUED',
+  'DISPATCHED',
+  'ACKED',
+  'RESPONSE_CORRELATED',
+  'HANDOFF_VERIFIED',
+  'MANUAL_RELAY',
+  'RETRYABLE_FAILURE',
+  'PERMANENT_BLOCK',
+  'UNKNOWN_NEEDS_RECONCILIATION',
+]);
+export type DeliveryAttemptState = z.infer<typeof DeliveryAttemptStateSchema>;
+
+export const DeliveryAttemptSchema = z.object({
+  id: z.string().min(1),
+  messageId: z.string().min(1),
+  projectId: z.string().min(1),
+  targetProvider: ProviderKindSchema,
+  correlationId: z.string().min(1),
+  state: DeliveryAttemptStateSchema.default('CREATED'),
+  sentAt: z.number().int().nonnegative(),
+  ackAt: z.number().int().nonnegative().optional(),
+  responseRef: z.string().optional(),
+});
+export type DeliveryAttempt = z.infer<typeof DeliveryAttemptSchema>;
+
+export const ArtifactHandoffStateSchema = z.enum([
+  'READY_FOR_RECEIVER',
+  'READ_ACKNOWLEDGED',
+  'REJECTED_CHECKSUM',
+  'REJECTED_QUARANTINE',
+]);
+export type ArtifactHandoffState = z.infer<typeof ArtifactHandoffStateSchema>;
+
+export const ArtifactHandoffSchema = z.object({
+  id: z.string().min(1),
+  projectId: z.string().min(1),
+  goalId: z.string().optional(),
+  sourceProvider: ProviderKindSchema,
+  sourceTurnRef: z.string().optional(),
+  targetProvider: ProviderKindSchema,
+  sha256: z.string().regex(/^[a-f0-9]{64}$/i),
+  byteSize: z.number().int().nonnegative(),
+  mimeType: z.string().min(1),
+  fidelity: ContentFidelitySchema.default('original_bytes'),
+  state: ArtifactHandoffStateSchema.default('READY_FOR_RECEIVER'),
+  ackEvidenceRef: z.string().optional(),
+  createdAt: z.number().int().nonnegative(),
+});
+export type ArtifactHandoff = z.infer<typeof ArtifactHandoffSchema>;
+
+export const FindingSeveritySchema = z.enum(['SEV0', 'SEV1', 'SEV2', 'SEV3']);
+export type FindingSeverity = z.infer<typeof FindingSeveritySchema>;
+
+export const ReviewFindingStateSchema = z.enum(['OPEN', 'FIX_SUBMITTED', 'VERIFIED_FIXED', 'REJECTED']);
+export type ReviewFindingState = z.infer<typeof ReviewFindingStateSchema>;
+
+export const ReviewFindingSchema = z.object({
+  id: z.string().min(1),
+  changeSetId: z.string().min(1),
+  reviewer: z.string().min(1),
+  file: z.string().min(1),
+  line: z.number().int().nonnegative().optional(),
+  severity: FindingSeveritySchema.default('SEV2'),
+  description: z.string().min(1),
+  reproduction: z.string().optional(),
+  state: ReviewFindingStateSchema.default('OPEN'),
+  createdAt: z.number().int().nonnegative(),
+});
+export type ReviewFinding = z.infer<typeof ReviewFindingSchema>;
+
+export const ActivityEventKindSchema = z.enum([
+  'GOAL_CREATED',
+  'BRIEF_READY',
+  'PLAN_APPROVED',
+  'TASK_ASSIGNED',
+  'COMMIT_READY',
+  'PUSH_APPROVAL_REQUESTED',
+  'PUSHED',
+  'REVIEW_RECEIVED',
+  'BUG_OPENED',
+  'FIX_READY',
+  'QA_PASSED',
+  'MILESTONE_COMPLETE',
+  'WAITING_USER',
+  'GOAL_COMPLETE',
+  'BLOCKED',
+]);
+export type ActivityEventKind = z.infer<typeof ActivityEventKindSchema>;
+
+export const ActivityEventSchema = z.object({
+  id: z.string().min(1),
+  projectId: z.string().min(1),
+  goalId: z.string().optional(),
+  kind: ActivityEventKindSchema,
+  summary: z.string().min(1),
+  actor: z.object({
+    provider: ProviderKindSchema,
+    role: RoleSchema,
+  }),
+  source: z.object({
+    eventId: z.string().optional(),
+    commitSHA: z.string().optional(),
+    threadRef: z.string().optional(),
+  }).optional(),
+  references: z.array(z.string()).default([]),
+  receiptState: z.enum(['UNVERIFIED', 'ACKED', 'VERIFIED']).default('UNVERIFIED'),
+  createdAt: z.number().int().nonnegative(),
+});
+export type ActivityEvent = z.infer<typeof ActivityEventSchema>;
+
+export const PermissionGrantActionSchema = z.enum([
+  'GIT_PUSH',
+  'TOOL_EXECUTE',
+  'BROWSER_CONTROL',
+  'PLAN_APPROVE',
+]);
+export type PermissionGrantAction = z.infer<typeof PermissionGrantActionSchema>;
+
+export const PermissionGrantSchema = z.object({
+  id: z.string().min(1),
+  actor: z.string().min(1),
+  action: PermissionGrantActionSchema,
+  repo: z.string().optional(),
+  branch: z.string().optional(),
+  payloadDigest: z.string().regex(/^[a-f0-9]{64}$/i),
+  singleUse: z.boolean().default(true),
+  used: z.boolean().default(false),
+  expiresAt: z.number().int().nonnegative(),
+  createdAt: z.number().int().nonnegative(),
+});
+export type PermissionGrant = z.infer<typeof PermissionGrantSchema>;

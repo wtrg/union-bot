@@ -177,6 +177,16 @@ export interface UnionBotAPI {
   approveToken: (tokenId: string | { tokenId: string; decisionContext?: any }, decisionContext?: any) => Promise<{ success: boolean; error?: string; code?: string }>;
   rejectApproval: (tokenId: string, reason?: string) => Promise<{ success: boolean; tokenId?: string; error?: string }>;
   saveAttachment: (payload: { filename: string; mimeType?: string; dataBase64?: string; textContent?: string }) => Promise<{ success: boolean; attachment?: AttachmentInfo; error?: string }>;
+  // Phase V4: Goal-Driven Multi-Agent API (UB-V4-U01)
+  getDiscoveryState?: (projectId: string) => Promise<{ success: boolean; session?: any; facts: RequirementFactInfo[]; questions: OpenQuestionInfo[] }>;
+  saveRequirementFact?: (fact: any) => Promise<{ success: boolean; error?: string }>;
+  saveOpenQuestion?: (question: any) => Promise<{ success: boolean; error?: string }>;
+  resolveOpenQuestion?: (payload: { id: string; resolution: string }) => Promise<{ success: boolean; error?: string }>;
+  listGoals?: (projectId: string) => Promise<GoalInfo[]>;
+  saveGoal?: (goal: any) => Promise<{ success: boolean; error?: string }>;
+  approvePlanRevision?: (payload: any) => Promise<{ success: boolean; error?: string }>;
+  listMilestones?: (goalId: string) => Promise<MilestoneInfo[]>;
+  listActivityEvents?: (payload: { projectId: string; goalId?: string }) => Promise<ActivityEventInfo[]>;
   readAttachment: (sha256: string) => Promise<{ success: boolean; sha256?: string; dataBase64?: string; sizeBytes?: number; error?: string }>;
   openFileDialog: () => Promise<{ success: boolean; canceled?: boolean; attachment?: AttachmentInfo; error?: string }>;
   exportWorkspace: (options?: any) => Promise<{ success: boolean; exportJson?: string; exportMarkdown?: string; projectCount?: number; roomCount?: number; taskCount?: number; totalEnvelopes?: number; error?: string }>;
@@ -240,6 +250,71 @@ export interface BrowserManagerState {
   bounds: { x: number; y: number; width: number; height: number };
   isVisible: boolean;
   isModalActive: boolean;
+}
+
+export interface RequirementFactInfo {
+  id: string;
+  discoveryId: string;
+  projectId: string;
+  key: string;
+  value: string;
+  sourceTurnRef: string;
+  confidence: number;
+  state: 'PROPOSED' | 'CONFIRMED' | 'REJECTED' | 'SUPERSEDED';
+  confirmedBy?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface OpenQuestionInfo {
+  id: string;
+  discoveryId: string;
+  requirementKey: string;
+  question: string;
+  priority: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
+  blocking: boolean;
+  resolved: boolean;
+  resolution?: string;
+  askedAt: number;
+  resolvedAt?: number;
+}
+
+export interface GoalInfo {
+  id: string;
+  projectId: string;
+  title: string;
+  description: string;
+  activePlanRevision: number;
+  state: 'DRAFT' | 'DISCOVERY' | 'READY_FOR_PLAN' | 'PLAN_REVIEW' | 'AWAITING_OWNER_APPROVAL' | 'APPROVED' | 'RUNNING' | 'PAUSED_SAFE' | 'VERIFYING' | 'COMPLETED_VERIFIED' | 'BLOCKED' | 'CANCELLED';
+  ownerApprovalRef?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface MilestoneInfo {
+  id: string;
+  goalId: string;
+  planRevision: number;
+  order: number;
+  title: string;
+  dependsOn: string[];
+  state: 'PENDING' | 'READY' | 'RUNNING' | 'VERIFYING' | 'VERIFIED' | 'BLOCKED' | 'FAILED';
+  evidenceRefs: string[];
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface ActivityEventInfo {
+  id: string;
+  projectId: string;
+  goalId?: string;
+  kind: string;
+  summary: string;
+  actor: { provider: string; role: string };
+  source?: { eventId?: string; commitSHA?: string; threadRef?: string };
+  references: string[];
+  receiptState: 'UNVERIFIED' | 'ACKED' | 'VERIFIED';
+  createdAt: number;
 }
 
 declare global {

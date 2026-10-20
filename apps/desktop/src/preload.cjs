@@ -156,6 +156,35 @@ const api = {
     };
   },
 
+  // Phase V4: Goal-Driven Multi-Agent API (UB-V4-U01)
+  getDiscoveryState: async (projectId) => {
+    return ipcRenderer.invoke('union-bot:get-discovery-state', projectId);
+  },
+  saveRequirementFact: async (fact) => {
+    return ipcRenderer.invoke('union-bot:save-requirement-fact', fact);
+  },
+  saveOpenQuestion: async (question) => {
+    return ipcRenderer.invoke('union-bot:save-open-question', question);
+  },
+  resolveOpenQuestion: async (payload) => {
+    return ipcRenderer.invoke('union-bot:resolve-open-question', payload);
+  },
+  listGoals: async (projectId) => {
+    return ipcRenderer.invoke('union-bot:list-goals', projectId);
+  },
+  saveGoal: async (goal) => {
+    return ipcRenderer.invoke('union-bot:save-goal', goal);
+  },
+  approvePlanRevision: async (payload) => {
+    return ipcRenderer.invoke('union-bot:approve-plan-revision', payload);
+  },
+  listMilestones: async (goalId) => {
+    return ipcRenderer.invoke('union-bot:list-milestones', goalId);
+  },
+  listActivityEvents: async (payload) => {
+    return ipcRenderer.invoke('union-bot:list-activity-events', payload);
+  },
+
   // Phase P4: Embedded Chromium Browser API
   browserGetState: async () => {
     return ipcRenderer.invoke('union-bot:browser-get-state');

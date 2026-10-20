@@ -160,12 +160,173 @@ const MIGRATION_2_SQL = `
   VALUES ('default', 'General Project', 'Default local workspace project', '1970-01-01T00:00:00.000Z', '1970-01-01T00:00:00.000Z', 0);
 `;
 
+const MIGRATION_3_SQL = `
+  -- Phase V4 Goal-Driven Workspace Tables (UB-V4-U01)
+  CREATE TABLE IF NOT EXISTS discovery_sessions (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    mode TEXT NOT NULL DEFAULT 'DISCOVERY',
+    version INTEGER NOT NULL DEFAULT 1,
+    state TEXT NOT NULL DEFAULT 'DRAFT',
+    brief_sha256 TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_discovery_project ON discovery_sessions (project_id, state);
+
+  CREATE TABLE IF NOT EXISTS requirement_facts (
+    id TEXT PRIMARY KEY,
+    discovery_id TEXT NOT NULL,
+    project_id TEXT NOT NULL,
+    key TEXT NOT NULL,
+    value TEXT NOT NULL,
+    source_turn_ref TEXT NOT NULL,
+    confidence REAL NOT NULL DEFAULT 1.0,
+    state TEXT NOT NULL DEFAULT 'PROPOSED',
+    confirmed_by TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_facts_discovery ON requirement_facts (discovery_id, key);
+  CREATE INDEX IF NOT EXISTS idx_facts_project ON requirement_facts (project_id);
+
+  CREATE TABLE IF NOT EXISTS open_questions (
+    id TEXT PRIMARY KEY,
+    discovery_id TEXT NOT NULL,
+    requirement_key TEXT NOT NULL,
+    question TEXT NOT NULL,
+    priority TEXT NOT NULL DEFAULT 'HIGH',
+    blocking INTEGER NOT NULL DEFAULT 1,
+    resolved INTEGER NOT NULL DEFAULT 0,
+    resolution TEXT,
+    asked_at TEXT NOT NULL,
+    resolved_at TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_open_questions ON open_questions (discovery_id, resolved);
+
+  CREATE TABLE IF NOT EXISTS goals (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    description TEXT,
+    active_plan_revision INTEGER NOT NULL DEFAULT 0,
+    state TEXT NOT NULL DEFAULT 'DRAFT',
+    owner_approval_ref TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_goals_project ON goals (project_id, state);
+
+  CREATE TABLE IF NOT EXISTS goal_plan_revisions (
+    id TEXT PRIMARY KEY,
+    goal_id TEXT NOT NULL,
+    revision INTEGER NOT NULL,
+    discovery_digest TEXT NOT NULL,
+    document_sha256 TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'DRAFT',
+    milestones_json TEXT NOT NULL DEFAULT '[]',
+    created_at TEXT NOT NULL,
+    approved_at TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_plan_revisions_goal ON goal_plan_revisions (goal_id, revision);
+
+  CREATE TABLE IF NOT EXISTS milestones (
+    id TEXT PRIMARY KEY,
+    goal_id TEXT NOT NULL,
+    plan_revision INTEGER NOT NULL,
+    order_idx INTEGER NOT NULL,
+    title TEXT NOT NULL,
+    depends_on_json TEXT NOT NULL DEFAULT '[]',
+    state TEXT NOT NULL DEFAULT 'PENDING',
+    evidence_refs_json TEXT NOT NULL DEFAULT '[]',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_milestones_goal ON milestones (goal_id, order_idx);
+
+  CREATE TABLE IF NOT EXISTS delivery_attempts (
+    id TEXT PRIMARY KEY,
+    message_id TEXT NOT NULL,
+    project_id TEXT NOT NULL,
+    target_provider TEXT NOT NULL,
+    correlation_id TEXT NOT NULL,
+    state TEXT NOT NULL DEFAULT 'CREATED',
+    sent_at TEXT NOT NULL,
+    ack_at TEXT,
+    response_ref TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_delivery_correlation ON delivery_attempts (correlation_id);
+  CREATE INDEX IF NOT EXISTS idx_delivery_message ON delivery_attempts (message_id);
+
+  CREATE TABLE IF NOT EXISTS handoff_records (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    goal_id TEXT,
+    source_provider TEXT NOT NULL,
+    source_turn_ref TEXT,
+    target_provider TEXT NOT NULL,
+    sha256 TEXT NOT NULL,
+    byte_size INTEGER NOT NULL,
+    mime_type TEXT NOT NULL,
+    fidelity TEXT NOT NULL DEFAULT 'original_bytes',
+    state TEXT NOT NULL DEFAULT 'READY_FOR_RECEIVER',
+    ack_evidence_ref TEXT,
+    created_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_handoff_sha ON handoff_records (sha256);
+  CREATE INDEX IF NOT EXISTS idx_handoff_project ON handoff_records (project_id);
+
+  CREATE TABLE IF NOT EXISTS review_findings (
+    id TEXT PRIMARY KEY,
+    change_set_id TEXT NOT NULL,
+    reviewer TEXT NOT NULL,
+    file TEXT NOT NULL,
+    line INTEGER,
+    severity TEXT NOT NULL DEFAULT 'SEV2',
+    description TEXT NOT NULL,
+    reproduction TEXT,
+    state TEXT NOT NULL DEFAULT 'OPEN',
+    created_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_findings_changeset ON review_findings (change_set_id, state);
+
+  CREATE TABLE IF NOT EXISTS activity_events (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    goal_id TEXT,
+    kind TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    actor_json TEXT NOT NULL,
+    source_json TEXT,
+    references_json TEXT NOT NULL DEFAULT '[]',
+    receipt_state TEXT NOT NULL DEFAULT 'UNVERIFIED',
+    created_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_activity_project ON activity_events (project_id, created_at);
+  CREATE INDEX IF NOT EXISTS idx_activity_goal ON activity_events (goal_id);
+
+  CREATE TABLE IF NOT EXISTS permission_grants (
+    id TEXT PRIMARY KEY,
+    actor TEXT NOT NULL,
+    action TEXT NOT NULL,
+    repo TEXT,
+    branch TEXT,
+    payload_digest TEXT NOT NULL,
+    single_use INTEGER NOT NULL DEFAULT 1,
+    used INTEGER NOT NULL DEFAULT 0,
+    expires_at TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_perm_digest ON permission_grants (payload_digest, used);
+`;
+
 function computeChecksum(content) {
   return createHash('sha256').update(content.trim(), 'utf8').digest('hex');
 }
 
 const CANONICAL_MIGRATION_1_CHECKSUM = computeChecksum(MIGRATION_1_SQL);
 const CANONICAL_MIGRATION_2_CHECKSUM = computeChecksum(MIGRATION_2_SQL);
+const CANONICAL_MIGRATION_3_CHECKSUM = computeChecksum(MIGRATION_3_SQL);
 // Known legacy checksum from R03/R04 desktop implementations
 const LEGACY_R04_EMPTY_CHECKSUM = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855';
 const LEGACY_MIGRATION_2_CHECKSUM = '4197ba72cb95ffc9dc7a85b858d0f0b2fff1acab1fd48b51806957ffc722a9aa';
@@ -261,6 +422,45 @@ const MIGRATIONS = [
         DROP TABLE IF EXISTS tasks;
         DROP INDEX IF EXISTS idx_projects_archived;
         DROP TABLE IF EXISTS projects;
+      `);
+    },
+  },
+  {
+    version: 3,
+    name: '003_v4_goal_driven_workspace',
+    checksum: CANONICAL_MIGRATION_3_CHECKSUM,
+    sql: MIGRATION_3_SQL,
+    up: (db) => {
+      db.exec(MIGRATION_3_SQL);
+    },
+    down: (db) => {
+      db.exec(`
+        DROP INDEX IF EXISTS idx_perm_digest;
+        DROP TABLE IF EXISTS permission_grants;
+        DROP INDEX IF EXISTS idx_activity_goal;
+        DROP INDEX IF EXISTS idx_activity_project;
+        DROP TABLE IF EXISTS activity_events;
+        DROP INDEX IF EXISTS idx_findings_changeset;
+        DROP TABLE IF EXISTS review_findings;
+        DROP INDEX IF EXISTS idx_handoff_project;
+        DROP INDEX IF EXISTS idx_handoff_sha;
+        DROP TABLE IF EXISTS handoff_records;
+        DROP INDEX IF EXISTS idx_delivery_message;
+        DROP INDEX IF EXISTS idx_delivery_correlation;
+        DROP TABLE IF EXISTS delivery_attempts;
+        DROP INDEX IF EXISTS idx_milestones_goal;
+        DROP TABLE IF EXISTS milestones;
+        DROP INDEX IF EXISTS idx_plan_revisions_goal;
+        DROP TABLE IF EXISTS goal_plan_revisions;
+        DROP INDEX IF EXISTS idx_goals_project;
+        DROP TABLE IF EXISTS goals;
+        DROP INDEX IF EXISTS idx_open_questions;
+        DROP TABLE IF EXISTS open_questions;
+        DROP INDEX IF EXISTS idx_facts_project;
+        DROP INDEX IF EXISTS idx_facts_discovery;
+        DROP TABLE IF EXISTS requirement_facts;
+        DROP INDEX IF EXISTS idx_discovery_project;
+        DROP TABLE IF EXISTS discovery_sessions;
       `);
     },
   },
@@ -517,6 +717,8 @@ module.exports = {
   CANONICAL_MIGRATION_1_CHECKSUM,
   MIGRATION_2_SQL,
   CANONICAL_MIGRATION_2_CHECKSUM,
+  MIGRATION_3_SQL,
+  CANONICAL_MIGRATION_3_CHECKSUM,
   LEGACY_R04_EMPTY_CHECKSUM,
   LEGACY_MIGRATION_2_CHECKSUM,
   MIGRATIONS,

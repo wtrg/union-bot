@@ -5215,6 +5215,229 @@ ipcMain.handle('union-bot:get-app-status', async (event) => {
   return { status: appStatus, error: storageInitError };
 });
 
+// Phase V4: Goal-Driven Multi-Agent IPC Handlers (UB-V4-U01)
+ipcMain.handle('union-bot:get-discovery-state', async (event, projectId) => {
+  if (!checkSenderAuthorized(event)) return { success: false, error: 'Unauthorized IPC sender' };
+  if (appStatus !== 'READY') return { success: false, error: 'Storage offline' };
+  try {
+    const rawDb = storage.nativeDb || (storage.client && storage.client.db);
+    if (!rawDb) return { success: true, facts: [], questions: [] };
+    const facts = rawDb.prepare('SELECT * FROM requirement_facts WHERE project_id = ? ORDER BY key ASC').all(projectId || 'default') || [];
+    const questions = rawDb.prepare('SELECT * FROM open_questions ORDER BY blocking DESC, asked_at ASC').all() || [];
+    return {
+      success: true,
+      facts: facts.map(r => ({
+        id: r.id,
+        discoveryId: r.discovery_id,
+        projectId: r.project_id,
+        key: r.key,
+        value: r.value,
+        sourceTurnRef: r.source_turn_ref,
+        confidence: r.confidence,
+        state: r.state,
+        confirmedBy: r.confirmed_by,
+        createdAt: new Date(r.created_at).getTime(),
+        updatedAt: new Date(r.updated_at).getTime(),
+      })),
+      questions: questions.map(r => ({
+        id: r.id,
+        discoveryId: r.discovery_id,
+        requirementKey: r.requirement_key,
+        question: r.question,
+        priority: r.priority,
+        blocking: Boolean(r.blocking),
+        resolved: Boolean(r.resolved),
+        resolution: r.resolution,
+        askedAt: new Date(r.asked_at).getTime(),
+        resolvedAt: r.resolved_at ? new Date(r.resolved_at).getTime() : undefined,
+      })),
+    };
+  } catch (err) {
+    return { success: false, error: err.message, facts: [], questions: [] };
+  }
+});
+
+ipcMain.handle('union-bot:save-requirement-fact', async (event, fact) => {
+  if (!checkSenderAuthorized(event)) return { success: false, error: 'Unauthorized IPC sender' };
+  if (appStatus !== 'READY') return { success: false, error: 'Storage offline' };
+  try {
+    const rawDb = storage.nativeDb || (storage.client && storage.client.db);
+    if (!rawDb) return { success: false, error: 'DB unavailable' };
+    const now = new Date().toISOString();
+    rawDb.prepare(`
+      INSERT OR REPLACE INTO requirement_facts (
+        id, discovery_id, project_id, key, value, source_turn_ref, confidence, state, confirmed_by, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      fact.id || `fact_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      fact.discoveryId || 'disc_default',
+      fact.projectId || 'default',
+      fact.key,
+      fact.value,
+      fact.sourceTurnRef || 'user-input',
+      fact.confidence ?? 1.0,
+      fact.state || 'PROPOSED',
+      fact.confirmedBy || null,
+      fact.createdAt ? new Date(fact.createdAt).toISOString() : now,
+      now
+    );
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('union-bot:save-open-question', async (event, question) => {
+  if (!checkSenderAuthorized(event)) return { success: false, error: 'Unauthorized IPC sender' };
+  if (appStatus !== 'READY') return { success: false, error: 'Storage offline' };
+  try {
+    const rawDb = storage.nativeDb || (storage.client && storage.client.db);
+    if (!rawDb) return { success: false, error: 'DB unavailable' };
+    const now = new Date().toISOString();
+    rawDb.prepare(`
+      INSERT OR REPLACE INTO open_questions (
+        id, discovery_id, requirement_key, question, priority, blocking, resolved, resolution, asked_at, resolved_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      question.id || `q_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      question.discoveryId || 'disc_default',
+      question.requirementKey,
+      question.question,
+      question.priority || 'HIGH',
+      question.blocking ? 1 : 0,
+      question.resolved ? 1 : 0,
+      question.resolution || null,
+      question.askedAt ? new Date(question.askedAt).toISOString() : now,
+      question.resolvedAt ? new Date(question.resolvedAt).toISOString() : null
+    );
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('union-bot:resolve-open-question', async (event, payload) => {
+  if (!checkSenderAuthorized(event)) return { success: false, error: 'Unauthorized IPC sender' };
+  if (appStatus !== 'READY') return { success: false, error: 'Storage offline' };
+  try {
+    const rawDb = storage.nativeDb || (storage.client && storage.client.db);
+    if (!rawDb) return { success: false, error: 'DB unavailable' };
+    const now = new Date().toISOString();
+    const res = rawDb.prepare(`
+      UPDATE open_questions
+      SET resolved = 1, resolution = ?, resolved_at = ?
+      WHERE id = ?
+    `).run(payload.resolution || 'Resolved', now, payload.id);
+    return { success: res.changes > 0 };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('union-bot:list-goals', async (event, projectId) => {
+  if (!checkSenderAuthorized(event)) return [];
+  if (appStatus !== 'READY') return [];
+  try {
+    const rawDb = storage.nativeDb || (storage.client && storage.client.db);
+    if (!rawDb) return [];
+    const rows = rawDb.prepare('SELECT * FROM goals WHERE project_id = ? ORDER BY created_at DESC').all(projectId || 'default') || [];
+    return rows.map(r => ({
+      id: r.id,
+      projectId: r.project_id,
+      title: r.title,
+      description: r.description || '',
+      activePlanRevision: r.active_plan_revision,
+      state: r.state,
+      ownerApprovalRef: r.owner_approval_ref,
+      createdAt: new Date(r.created_at).getTime(),
+      updatedAt: new Date(r.updated_at).getTime(),
+    }));
+  } catch (err) {
+    return [];
+  }
+});
+
+ipcMain.handle('union-bot:save-goal', async (event, goal) => {
+  if (!checkSenderAuthorized(event)) return { success: false, error: 'Unauthorized IPC sender' };
+  if (appStatus !== 'READY') return { success: false, error: 'Storage offline' };
+  try {
+    const rawDb = storage.nativeDb || (storage.client && storage.client.db);
+    if (!rawDb) return { success: false, error: 'DB unavailable' };
+    const now = new Date().toISOString();
+    rawDb.prepare(`
+      INSERT OR REPLACE INTO goals (
+        id, project_id, title, description, active_plan_revision, state, owner_approval_ref, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      goal.id || `goal_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      goal.projectId || 'default',
+      goal.title,
+      goal.description || '',
+      goal.activePlanRevision || 0,
+      goal.state || 'DRAFT',
+      goal.ownerApprovalRef || null,
+      goal.createdAt ? new Date(goal.createdAt).toISOString() : now,
+      now
+    );
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('union-bot:list-milestones', async (event, goalId) => {
+  if (!checkSenderAuthorized(event)) return [];
+  if (appStatus !== 'READY') return [];
+  try {
+    const rawDb = storage.nativeDb || (storage.client && storage.client.db);
+    if (!rawDb) return [];
+    const rows = rawDb.prepare('SELECT * FROM milestones WHERE goal_id = ? ORDER BY order_idx ASC').all(goalId) || [];
+    return rows.map(r => ({
+      id: r.id,
+      goalId: r.goal_id,
+      planRevision: r.plan_revision,
+      order: r.order_idx,
+      title: r.title,
+      dependsOn: JSON.parse(r.depends_on_json || '[]'),
+      state: r.state,
+      evidenceRefs: JSON.parse(r.evidence_refs_json || '[]'),
+      createdAt: new Date(r.created_at).getTime(),
+      updatedAt: new Date(r.updated_at).getTime(),
+    }));
+  } catch (err) {
+    return [];
+  }
+});
+
+ipcMain.handle('union-bot:list-activity-events', async (event, payload) => {
+  if (!checkSenderAuthorized(event)) return [];
+  if (appStatus !== 'READY') return [];
+  try {
+    const rawDb = storage.nativeDb || (storage.client && storage.client.db);
+    if (!rawDb) return [];
+    const { projectId, goalId } = payload || {};
+    const query = goalId
+      ? 'SELECT * FROM activity_events WHERE project_id = ? AND goal_id = ? ORDER BY rowid DESC LIMIT 100'
+      : 'SELECT * FROM activity_events WHERE project_id = ? ORDER BY rowid DESC LIMIT 100';
+    const params = goalId ? [projectId || 'default', goalId] : [projectId || 'default'];
+    const rows = rawDb.prepare(query).all(...params) || [];
+    return rows.map(r => ({
+      id: r.id,
+      projectId: r.project_id,
+      goalId: r.goal_id,
+      kind: r.kind,
+      summary: r.summary,
+      actor: JSON.parse(r.actor_json),
+      source: r.source_json ? JSON.parse(r.source_json) : undefined,
+      references: JSON.parse(r.references_json || '[]'),
+      receiptState: r.receipt_state,
+      createdAt: new Date(r.created_at).getTime(),
+    }));
+  } catch (err) {
+    return [];
+  }
+});
+
 ipcMain.handle('union-bot:dispatch-envelope', async (event, envelope) => {
   if (appStatus !== 'READY') {
     return {

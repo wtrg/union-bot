@@ -421,9 +421,9 @@ describe('Union Bot Phase P3: Desktop Workspace UI & Storage Features', () => {
     const migDbPath = path.join(testDir, `mig_rollback_test_${Date.now()}.db`);
     const migDb = new DatabaseSync(migDbPath);
     try {
-      // 1. Run migrations up to v2
+      // 1. Run migrations up to v3
       const upRes = runMigrations(migDb);
-      assert.equal(upRes.currentVersion, 2, 'Migration must reach version 2');
+      assert.equal(upRes.currentVersion, 3, 'Migration must reach version 3');
       
       // Verify v2 tables and columns exist
       const tablesV2 = migDb.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all().map((r: any) => r.name);
@@ -434,7 +434,10 @@ describe('Union Bot Phase P3: Desktop Workspace UI & Storage Features', () => {
       const approvalColsV2 = migDb.prepare('PRAGMA table_info(approvals)').all().map((c: any) => c.name);
       assert.ok(approvalColsV2.includes('payload_json'), 'approvals.payload_json must exist in v2');
 
-      // 2. Execute atomic rollback of Migration 2
+      // 2. Roll back Migration 3, then execute atomic rollback of Migration 2
+      const rollbackV4 = rollbackMigration(migDb);
+      assert.equal(rollbackV4.rolledBackVersion, 3, 'Migration 3 must be rolled back first');
+
       const rollbackRes = rollbackMigration(migDb);
       assert.equal(rollbackRes.rolledBackVersion, 2, 'Migration 2 must be rolled back');
 
@@ -453,10 +456,10 @@ describe('Union Bot Phase P3: Desktop Workspace UI & Storage Features', () => {
       const approvalColsAfter = migDb.prepare('PRAGMA table_info(approvals)').all().map((c: any) => c.name);
       assert.ok(!approvalColsAfter.includes('payload_json'), 'approvals.payload_json must be dropped on rollback');
 
-      // 3. Re-apply migration 2 cleanly to version 2
+      // 3. Re-apply pending migrations cleanly
       const reUpRes = runMigrations(migDb);
-      assert.equal(reUpRes.currentVersion, 2, 'Migration must cleanly re-apply to version 2');
-      assert.equal(reUpRes.appliedCount, 1, 'Exactly 1 migration should be applied');
+      assert.equal(reUpRes.currentVersion, 3, 'Migration must cleanly re-apply to version 3');
+      assert.equal(reUpRes.appliedCount, 2, '2 migrations should be re-applied');
 
       const rowsMig = migDb.prepare('SELECT version, checksum FROM schema_migrations ORDER BY version ASC').all() as any[];
       assert.equal(rowsMig[1].version, 2);

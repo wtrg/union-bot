@@ -300,15 +300,16 @@ describe('Union Bot Phase P2 Official Regression Vectors (P2-T01 through P2-T18)
   it('P2-T08: Migration failure rolls back atomically, leaving schema clean', () => {
     const testDb = new DatabaseSync(':memory:');
 
-    // Running standard migrations (v1 and v2)
+    // Running standard migrations
+    const expectedCount = MIGRATIONS.length;
     const res = runMigrations(testDb);
-    assert.equal(res.appliedCount, 2);
-    assert.equal(res.currentVersion, 2);
+    assert.equal(res.appliedCount, expectedCount);
+    assert.equal(res.currentVersion, expectedCount);
 
-    // Injecting faulty migration v3
+    // Injecting faulty migration
     const faultyMigration = {
-      version: 3,
-      name: '003_faulty_migration',
+      version: expectedCount + 1,
+      name: 'faulty_test_migration',
       checksum: 'fake_checksum',
       up: (db: DatabaseSync) => {
         db.exec('CREATE TABLE temp_faulty (id INT);');
@@ -332,9 +333,9 @@ describe('Union Bot Phase P2 Official Regression Vectors (P2-T01 through P2-T18)
         .get();
       assert.equal(tableCheck, undefined, 'Faulty migration must leave zero partial schema');
 
-      // Version remains 2
+      // Version remains expectedCount
       const vRow = testDb.prepare('SELECT MAX(version) as v FROM schema_migrations').get() as any;
-      assert.equal(vRow.v, 2);
+      assert.equal(vRow.v, expectedCount);
     } finally {
       MIGRATIONS.pop();
       testDb.close();

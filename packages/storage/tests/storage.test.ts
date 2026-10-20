@@ -45,11 +45,15 @@ describe('Union Bot Storage Engine & Event Sourcing (P2)', () => {
     assert.equal(pragmaRow.journal_mode.toLowerCase(), 'wal');
 
     const migrations = db.prepare('SELECT version, name FROM schema_migrations ORDER BY version ASC').all() as any[];
-    assert.equal(migrations.length, 2);
+    assert.equal(migrations.length, 3);
     assert.equal(migrations[0].name, '001_initial_p2_schema');
     assert.equal(migrations[1].name, '002_p3_desktop_workspace');
+    assert.equal(migrations[2].name, '003_v4_goal_driven_workspace');
 
-    // Test rollback capability: rolls back version 2, then version 1
+    // Test rollback capability: rolls back version 3, then 2, then 1
+    const rollback3 = storage.rollbackLatestMigration();
+    assert.equal(rollback3.rolledBackVersion, 3);
+
     const rollback2 = storage.rollbackLatestMigration();
     assert.equal(rollback2.rolledBackVersion, 2);
 

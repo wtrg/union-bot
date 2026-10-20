@@ -1,13 +1,13 @@
 {
-  "timestamp": "2026-10-20T19:36:24.556Z",
+  "timestamp": "2026-10-20T22:06:36.757Z",
   "environment": "Windows x64 Outside-Repo Standalone",
-  "externalDirectory": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\union_bot_standalone_verify_1792524984554",
+  "externalDirectory": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\union_bot_standalone_verify_1792533996756",
   "zeroCostConfirmed": true,
   "t1LiveStatus": "NOT_LIVE_VERIFIED",
   "checks": {
     "copiedOutsideRepo": true,
     "hasManifest": true,
-    "manifestCheckedCount": 296,
+    "manifestCheckedCount": 46,
     "manifestAllMatch": true,
     "bundledNodeExists": true,
     "bundledExeExists": true,
