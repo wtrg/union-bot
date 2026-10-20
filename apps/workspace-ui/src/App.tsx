@@ -9,6 +9,8 @@ import { CreateRoomModal } from './components/CreateRoomModal.tsx';
 import { CreateProjectModal } from './components/CreateProjectModal.tsx';
 import { BrowserPanel } from './components/BrowserPanel.tsx';
 import { DiscoveryPanel } from './components/DiscoveryPanel.tsx';
+import { ActivityFeedPanel } from './components/ActivityFeedPanel.tsx';
+import { CommandPaletteModal } from './components/CommandPaletteModal.tsx';
 import { AgentInfo, RoomInfo, EnvelopeView, AttachmentInfo, MessagePart, ProjectInfo, RequirementFactInfo, OpenQuestionInfo } from './types.ts';
 
 const INITIAL_PROJECTS: ProjectInfo[] = [
@@ -84,14 +86,63 @@ export const App: React.FC = () => {
   const [isDiscoveryOpen, setIsDiscoveryOpen] = useState<boolean>(true);
   const [discoveryFacts, setDiscoveryFacts] = useState<RequirementFactInfo[]>([]);
   const [discoveryQuestions, setDiscoveryQuestions] = useState<OpenQuestionInfo[]>([]);
+  const [isActivityOpen, setIsActivityOpen] = useState<boolean>(false);
+  const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState<boolean>(false);
+  const [workflowStatus, setWorkflowStatus] = useState<{ state: string; activeLeasesCount: number }>({ state: 'RUNNING', activeLeasesCount: 0 });
 
   // Coordinate modal open state with Electron WebContentsView (P4-008: Modals never covered by web layer)
-  const isAnyModalActive = isCreateRoomOpen || isCreateProjectOpen || isPreferencesOpen;
+  const isAnyModalActive = isCreateRoomOpen || isCreateProjectOpen || isPreferencesOpen || isCommandPaletteOpen;
   useEffect(() => {
     if (window.unionBotAPI && typeof window.unionBotAPI.browserSetModalActive === 'function') {
       window.unionBotAPI.browserSetModalActive(isAnyModalActive);
     }
   }, [isAnyModalActive]);
+
+  // Command palette keyboard shortcut (Ctrl+K / Cmd+K)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setIsCommandPaletteOpen((prev) => !prev);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
+  // Poll workflow status
+  const refreshWorkflowStatus = async () => {
+    if (window.unionBotAPI && typeof window.unionBotAPI.getWorkflowStatus === 'function') {
+      try {
+        const s = await window.unionBotAPI.getWorkflowStatus();
+        if (s) {
+          setWorkflowStatus({ state: s.state, activeLeasesCount: s.activeLeasesCount || 0 });
+        }
+      } catch (err) {
+        // ignore
+      }
+    }
+  };
+
+  useEffect(() => {
+    refreshWorkflowStatus();
+    const interval = setInterval(refreshWorkflowStatus, 8000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const handlePauseWorkflow = async () => {
+    if (window.unionBotAPI && typeof window.unionBotAPI.pauseWorkflow === 'function') {
+      await window.unionBotAPI.pauseWorkflow();
+      refreshWorkflowStatus();
+    }
+  };
+
+  const handleResumeWorkflow = async () => {
+    if (window.unionBotAPI && typeof window.unionBotAPI.resumeWorkflow === 'function') {
+      await window.unionBotAPI.resumeWorkflow();
+      refreshWorkflowStatus();
+    }
+  };
 
   // Support programmatic browser toggling for tests and UI shortcuts
   useEffect(() => {
@@ -671,6 +722,11 @@ export const App: React.FC = () => {
             workspaceMode={workspaceMode}
             isDiscoveryOpen={isDiscoveryOpen}
             onToggleDiscovery={() => setIsDiscoveryOpen((prev) => !prev)}
+            isActivityOpen={isActivityOpen}
+            onToggleActivity={() => setIsActivityOpen((prev) => !prev)}
+            workflowState={workflowStatus.state}
+            activeLeasesCount={workflowStatus.activeLeasesCount}
+            onOpenCommandPalette={() => setIsCommandPaletteOpen(true)}
           />
 
           {activeView === 'chat' && (
@@ -709,6 +765,16 @@ export const App: React.FC = () => {
           onClose={() => setIsBrowserOpen(false)}
           activeRoomId={activeRoomId}
         />
+
+        <ActivityFeedPanel
+          projectId={selectedProjectId}
+          isOpen={isActivityOpen}
+          onClose={() => setIsActivityOpen(false)}
+          workflowState={workflowStatus.state}
+          activeLeasesCount={workflowStatus.activeLeasesCount}
+          onPauseWorkflow={handlePauseWorkflow}
+          onResumeWorkflow={handleResumeWorkflow}
+        />
       </div>
 
       <CreateRoomModal
@@ -733,6 +799,66 @@ export const App: React.FC = () => {
         onClose={() => setIsPreferencesOpen(false)}
         theme={theme}
         onThemeChange={setTheme}
+      />
+
+      <CommandPaletteModal
+        isOpen={isCommandPaletteOpen}
+        onClose={() => setIsCommandPaletteOpen(false)}
+        commands={[
+          {
+            id: 'cmd_chat',
+            name: '/chat — Discovery & BA Questioning',
+            description: 'Switch workspace to Discovery mode with BA requirement questioning',
+            shortcut: 'Alt+C',
+            action: () => {
+              setWorkspaceMode('discovery');
+              setActiveView('chat');
+              setIsDiscoveryOpen(true);
+            },
+          },
+          {
+            id: 'cmd_work',
+            name: '/work — Plan Registry & Execution',
+            description: 'Switch workspace to Work mode for milestones & plan execution',
+            shortcut: 'Alt+W',
+            action: () => {
+              setWorkspaceMode('work');
+              setActiveView('chat');
+            },
+          },
+          {
+            id: 'cmd_browser',
+            name: '/browser — Toggle Embedded Browser',
+            description: 'Open or collapse embedded Chromium browser dock',
+            shortcut: 'Alt+B',
+            action: () => setIsBrowserOpen((prev) => !prev),
+          },
+          {
+            id: 'cmd_activity',
+            name: '/activity — Toggle Activity Feed',
+            description: 'Open or collapse low-noise event activity feed drawer',
+            shortcut: 'Alt+A',
+            action: () => setIsActivityOpen((prev) => !prev),
+          },
+          {
+            id: 'cmd_pause',
+            name: '/pause — Pause Workflow Execution',
+            description: 'Temporarily pause ongoing milestone workflow progression',
+            action: handlePauseWorkflow,
+          },
+          {
+            id: 'cmd_resume',
+            name: '/resume — Resume Workflow Execution',
+            description: 'Resume paused milestone workflow progression',
+            action: handleResumeWorkflow,
+          },
+          {
+            id: 'cmd_theme_contrast',
+            name: '/theme — Toggle High Contrast',
+            description: 'Switch theme between standard and High Contrast mode',
+            action: () => setTheme((prev) => (prev === 'high-contrast' ? 'dark' : 'high-contrast')),
+          },
+        ]}
       />
     </div>
   );

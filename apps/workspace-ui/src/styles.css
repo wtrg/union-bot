@@ -704,3 +704,33 @@ mark.search-highlight {
 }
 
 
+
+/* High Contrast Theme Variables (UB-V4-U10) */
+body.theme-high-contrast, .theme-high-contrast {
+  --bg-primary: #000000;
+  --bg-secondary: #0a0a0a;
+  --bg-tertiary: #141414;
+  --bg-hover: #1f1f1f;
+  --border-color: #ffffff;
+  --text-primary: #ffffff;
+  --text-secondary: #e0e0e0;
+  --text-muted: #cccccc;
+  --accent-blue: #00ffff;
+  --accent-indigo: #818cf8;
+  --accent-green: #00ff66;
+  --accent-amber: #ffff00;
+  --accent-red: #ff3333;
+}
+
+body.theme-high-contrast button {
+  border-color: #ffffff !important;
+}
+
+/* Activity Feed & Command Palette (UB-V4-U10) */
+.activity-feed-panel {
+  box-shadow: -4px 0 16px rgba(0, 0, 0, 0.4);
+}
+
+.command-palette input::placeholder {
+  color: var(--text-muted);
+}

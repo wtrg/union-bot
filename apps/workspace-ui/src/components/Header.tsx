@@ -9,6 +9,11 @@ interface HeaderProps {
   workspaceMode?: 'discovery' | 'work';
   onToggleDiscovery?: () => void;
   isDiscoveryOpen?: boolean;
+  isActivityOpen?: boolean;
+  onToggleActivity?: () => void;
+  workflowState?: string;
+  activeLeasesCount?: number;
+  onOpenCommandPalette?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -19,6 +24,11 @@ export const Header: React.FC<HeaderProps> = ({
   workspaceMode = 'discovery',
   onToggleDiscovery,
   isDiscoveryOpen = false,
+  isActivityOpen = false,
+  onToggleActivity,
+  workflowState = 'RUNNING',
+  activeLeasesCount = 0,
+  onOpenCommandPalette,
 }) => {
   return (
     <header className="room-header">
@@ -86,6 +96,54 @@ export const Header: React.FC<HeaderProps> = ({
           >
             <span>🌐 Browser Dock</span>
             <span style={{ fontSize: 10, opacity: 0.8 }}>{isBrowserOpen ? '◀' : '▶'}</span>
+          </button>
+        )}
+
+        {onToggleActivity && (
+          <button
+            className={`btn-toggle-activity ${isActivityOpen ? 'active' : ''}`}
+            data-testid="toggle-activity-btn"
+            onClick={onToggleActivity}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              background: isActivityOpen ? 'var(--accent-indigo, #6366f1)' : 'var(--bg-surface-elevated, #1e293b)',
+              color: '#ffffff',
+              border: '1px solid var(--border-color)',
+              borderRadius: 4,
+              padding: '4px 10px',
+              fontSize: 12,
+              fontWeight: 500,
+              cursor: 'pointer',
+            }}
+            title={`Activity Feed & Workflow Events (Status: ${workflowState}, Active Leases: ${activeLeasesCount})`}
+          >
+            <span>⚡ Activity ({activeLeasesCount} lease)</span>
+            <span style={{ fontSize: 10, opacity: 0.8 }}>{isActivityOpen ? '◀' : '▶'}</span>
+          </button>
+        )}
+
+        {onOpenCommandPalette && (
+          <button
+            className="btn-command-palette"
+            onClick={onOpenCommandPalette}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 4,
+              background: 'var(--bg-surface-elevated, #1e293b)',
+              color: 'var(--text-primary)',
+              border: '1px solid var(--border-color)',
+              borderRadius: 4,
+              padding: '4px 8px',
+              fontSize: 12,
+              cursor: 'pointer',
+            }}
+            title="Open Command Palette (Ctrl+K)"
+          >
+            <span>⌘</span>
+            <kbd style={{ fontSize: 10, color: 'var(--text-muted)' }}>Ctrl+K</kbd>
           </button>
         )}
 
