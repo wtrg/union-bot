@@ -21,7 +21,13 @@ fs.mkdirSync(path.join(outDir, 'resources/app/apps/desktop/src'), { recursive: t
 fs.mkdirSync(path.join(outDir, 'resources/app/apps/workspace-ui/dist'), { recursive: true });
 fs.mkdirSync(path.join(outDir, 'resources/app/node_modules'), { recursive: true });
 
-// Helper to copy directory recursively
+// Helper to compute SHA-256 CAS digest
+function getFileSha256(filePath) {
+  const buf = fs.readFileSync(filePath);
+  return crypto.createHash('sha256').update(buf).digest('hex');
+}
+
+// Helper to copy directory recursively with CAS SHA-256 verification
 function copyDirSync(src, dest, filterFn) {
   if (!fs.existsSync(src)) return;
   fs.mkdirSync(dest, { recursive: true });
@@ -33,8 +39,12 @@ function copyDirSync(src, dest, filterFn) {
     if (entry.isDirectory()) {
       copyDirSync(srcPath, destPath, filterFn);
     } else {
-      if (fs.existsSync(destPath) && fs.statSync(srcPath).size === fs.statSync(destPath).size) {
-        continue;
+      if (fs.existsSync(destPath)) {
+        const srcHash = getFileSha256(srcPath);
+        const destHash = getFileSha256(destPath);
+        if (srcHash === destHash) {
+          continue; // Truly identical by SHA-256 CAS, skip to avoid locks
+        }
       }
       fs.copyFileSync(srcPath, destPath);
     }
@@ -100,7 +110,7 @@ fs.writeFileSync(
 // 9. Create union-bot.exe from electron.exe
 const targetExe = path.join(outDir, 'union-bot.exe');
 const sourceExe = path.join(outDir, 'electron.exe');
-if (!fs.existsSync(targetExe) || fs.statSync(sourceExe).size !== fs.statSync(targetExe).size) {
+if (!fs.existsSync(targetExe) || getFileSha256(sourceExe) !== getFileSha256(targetExe)) {
   fs.copyFileSync(sourceExe, targetExe);
 }
 
@@ -110,7 +120,7 @@ rem =========================================================================
 rem Union Bot - Windows Portable Launcher
 rem Fully self-contained: No system installation, admin rights, or Node.js required.
 rem =========================================================================
-setlocal
+setlocal EnableExtensions EnableDelayedExpansion
 set "PORTABLE_ROOT=%~dp0"
 set "SYSTEM_NODE_PATH=%PORTABLE_ROOT%runtime\\node.exe"
 set "PATH=%PORTABLE_ROOT%runtime;%PATH%"
@@ -121,19 +131,22 @@ for %%A in (%*) do (
     echo "%%A" | findstr /i /c:"--user-data-dir=" >nul && set "USER_DATA_OVERRIDE=1"
     echo "%%A" | findstr /i /c:"--test-user-data=" >nul && set "USER_DATA_OVERRIDE=1"
 )
-(call )
 
-if "%1"=="" (
-    start "" "%PORTABLE_ROOT%union-bot.exe" --user-data-dir="%PORTABLE_ROOT%data"
-    exit /b 0
-) else (
-    if defined USER_DATA_OVERRIDE (
-        "%PORTABLE_ROOT%union-bot.exe" %*
-    ) else (
-        "%PORTABLE_ROOT%union-bot.exe" --user-data-dir="%PORTABLE_ROOT%data" %*
-    )
-    exit /b %ERRORLEVEL%
-)
+if "%1"=="" goto :LAUNCH_DEFAULT
+if defined USER_DATA_OVERRIDE goto :RUN_OVERRIDE
+
+"%PORTABLE_ROOT%union-bot.exe" --user-data-dir="%PORTABLE_ROOT%data" %*
+set "EXIT_CODE=!ERRORLEVEL!"
+exit /b !EXIT_CODE!
+
+:RUN_OVERRIDE
+"%PORTABLE_ROOT%union-bot.exe" %*
+set "EXIT_CODE=!ERRORLEVEL!"
+exit /b !EXIT_CODE!
+
+:LAUNCH_DEFAULT
+start "" "%PORTABLE_ROOT%union-bot.exe" --user-data-dir="%PORTABLE_ROOT%data"
+exit /b 0
 `;
 fs.writeFileSync(path.join(outDir, 'union-bot.bat'), batContent, 'utf8');
 

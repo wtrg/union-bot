@@ -36,6 +36,12 @@ const customUserDataArg = process.argv.find((a) => a.startsWith('--test-user-dat
 if (process.argv.includes('--headless') || process.argv.includes('--smoke')) {
   try {
     app.disableHardwareAcceleration();
+    app.commandLine.appendSwitch('disable-gpu');
+    app.commandLine.appendSwitch('disable-software-rasterizer');
+    app.commandLine.appendSwitch('disable-background-networking');
+    app.commandLine.appendSwitch('disable-component-update');
+    app.commandLine.appendSwitch('disable-breakpad');
+    app.commandLine.appendSwitch('disable-crash-reporter');
   } catch {}
 }
 if (customUserDataArg) {
@@ -177,15 +183,34 @@ function performGracefulExit(exitCode = 0) {
     app.releaseSingleInstanceLock();
   } catch {}
 
-  app.exitCode = exitCode;
-  process.exitCode = exitCode;
+  // Explicitly terminate all child renderer processes to prevent Windows zombie handles on DLLs/EXEs
   try {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.close();
+    const { webContents } = require('electron');
+    if (webContents && typeof webContents.getAllWebContents === 'function') {
+      const allWcs = webContents.getAllWebContents();
+      for (const wc of allWcs) {
+        try {
+          const pid = wc.getOSProcessId();
+          if (pid && pid !== process.pid) {
+            try { process.kill(pid); } catch {}
+          }
+        } catch {}
+      }
     }
   } catch {}
+
   try {
-    app.quit();
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.destroy();
+      mainWindow = null;
+    }
+  } catch {}
+
+  try {
+    app.exit(exitCode);
+  } catch {}
+  try {
+    process.exit(exitCode);
   } catch {}
 }
 

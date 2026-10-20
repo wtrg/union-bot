@@ -80,6 +80,17 @@ Kịch bản tự động `scripts/verify-portable-standalone.cjs` đã thực h
 3. **Bảo vệ PPID cho Worker Process:** Thêm cơ chế watchdog PPID chu kỳ 500ms (`.unref()`) tại `storage-worker.cjs` đảm bảo tiến trình worker tự động kết thúc tức thì nếu tiến trình cha chết đột ngột.
 4. **Truyền mã thoát chính xác trong Launcher Batch:** Trong `union-bot.bat`, lệnh `findstr` kiểm tra tham số ghi nhận `%ERRORLEVEL%=1` nếu không có match, và thiếu reset trước khi gọi `union-bot.exe`. Đã thêm `(call )` để xóa cờ lỗi và truyền đúng mã thoát `exit /b %ERRORLEVEL%`.
 5. **Giải phóng handle bộ nhớ Windows an toàn:** Tránh vòng lặp busy-wait 100% CPU làm nghẽn tiến trình giải phóng file DLL của hệ điều hành, thay thế bằng `sleepMs()` dùng `Atomics.wait()` (0% CPU) và cơ chế dọn dẹp dự phòng qua PowerShell.
+6. **Khắc phục triệt để lỗi che mã thoát (Exit Code 9 Repro):**
+   - Vấn đề: Biến `%ERRORLEVEL%` nằm trong khối ngoặc `if (...) else (...)` bị cmd parse-time expand trước khi tiến trình con chạy, che lấp lỗi thật (`DIRECT_EXIT=9` nhưng `LAUNCHER_EXIT=0`).
+   - Sửa đổi: Chuyển hoàn toàn sang cấu trúc điều khiển unblocked (`goto :RUN_OVERRIDE`, `goto :LAUNCH_DEFAULT`) và sử dụng delayed expansion `setlocal EnableExtensions EnableDelayedExpansion` cùng `exit /b !EXIT_CODE!`.
+   - Xác minh hồi quy độc lập: `tests/verify-p11-qa-fixes.test.cjs` Test 1A và 1B đạt exit code 9 đồng nhất 100%.
+7. **Khắc phục lỗi bỏ sót file cùng kích thước (Same-Size Freshness):**
+   - Vấn đề: `assemble-portable.cjs` dùng so sánh độ dài `src.size === dest.size` để bỏ qua copy khiến các file bị sửa đổi nội dung nhưng cùng byte length không được cập nhật vào bundle.
+   - Sửa đổi: Sử dụng so sánh băm nội dung SHA-256 CAS (`getFileSha256(src) === getFileSha256(dest)`).
+   - Xác minh hồi quy độc lập: `tests/verify-p11-qa-fixes.test.cjs` Test 2 kiểm tra cập nhật cùng kích thước đạt 100%.
+8. **Giải phóng dứt điểm Zombie Handle của Renderer Process trên Windows:**
+   - Vấn đề: `app.exit(0)` gọi Win32 `ExitProcess()` đột ngột khiến tiến trình con renderer của Chromium bị mồ côi (zombie state `HasExited: True`), giữ handle tới `union-bot.exe` và `ffmpeg.dll` khiến xóa thư mục tạm bị lỗi `Access is denied`.
+   - Sửa đổi: Tại `performGracefulExit()`, duyệt qua tất cả WebContents bằng `webContents.getAllWebContents()`, lấy OS PID qua `getOSProcessId()` và gọi `process.kill(pid)` kết thúc dứt điểm toàn bộ tiến trình renderer trước khi main process thoát. Trong `verify-portable-standalone.cjs`, bổ sung cơ chế quét cây tiến trình con dựa trên thư mục tạm QA duy nhất (`UB-P11-QA requirement`).
 
 ---
 
@@ -89,7 +100,7 @@ File bằng chứng chi tiết: `reports/capability-evidence/P11_PORTABLE_STANDA
 
 ```json
 {
-  "timestamp": "2026-10-20T17:11:29.665Z",
+  "timestamp": "2026-10-20T17:48:04.082Z",
   "environment": "Windows x64 Outside-Repo Standalone",
   "zeroCostConfirmed": true,
   "t1LiveStatus": "NOT_LIVE_VERIFIED",

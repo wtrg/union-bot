@@ -186,27 +186,53 @@ function sleepMs(ms) {
   }
 }
 
-// Allow Windows kernel and defender 2 seconds to release executable memory mappings
+// Allow Windows 2 seconds to release memory-mapped executable handles
 sleepMs(2000);
 
 let cleaned = false;
 for (let attempt = 1; attempt <= 15; attempt++) {
+  if (!fs.existsSync(externalDest)) {
+    cleaned = true;
+    break;
+  }
   try {
+    // Only target own test process tree matching exact unique QA temp root (UB-P11-QA requirement)
+    const folderPattern = path.basename(externalDest);
+    const killOwnCmd = `
+      $target = "*${folderPattern}*"
+      $procs = Get-CimInstance Win32_Process | Where-Object { ($_.CommandLine -like $target) -or ($_.ExecutablePath -like $target) }
+      $pids = @($procs.ProcessId)
+      if ($pids.Count -gt 0) {
+        $children = Get-CimInstance Win32_Process | Where-Object { $pids -contains $_.ParentProcessId }
+        $allPids = $pids + @($children.ProcessId)
+        $allPids | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue }
+      }
+    `;
+    cp.spawnSync('powershell.exe', ['-NoProfile', '-Command', killOwnCmd], { stdio: 'ignore' });
+  } catch {}
+  try {
+    fs.rmSync(externalDest, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 });
     if (!fs.existsSync(externalDest)) {
       cleaned = true;
       break;
     }
-    fs.rmSync(externalDest, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 });
-    cleaned = !fs.existsSync(externalDest);
-    if (cleaned) break;
-  } catch (err) {
-    try {
-      cp.spawnSync('powershell.exe', ['-NoProfile', '-Command', `Remove-Item -Path "${externalDest}" -Recurse -Force -ErrorAction SilentlyContinue`]);
-      cleaned = !fs.existsSync(externalDest);
-      if (cleaned) break;
-    } catch {}
-    sleepMs(1000);
-  }
+  } catch {}
+  try {
+    cp.spawnSync('powershell.exe', ['-NoProfile', '-Command', `Remove-Item -Path "${externalDest}" -Recurse -Force -ErrorAction SilentlyContinue`], { stdio: 'ignore' });
+    if (!fs.existsSync(externalDest)) {
+      cleaned = true;
+      break;
+    }
+  } catch {}
+  try {
+    cp.spawnSync('cmd.exe', ['/c', `del /f /s /q "${externalDest}\\*.*"`], { stdio: 'ignore' });
+    cp.spawnSync('cmd.exe', ['/c', `rmdir /s /q "${externalDest}"`], { stdio: 'ignore' });
+    if (!fs.existsSync(externalDest)) {
+      cleaned = true;
+      break;
+    }
+  } catch {}
+  sleepMs(1000);
 }
 evidence.checks.externalDirCleanedUp = cleaned;
 
