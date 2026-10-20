@@ -21,8 +21,8 @@
 | **U05** | Artifact Handoff & Multimodal Fidelity | VERIFIED | RU05 | CAS bytes, MIME validation, screenshot fidelity | SELF_VERIFIED |
 | **U06** | `/work`: Plan Registry, Critical Review & Goal Approval | VERIFIED | RU06 | Plan revision, frozen brief digest, approval gate | SELF_VERIFIED |
 | **U07** | WorkflowSupervisor: Continuous Durable Orchestration | VERIFIED | RU07 | Durable leases, recovery, task progression | SELF_VERIFIED |
-| **U08** | GitHub Push Approval & ChatGPT Code Review Loop | IN_PROGRESS | RU08 | Push consent, SHA binding, review packet intake | PENDING_REVIEW |
-| **U09** | Real Browser-Use & Context Bridge | QUEUED | RU09 | Controller lease, safe observation, redaction | PENDING_REVIEW |
+| **U08** | GitHub Push Approval & ChatGPT Code Review Loop | VERIFIED | RU08 | Push consent, SHA binding, review packet intake | SELF_VERIFIED |
+| **U09** | Real Browser-Use & Context Bridge | IN_PROGRESS | RU09 | Controller lease, safe observation, redaction | PENDING_REVIEW |
 | **U10** | Pragmatic Low-Noise UX & Accessibility | QUEUED | RU10 | /chat vs /work UI, Compact Activity feed | PENDING_REVIEW |
 | **U11** | Security, Reliability, Observability & Performance | QUEUED | RU11 | Prompt injection, 0đ egress, crash recovery | PENDING_REVIEW |
 | **U12** | End-to-End UAT, Windows Portable & Release Dossier | QUEUED | RU12 | 60 UAT matrix, portable bundle, Vietnamese docs | PENDING_REVIEW |
@@ -96,3 +96,17 @@
 - [x] `U07-004`: Execution controls: `/pause`, `/resume`, `/stop` workflow state management with fail-closed progression halt
 - [x] `U07-005`: Crash recovery: recovers dangling goals, resets unleased `IN_PROGRESS` milestones to `PENDING` for safe restart, cleans expired leases
 - [x] `U07-006`: Safe IPC exposure and unit tests (4/4 PASS)
+
+### U08 — GitHub Push Approval & ChatGPT Code Review Loop
+- [x] `U08-001`: Fail-closed Git Safety validation: prevents direct push to `main`, `master`, `release`, and prohibits force push (`GitReviewService.validatePushSafety`)
+- [x] `U08-002`: Deterministic SHA-256 changeset digest calculation (`GitReviewService.computePushDigest`)
+- [x] `U08-003`: Standardized review packet template generator with $0.00 cost verification and `PENDING_INDEPENDENT_QA` indicator (`GitReviewService.generateReviewPacket`)
+- [x] `U08-004`: Reviewer feedback parser (`GitReviewService.parseReviewFeedback`) extracting approval or SEV1/SEV2 review findings into SQLite
+- [x] `U08-005`: Safe IPC handlers wired in `main.js`, `preload.cjs`, `types.ts` and unit tests (4/4 PASS)
+
+### U09 — Real Browser-Use & Context Bridge
+- [ ] `U09-001`: `BrowserUseBridge`: Chromium WebContentsView / CDP observation engine with single-controller lease management
+- [ ] `U09-002`: Safe DOM text and structure extraction without leaking session cookies or private headers
+- [ ] `U09-003`: Sensitive data redaction: automatic stripping of password fields, auth tokens, and secret patterns from DOM snapshots
+- [ ] `U09-004`: Visual inspection & coordinate click/fill action abstraction with bounded viewport coordinates
+- [ ] `U09-005`: Safe IPC handlers (`union-bot:browser-observe`, `union-bot:browser-action`) and unit tests (PASS)
