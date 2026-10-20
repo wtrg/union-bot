@@ -156,7 +156,7 @@ const api = {
     };
   },
 
-  // Phase V4: Goal-Driven Multi-Agent API (UB-V4-U01)
+  // Phase V4: Goal-Driven Multi-Agent API (UB-V4-U01, U02)
   getDiscoveryState: async (projectId) => {
     return ipcRenderer.invoke('union-bot:get-discovery-state', projectId);
   },
@@ -168,6 +168,12 @@ const api = {
   },
   resolveOpenQuestion: async (payload) => {
     return ipcRenderer.invoke('union-bot:resolve-open-question', payload);
+  },
+  checkDiscoveryReady: async (discoveryId) => {
+    return ipcRenderer.invoke('union-bot:check-discovery-ready', discoveryId);
+  },
+  compactDiscoveryContext: async (discoveryId) => {
+    return ipcRenderer.invoke('union-bot:compact-discovery-context', discoveryId);
   },
   listGoals: async (projectId) => {
     return ipcRenderer.invoke('union-bot:list-goals', projectId);

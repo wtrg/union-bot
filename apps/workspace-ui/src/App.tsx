@@ -8,7 +8,8 @@ import { PreferencesModal } from './components/PreferencesModal.tsx';
 import { CreateRoomModal } from './components/CreateRoomModal.tsx';
 import { CreateProjectModal } from './components/CreateProjectModal.tsx';
 import { BrowserPanel } from './components/BrowserPanel.tsx';
-import { AgentInfo, RoomInfo, EnvelopeView, AttachmentInfo, MessagePart, ProjectInfo } from './types.ts';
+import { DiscoveryPanel } from './components/DiscoveryPanel.tsx';
+import { AgentInfo, RoomInfo, EnvelopeView, AttachmentInfo, MessagePart, ProjectInfo, RequirementFactInfo, OpenQuestionInfo } from './types.ts';
 
 const INITIAL_PROJECTS: ProjectInfo[] = [
   { id: 'default', name: 'Default Project', description: 'Primary Union Bot collaboration workspace' },
@@ -79,6 +80,10 @@ export const App: React.FC = () => {
   const [storageStatus, setStorageStatus] = useState<string>('READY');
   const [storageError, setStorageError] = useState<string | null>(null);
   const [theme, setTheme] = useState<'dark' | 'light' | 'high-contrast'>('dark');
+  const [workspaceMode, setWorkspaceMode] = useState<'discovery' | 'work'>('discovery');
+  const [isDiscoveryOpen, setIsDiscoveryOpen] = useState<boolean>(true);
+  const [discoveryFacts, setDiscoveryFacts] = useState<RequirementFactInfo[]>([]);
+  const [discoveryQuestions, setDiscoveryQuestions] = useState<OpenQuestionInfo[]>([]);
 
   // Coordinate modal open state with Electron WebContentsView (P4-008: Modals never covered by web layer)
   const isAnyModalActive = isCreateRoomOpen || isCreateProjectOpen || isPreferencesOpen;
@@ -196,6 +201,87 @@ export const App: React.FC = () => {
     }
   };
 
+  const loadDiscoveryState = async (projId: string) => {
+    if (window.unionBotAPI && typeof window.unionBotAPI.getDiscoveryState === 'function') {
+      try {
+        const res = await window.unionBotAPI.getDiscoveryState(projId);
+        if (res && res.success) {
+          setDiscoveryFacts(res.facts || []);
+          setDiscoveryQuestions(res.questions || []);
+        }
+      } catch (err) {
+        console.warn('[App] Failed to load discovery state:', err);
+      }
+    }
+  };
+
+  const handleConfirmFact = async (key: string, value: string) => {
+    if (window.unionBotAPI && typeof window.unionBotAPI.saveRequirementFact === 'function') {
+      await window.unionBotAPI.saveRequirementFact({
+        projectId: selectedProjectId,
+        key,
+        value,
+        state: 'CONFIRMED',
+        confirmedBy: 'Product Owner',
+      });
+      await loadDiscoveryState(selectedProjectId);
+    } else {
+      setDiscoveryFacts((prev) => [
+        ...prev,
+        {
+          id: `fact_${Date.now()}`,
+          discoveryId: 'disc_demo',
+          projectId: selectedProjectId,
+          key,
+          value,
+          sourceTurnRef: 'user-input',
+          confidence: 1.0,
+          state: 'CONFIRMED',
+          confirmedBy: 'Product Owner',
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        },
+      ]);
+    }
+  };
+
+  const handleResolveQuestion = async (id: string, resolution: string) => {
+    if (window.unionBotAPI && typeof window.unionBotAPI.resolveOpenQuestion === 'function') {
+      await window.unionBotAPI.resolveOpenQuestion({ id, resolution });
+      await loadDiscoveryState(selectedProjectId);
+    } else {
+      setDiscoveryQuestions((prev) =>
+        prev.map((q) => (q.id === id ? { ...q, resolved: true, resolution, resolvedAt: Date.now() } : q))
+      );
+    }
+  };
+
+  const handleSwitchToWork = async () => {
+    const openBlocking = discoveryQuestions.filter((q) => !q.resolved && q.blocking);
+    if (discoveryFacts.length === 0 || openBlocking.length > 0) {
+      alert(`Chưa thể chuyển sang /work: ${openBlocking.length > 0 ? `Còn ${openBlocking.length} câu hỏi quan trọng chưa giải quyết.` : 'Cần ít nhất 1 requirement fact.'}`);
+      return;
+    }
+    setWorkspaceMode('work');
+    setIsDiscoveryOpen(false);
+
+    appendOrUpdateEnvelope(activeRoomId, {
+      id: `sys_${Date.now()}_work`,
+      traceId: `trc_${Date.now()}`,
+      timestamp: Date.now(),
+      sender: { kind: 'agent', id: 'system_router', name: 'System / Router', role: 'ROUTER' },
+      recipient: { kind: 'room', id: activeRoomId },
+      roomId: activeRoomId,
+      fidelity: 'L1_FORMATTED_MARKDOWN',
+      parts: [
+        {
+          kind: 'text',
+          text: `🚀 **[CHẾ ĐỘ THỰC THI /work KÍCH HOẠT]**\n- Yêu cầu đã xác nhận: **${discoveryFacts.length} facts**\n- Câu hỏi tồn đọng: **0 blocking**\n- Sẵn sàng lập kế hoạch & triển khai mã nguồn.`,
+        },
+      ],
+    });
+  };
+
   // 1. Initial Load: Projects, Rooms & Status from SQLite IPC
   useEffect(() => {
     if (window.unionBotAPI) {
@@ -210,6 +296,7 @@ export const App: React.FC = () => {
 
       loadProjects();
       loadRoomsForProject(selectedProjectId);
+      loadDiscoveryState(selectedProjectId);
       refreshApprovalsCount();
 
       const unsubStatus = window.unionBotAPI.onAppStatusChanged((s) => {
@@ -223,10 +310,11 @@ export const App: React.FC = () => {
     }
   }, []);
 
-  // Reload rooms whenever selected project changes (UB-P3-R01-002)
+  // Reload rooms & discovery whenever selected project changes (UB-P3-R01-002)
   useEffect(() => {
     if (window.unionBotAPI) {
       loadRoomsForProject(selectedProjectId);
+      loadDiscoveryState(selectedProjectId);
     }
   }, [selectedProjectId]);
 
@@ -359,7 +447,115 @@ export const App: React.FC = () => {
     }
   };
 
-  const handleSendMessage = async (text: string, attachments?: AttachmentInfo[]): Promise<boolean> => {
+  const handleSendMessage = async (rawText: string, attachments?: AttachmentInfo[]): Promise<boolean> => {
+    let text = rawText;
+    const trimmed = (rawText || '').trim();
+
+    // Check for slash command escaping: //cmd -> literal /cmd
+    if (trimmed.startsWith('//')) {
+      text = trimmed.slice(1);
+    } else if (trimmed.startsWith('/') && (!attachments || attachments.length === 0)) {
+      const match = trimmed.match(/^\/([a-zA-Z0-9_-]+)(?:\s+([\s\S]*))?$/);
+      if (match) {
+        const cmd = match[1].toLowerCase();
+
+        if (cmd === 'chat') {
+          setWorkspaceMode('discovery');
+          setIsDiscoveryOpen(true);
+          appendOrUpdateEnvelope(activeRoomId, {
+            id: `sys_${Date.now()}_chat`,
+            traceId: `trc_${Date.now()}`,
+            timestamp: Date.now(),
+            sender: { kind: 'agent', id: 'chatgpt_web', name: 'ChatGPT Web (BA)', role: 'LEADER' },
+            recipient: { kind: 'room', id: activeRoomId },
+            roomId: activeRoomId,
+            fidelity: 'L1_FORMATTED_MARKDOWN',
+            parts: [{ kind: 'text', text: '💡 **[CHẾ ĐỘ /chat KÍCH HOẠT]** Đã bật Discovery Ledger. Tôi đang lắng nghe yêu cầu bài toán từ bạn để hoàn thiện đặc tả kỹ thuật trước khi thực thi.' }],
+          });
+          return true;
+        }
+
+        if (cmd === 'work') {
+          const openBlocking = discoveryQuestions.filter((q) => !q.resolved && q.blocking);
+          if (discoveryFacts.length === 0 || openBlocking.length > 0) {
+            appendOrUpdateEnvelope(activeRoomId, {
+              id: `sys_${Date.now()}_work_err`,
+              traceId: `trc_${Date.now()}`,
+              timestamp: Date.now(),
+              sender: { kind: 'agent', id: 'system_router', name: 'System / Router', role: 'ROUTER' },
+              recipient: { kind: 'room', id: activeRoomId },
+              roomId: activeRoomId,
+              fidelity: 'L1_FORMATTED_MARKDOWN',
+              parts: [{ kind: 'text', text: `⚠️ **[TỪ CHỐI /work] DiscoveryReadyGate:**\n${openBlocking.length > 0 ? `- Còn ${openBlocking.length} câu hỏi quan trọng cần xác nhận.\n` : ''}${discoveryFacts.length === 0 ? '- Chưa có yêu cầu nào được chốt (Confirmed Facts = 0).\n' : ''}Vui lòng tiếp tục thảo luận ở \`/chat\` hoặc xác nhận trong panel bên phải.` }],
+            });
+            return true;
+          }
+
+          setWorkspaceMode('work');
+          setIsDiscoveryOpen(false);
+          appendOrUpdateEnvelope(activeRoomId, {
+            id: `sys_${Date.now()}_work_ok`,
+            traceId: `trc_${Date.now()}`,
+            timestamp: Date.now(),
+            sender: { kind: 'agent', id: 'system_router', name: 'System / Router', role: 'ROUTER' },
+            recipient: { kind: 'room', id: activeRoomId },
+            roomId: activeRoomId,
+            fidelity: 'L1_FORMATTED_MARKDOWN',
+            parts: [{ kind: 'text', text: `🚀 **[CHẾ ĐỘ THỰC THI /work KÍCH HOẠT]**\nĐã xác nhận **${discoveryFacts.length} facts**. Sẵn sàng nhận nhiệm vụ hoặc bắt đầu kế hoạch.` }],
+          });
+          return true;
+        }
+
+        if (cmd === 'status') {
+          appendOrUpdateEnvelope(activeRoomId, {
+            id: `sys_${Date.now()}_status`,
+            traceId: `trc_${Date.now()}`,
+            timestamp: Date.now(),
+            sender: { kind: 'agent', id: 'system_router', name: 'System / Router', role: 'ROUTER' },
+            recipient: { kind: 'room', id: activeRoomId },
+            roomId: activeRoomId,
+            fidelity: 'L1_FORMATTED_MARKDOWN',
+            parts: [{
+              kind: 'text',
+              text: `📊 **[TRẠNG THÁI HỆ THỐNG]**\n- **Chế độ hiện tại:** \`${workspaceMode.toUpperCase()}\`\n- **Dự án:** \`${selectedProjectId}\`\n- **Confirmed Facts:** ${discoveryFacts.filter(f => f.state === 'CONFIRMED').length}\n- **Open Questions:** ${discoveryQuestions.filter(q => !q.resolved).length} (${discoveryQuestions.filter(q => !q.resolved && q.blocking).length} blocking)\n- **Pending Approvals:** ${pendingApprovalsCount}\n- **Chi phí phát sinh:** **0 VNĐ (CostGuard Active)**`,
+            }],
+          });
+          return true;
+        }
+
+        if (cmd === 'help') {
+          appendOrUpdateEnvelope(activeRoomId, {
+            id: `sys_${Date.now()}_help`,
+            traceId: `trc_${Date.now()}`,
+            timestamp: Date.now(),
+            sender: { kind: 'agent', id: 'system_router', name: 'System / Router', role: 'ROUTER' },
+            recipient: { kind: 'room', id: activeRoomId },
+            roomId: activeRoomId,
+            fidelity: 'L1_FORMATTED_MARKDOWN',
+            parts: [{
+              kind: 'text',
+              text: `ℹ️ **[DANH SÁCH LỆNH SLASH V4]**\n- \`/chat\`: Bật chế độ Khám phá & Làm rõ Yêu cầu (Discovery) cùng Business Analyst.\n- \`/work\`: Chuyển sang chế độ Thực thi mục tiêu (yêu cầu vượt qua DiscoveryReadyGate).\n- \`/status\`: Xem tóm tắt hiện trạng dự án, facts và câu hỏi tồn đọng.\n- \`/pause\` / \`/resume\` / \`/stop\`: Điều khiển nhịp độ thực thi.\n- \`/help\`: Hiển thị hướng dẫn này.\n\n*Mẹo:* Gõ \`//lệnh\` để gửi văn bản thông thường không kích hoạt lệnh (ví dụ \`//chat\`).`,
+            }],
+          });
+          return true;
+        }
+
+        if (['pause', 'resume', 'stop'].includes(cmd)) {
+          appendOrUpdateEnvelope(activeRoomId, {
+            id: `sys_${Date.now()}_ctl`,
+            traceId: `trc_${Date.now()}`,
+            timestamp: Date.now(),
+            sender: { kind: 'agent', id: 'system_router', name: 'System / Router', role: 'ROUTER' },
+            recipient: { kind: 'room', id: activeRoomId },
+            roomId: activeRoomId,
+            fidelity: 'L1_FORMATTED_MARKDOWN',
+            parts: [{ kind: 'text', text: `⏸️ Lệnh \`/${cmd}\` đã được ghi nhận vào nhật ký điều phối.` }],
+          });
+          return true;
+        }
+      }
+    }
+
     const traceId = `trc_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const parts: MessagePart[] = [{ kind: 'text', text }];
 
@@ -462,6 +658,9 @@ export const App: React.FC = () => {
             isDemoMode={isDemoMode}
             isBrowserOpen={isBrowserOpen}
             onToggleBrowser={() => setIsBrowserOpen((prev) => !prev)}
+            workspaceMode={workspaceMode}
+            isDiscoveryOpen={isDiscoveryOpen}
+            onToggleDiscovery={() => setIsDiscoveryOpen((prev) => !prev)}
           />
 
           {activeView === 'chat' && (
@@ -483,6 +682,17 @@ export const App: React.FC = () => {
             />
           )}
         </main>
+
+        {activeView === 'chat' && isDiscoveryOpen && (
+          <DiscoveryPanel
+            projectId={selectedProjectId}
+            facts={discoveryFacts}
+            questions={discoveryQuestions}
+            onConfirmFact={handleConfirmFact}
+            onResolveQuestion={handleResolveQuestion}
+            onSwitchToWork={handleSwitchToWork}
+          />
+        )}
 
         <BrowserPanel
           isOpen={isBrowserOpen}

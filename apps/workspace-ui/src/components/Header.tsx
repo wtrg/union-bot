@@ -6,9 +6,20 @@ interface HeaderProps {
   isDemoMode: boolean;
   onToggleBrowser?: () => void;
   isBrowserOpen?: boolean;
+  workspaceMode?: 'discovery' | 'work';
+  onToggleDiscovery?: () => void;
+  isDiscoveryOpen?: boolean;
 }
 
-export const Header: React.FC<HeaderProps> = ({ room, isDemoMode, onToggleBrowser, isBrowserOpen }) => {
+export const Header: React.FC<HeaderProps> = ({
+  room,
+  isDemoMode,
+  onToggleBrowser,
+  isBrowserOpen,
+  workspaceMode = 'discovery',
+  onToggleDiscovery,
+  isDiscoveryOpen = false,
+}) => {
   return (
     <header className="room-header">
       <div className="room-title-group">
@@ -28,6 +39,31 @@ export const Header: React.FC<HeaderProps> = ({ room, isDemoMode, onToggleBrowse
       </div>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        {onToggleDiscovery && (
+          <button
+            className={`btn-toggle-discovery ${isDiscoveryOpen ? 'active' : ''}`}
+            data-testid="toggle-discovery-btn"
+            onClick={onToggleDiscovery}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              background: isDiscoveryOpen ? 'var(--accent-purple, #7c3aed)' : 'var(--bg-surface-elevated, #1e293b)',
+              color: '#ffffff',
+              border: '1px solid var(--border-color)',
+              borderRadius: 4,
+              padding: '4px 10px',
+              fontSize: 12,
+              fontWeight: 500,
+              cursor: 'pointer',
+            }}
+            title="Discovery Ledger & Requirement Facts (/chat)"
+          >
+            <span>📋 {workspaceMode === 'discovery' ? 'Mode: /chat (BA)' : 'Mode: /work'}</span>
+            <span style={{ fontSize: 10, opacity: 0.8 }}>{isDiscoveryOpen ? '◀' : '▶'}</span>
+          </button>
+        )}
+
         {onToggleBrowser && (
           <button
             className={`btn-toggle-browser ${isBrowserOpen ? 'active' : ''}`}
@@ -52,6 +88,7 @@ export const Header: React.FC<HeaderProps> = ({ room, isDemoMode, onToggleBrowse
             <span style={{ fontSize: 10, opacity: 0.8 }}>{isBrowserOpen ? '◀' : '▶'}</span>
           </button>
         )}
+
         <span
           style={{
             fontSize: 11,

@@ -30,6 +30,7 @@ const { MCPService } = require('./mcp-service.cjs');
 const { CodexService } = require('./codex-service.cjs');
 const { AntigravityService } = require('./antigravity-service.cjs');
 const { TaskGraphService } = require('./task-graph-service.cjs');
+const { DiscoveryService } = require('./services/discovery-service.cjs');
 
 // Custom test userData override for isolated multi-process E2E testing
 const customUserDataArg = process.argv.find((a) => a.startsWith('--test-user-data=') || a.startsWith('--user-data-dir='));
@@ -91,6 +92,7 @@ const artifactStore = new ArtifactStore(localCasDir);
 const toolHost = new ToolHost(path.resolve(__dirname, '../../..'));
 const mcpService = new MCPService(localCasDir, path.resolve(__dirname, '../../..'));
 const storage = new StorageServiceClient(dbFilePath);
+const discoveryService = new DiscoveryService(storage);
 const orchestrator = new Orchestrator({ costGuard, storage });
 const codexService = new CodexService(path.resolve(__dirname, '../../..'), artifactStore, toolHost, costGuard);
 
@@ -5331,6 +5333,26 @@ ipcMain.handle('union-bot:resolve-open-question', async (event, payload) => {
     return { success: res.changes > 0 };
   } catch (err) {
     return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('union-bot:check-discovery-ready', async (event, discoveryId) => {
+  if (!checkSenderAuthorized(event)) return { ready: false, error: 'Unauthorized IPC sender' };
+  if (appStatus !== 'READY') return { ready: false, error: 'Storage offline' };
+  try {
+    return discoveryService.checkReadyForWork(discoveryId || 'disc_default');
+  } catch (err) {
+    return { ready: false, error: err.message };
+  }
+});
+
+ipcMain.handle('union-bot:compact-discovery-context', async (event, discoveryId) => {
+  if (!checkSenderAuthorized(event)) return { facts: [], questions: [], digest: '', error: 'Unauthorized IPC sender' };
+  if (appStatus !== 'READY') return { facts: [], questions: [], digest: '', error: 'Storage offline' };
+  try {
+    return discoveryService.compactContext(discoveryId || 'disc_default');
+  } catch (err) {
+    return { facts: [], questions: [], digest: '', error: err.message };
   }
 });
 

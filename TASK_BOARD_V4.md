@@ -15,8 +15,8 @@
 |---|---|---|---|---|---|
 | **U00** | Baseline, Risk Audit & Compatibility | VERIFIED | RU00 | Baseline report, local/remote audit, tests pass | SELF_VERIFIED |
 | **U01** | Schema V4, Event Authority & Core Contracts | VERIFIED | RU01 | Zod schemas, SQLite migrations (native+worker), unit tests pass | SELF_VERIFIED |
-| **U02** | `/chat`: Discovery, BA Questioning & Project Memory | IN_PROGRESS | RU02 | Slash parser, Fact ledger, Decision compaction | PENDING_REVIEW |
-| **U03** | Provider Capability & Native Runtime Truth | QUEUED | RU03 | Capability registry per session, preflight checks | PENDING_REVIEW |
+| **U02** | `/chat`: Discovery, BA Questioning & Project Memory | VERIFIED | RU02 | Slash parser, Fact ledger, Decision compaction | SELF_VERIFIED |
+| **U03** | Provider Capability & Native Runtime Truth | IN_PROGRESS | RU03 | Capability registry per session, preflight checks | PENDING_REVIEW |
 | **U04** | Two-Way Conversation Router & Thread Receipts | QUEUED | RU04 | Router, DeliveryAttempt, freshness watermarks | PENDING_REVIEW |
 | **U05** | Artifact Handoff & Multimodal Fidelity | QUEUED | RU05 | CAS bytes, MIME validation, screenshot fidelity | PENDING_REVIEW |
 | **U06** | `/work`: Plan Registry, Critical Review & Goal Approval | QUEUED | RU06 | Plan revision, frozen brief digest, approval gate | PENDING_REVIEW |
@@ -49,10 +49,10 @@
 - [x] `U01-006`: Separated IPC actions and validation wired in `apps/desktop/src/preload.cjs`, `main.js`, and `apps/workspace-ui/src/types.ts`
 
 ### U02 — `/chat`: Discovery, BA Questioning & Project Memory
-- [ ] `U02-001`: Parser for slash commands `/chat`, `/work`, `/status`, `/pause`, `/resume`, `/stop`, `/help` with literal escape `//chat`
-- [ ] `U02-002`: `DiscoveryService` + `RequirementFact` / `OpenQuestion` lifecycle and provenance
-- [ ] `U02-003`: Role router in `/chat`: PO + ChatGPT BA + Codex reviewer; no uninvited auto-participation
-- [ ] `U02-004`: Context compaction: decision ledger + bounded source excerpts without losing confirmed facts
-- [ ] `U02-005`: BA question planner: prioritization of missing blocking facts
-- [ ] `U02-006`: `DiscoveryReadyGate` logic before transitioning to `/work`
-- [ ] `U02-007`: UI Discovery sidebar/checklist/missing info in React workspace UI
+- [x] `U02-001`: Parser for slash commands `/chat`, `/work`, `/status`, `/pause`, `/resume`, `/stop`, `/help` with literal escape `//chat`
+- [x] `U02-002`: `DiscoveryService` + `RequirementFact` / `OpenQuestion` lifecycle and provenance
+- [x] `U02-003`: Role router in `/chat`: PO + ChatGPT BA + Codex reviewer; no uninvited auto-participation
+- [x] `U02-004`: Context compaction: decision ledger + bounded source excerpts without losing confirmed facts
+- [x] `U02-005`: BA question planner: prioritization of missing blocking facts
+- [x] `U02-006`: `DiscoveryReadyGate` logic before transitioning to `/work`
+- [x] `U02-007`: UI Discovery sidebar/checklist/missing info in React workspace UI
