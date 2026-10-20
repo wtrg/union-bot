@@ -368,7 +368,7 @@ describe('Phase P9: 6-AI Collaborative Workflow Engine Tests', () => {
     const scopeNode = resultGraph.nodes.get('node-scope')!;
     assert.equal(scopeNode.status, 'WAITING_INPUT');
     assert.match(scopeNode.error || '', /ERR_PROVIDER_AWAITING_RESPONSE/);
-    assert.equal(scopeNode.result?.provenance, 'UNVERIFIED');
+    assert.equal((scopeNode.result as any)?.provenance, 'UNVERIFIED');
 
     // 2. Downstream research node is blocked from running (still PENDING)
     const researchNode = resultGraph.nodes.get('node-research')!;

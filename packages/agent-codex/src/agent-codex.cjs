@@ -728,6 +728,141 @@ class CodexAdapter extends EventEmitter {
     };
   }
 
+  /**
+   * Phase P9: Executes authentic QA verification for collaborative pipelines (P9-R03-003).
+   * Verifies canonical workspace boundary, checks syntax of modified artifacts,
+   * validates zero-cost constraints, and matches mandatory digest in VERIFY stage.
+   */
+  executeVerification(params = {}) {
+    const { files = [], workspaceRoot = this.workspaceRoot, targetDigest, stage, requireTargetDigest } = params;
+    const vm = require('node:vm');
+    const crypto = require('node:crypto');
+
+    if (!Array.isArray(files) || files.length === 0) {
+      const err = new Error('ERR_VERIFICATION_NO_FILES: Verification requires at least one target artifact file');
+      err.code = 'ERR_VERIFICATION_NO_FILES';
+      throw err;
+    }
+
+    let boundaryVerifiedCount = 0;
+    for (const f of files) {
+      if (typeof f !== 'string' || !f.trim()) {
+        const err = new Error('ERR_INVALID_FILE_PATH: File path must be a non-empty string');
+        err.code = 'ERR_INVALID_FILE_PATH';
+        throw err;
+      }
+      this.verifyWorkspaceBoundary(f);
+      boundaryVerifiedCount++;
+    }
+
+    let syntaxVerifiedCount = 0;
+    for (const f of files) {
+      const absPath = path.resolve(workspaceRoot, f);
+      if (!fs.existsSync(absPath)) {
+        const errNotFound = new Error(`ERR_VERIFICATION_FILE_NOT_FOUND: Target artifact file '${f}' does not exist on disk`);
+        errNotFound.code = 'ERR_VERIFICATION_FILE_NOT_FOUND';
+        throw errNotFound;
+      }
+
+      const content = fs.readFileSync(absPath, 'utf8');
+      if (f.endsWith('.json')) {
+        try {
+          JSON.parse(content);
+          syntaxVerifiedCount++;
+        } catch (err) {
+          const errSyntax = new Error(`ERR_SYNTAX_VERIFICATION_FAILED: Corrupt JSON syntax in '${f}': ${err.message}`);
+          errSyntax.code = 'ERR_SYNTAX_VERIFICATION_FAILED';
+          throw errSyntax;
+        }
+      } else if (f.endsWith('.js') || f.endsWith('.cjs') || f.endsWith('.mjs')) {
+        try {
+          new vm.Script(content);
+          syntaxVerifiedCount++;
+        } catch (err) {
+          const errSyntax = new Error(`ERR_SYNTAX_VERIFICATION_FAILED: Corrupt JS syntax in '${f}': ${err.message}`);
+          errSyntax.code = 'ERR_SYNTAX_VERIFICATION_FAILED';
+          throw errSyntax;
+        }
+      } else if (f.endsWith('.ts') || f.endsWith('.tsx')) {
+        try {
+          let tsModule = null;
+          try { tsModule = require('typescript'); } catch {}
+          if (tsModule && typeof tsModule.transpileModule === 'function') {
+            const transpileRes = tsModule.transpileModule(content, { reportDiagnostics: true });
+            if (transpileRes.diagnostics && transpileRes.diagnostics.length > 0) {
+              const diagMsgs = transpileRes.diagnostics.map(d => typeof d.messageText === 'string' ? d.messageText : d.messageText.messageText).join('; ');
+              const errSyntax = new Error(`ERR_SYNTAX_VERIFICATION_FAILED: Corrupt TS syntax in '${f}': ${diagMsgs}`);
+              errSyntax.code = 'ERR_SYNTAX_VERIFICATION_FAILED';
+              throw errSyntax;
+            }
+          } else {
+            new vm.Script(content.replace(/:\s*[a-zA-Z0-9_<>[\]|&]+/g, ''));
+          }
+          syntaxVerifiedCount++;
+        } catch (tsErr) {
+          if (tsErr.code === 'ERR_SYNTAX_VERIFICATION_FAILED') throw tsErr;
+          const errSyntax = new Error(`ERR_SYNTAX_VERIFICATION_FAILED: Corrupt TS syntax in '${f}': ${tsErr.message}`);
+          errSyntax.code = 'ERR_SYNTAX_VERIFICATION_FAILED';
+          throw errSyntax;
+        }
+      } else {
+        if (content.length === 0) {
+          const errEmpty = new Error(`ERR_EMPTY_ARTIFACT: Artifact '${f}' is empty`);
+          errEmpty.code = 'ERR_EMPTY_ARTIFACT';
+          throw errEmpty;
+        }
+        syntaxVerifiedCount++;
+      }
+    }
+
+    if (stage === 'VERIFY' || requireTargetDigest) {
+      if (!targetDigest || typeof targetDigest !== 'string' || !targetDigest.trim()) {
+        const errDigest = new Error('ERR_MISSING_TARGET_DIGEST: Target digest is mandatory for verification stage');
+        errDigest.code = 'ERR_MISSING_TARGET_DIGEST';
+        throw errDigest;
+      }
+    }
+
+    let digestVerified = false;
+    if (targetDigest) {
+      const primaryFile = path.resolve(workspaceRoot, files[0]);
+      const actualDigest = crypto.createHash('sha256').update(fs.readFileSync(primaryFile)).digest('hex');
+      if (actualDigest !== targetDigest) {
+        const errDigest = new Error(`ERR_DIGEST_MISMATCH: Target digest '${targetDigest}' does not match file digest '${actualDigest}'`);
+        errDigest.code = 'ERR_DIGEST_MISMATCH';
+        throw errDigest;
+      }
+      digestVerified = true;
+    }
+
+    let zeroCostConfirmed = false;
+    if (this.costGuard) {
+      const isPaidAllowed = typeof this.costGuard.isPaidApiAllowed === 'function'
+        ? this.costGuard.isPaidApiAllowed()
+        : Boolean(this.costGuard.paidApiEnabled);
+      if (isPaidAllowed) {
+        const errCost = new Error('ERR_ZERO_COST_VIOLATION: Paid API egress is not disabled');
+        errCost.code = 'ERR_ZERO_COST_VIOLATION';
+        throw errCost;
+      }
+      zeroCostConfirmed = true;
+    } else {
+      const paidKey = process.env.OPENAI_API_KEY || process.env.ANTHROPIC_API_KEY;
+      zeroCostConfirmed = !paidKey || paidKey.trim().length === 0;
+    }
+
+    return {
+      success: true,
+      syntaxVerified: syntaxVerifiedCount === files.length && files.length > 0,
+      securityBoundaryVerified: boundaryVerifiedCount === files.length && files.length > 0,
+      zeroCostConfirmed,
+      digestVerified,
+      nativeService: 'codexService',
+      verifiedFiles: files,
+      timestamp: Date.now(),
+    };
+  }
+
   async cancelActiveTurn() {
     if (this.client) {
       await this.client.interruptTurn();

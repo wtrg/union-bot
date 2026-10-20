@@ -72,7 +72,7 @@ const toolHost = new ToolHost(path.resolve(__dirname, '../../..'));
 const mcpService = new MCPService(localCasDir, path.resolve(__dirname, '../../..'));
 const storage = new StorageServiceClient(dbFilePath);
 const orchestrator = new Orchestrator({ costGuard, storage });
-const codexService = new CodexService(path.resolve(__dirname, '../../..'), artifactStore, toolHost);
+const codexService = new CodexService(path.resolve(__dirname, '../../..'), artifactStore, toolHost, costGuard);
 
 codexService.on('delta', (delta, params) => {
   if (mainWindow && !mainWindow.isDestroyed()) {
@@ -468,7 +468,7 @@ function registerProduction6AITransports(taskGraphService, browserService, codex
       };
     }
 
-    // VERIFY stage: Executes authentic verification through codexService (P9-R03-003)
+    // VERIFY stage: Executes authentic verification through codexService (P9-R03-003, P9-R04-003)
     const filesToVerify = [];
     if (Array.isArray(node.actionPayload?.files)) {
       filesToVerify.push(...node.actionPayload.files);
@@ -480,10 +480,40 @@ function registerProduction6AITransports(taskGraphService, browserService, codex
       }
     }
 
+    // Resolve targetDigest from node, actionPayload, or upstream dependency nodes (e.g. IMPLEMENT stage)
+    let targetDigest = node.targetDigest || node.actionPayload?.targetDigest;
+    if (!targetDigest && Array.isArray(node.dependencies)) {
+      const queue = [...node.dependencies];
+      const visited = new Set();
+      while (queue.length > 0) {
+        const depId = queue.shift();
+        if (visited.has(depId)) continue;
+        visited.add(depId);
+        const dep = ctx.graph?.nodes?.get(depId);
+        if (dep?.outputDigest) {
+          targetDigest = dep.outputDigest;
+          break;
+        }
+        if (dep?.result?.digest) {
+          targetDigest = dep.result.digest;
+          break;
+        }
+        if (dep?.dependencies && Array.isArray(dep.dependencies)) {
+          queue.push(...dep.dependencies);
+        }
+      }
+    }
+
+    if (!targetDigest) {
+      throw new Error('ERR_MISSING_VERIFY_TARGET_DIGEST: VERIFY stage requires targetDigest from node or upstream IMPLEMENT dependency');
+    }
+
     const verifyResult = await codexService.executeVerification({
       files: filesToVerify,
       workspaceRoot: ctx.workspaceRoot,
-      targetDigest: node.targetDigest,
+      targetDigest,
+      requireTargetDigest: true,
+      stage: 'VERIFY',
       prompt: node.actionPayload?.prompt || undefined,
     });
 
@@ -4427,11 +4457,13 @@ function createWindow() {
         results.antigravityNativeFailureFailsClosed = antigravityFailedClosed;
         console.log('[P9-PROD-E2E] Step 4 result antigravityNativeFailureFailsClosed:', results.antigravityNativeFailureFailsClosed);
 
-        // 5. Codex executes authentic verification via native service (P9-R03-003)
-        console.log('[P9-PROD-E2E] Step 5: executing codex verify node...');
+        // 5. Codex executes authentic verification via native service (P9-R03-003, P9-R04-003)
+        console.log('[P9-PROD-E2E] Step 5: executing codex verify node with authentic targetDigest...');
         const verifyNode = prodGraph.nodes.get('node-qa-verify');
         prodGraph.nodes.get('node-algo-review').status = 'COMPLETED';
-        verifyNode.actionPayload = { files: ['package.json'] };
+        const pkgDigest = crypto.createHash('sha256').update(fs.readFileSync(path.resolve(prodGraph.workspaceRoot, 'package.json'))).digest('hex');
+        verifyNode.targetDigest = pkgDigest;
+        verifyNode.actionPayload = { files: ['package.json'], targetDigest: pkgDigest };
         const verifyRes = await taskGraphService.engine.executeNode(prodGraph, verifyNode);
         const codexSession = browserService.sessionRegistry.getSessionByProvider('codex');
 

@@ -32,11 +32,12 @@ function getCodexModules() {
 }
 
 class CodexService extends EventEmitter {
-  constructor(workspaceRoot, artifactStore, toolHost) {
+  constructor(workspaceRoot, artifactStore, toolHost, costGuard) {
     super();
     this.workspaceRoot = path.resolve(workspaceRoot || process.cwd());
     this.artifactStore = artifactStore;
     this.toolHost = toolHost;
+    this.costGuard = costGuard;
     this.adapter = null;
     this.cachedDiscovery = null;
     this.customTransport = null;
@@ -79,6 +80,7 @@ class CodexService extends EventEmitter {
     this.adapter = new CodexAdapter({
       workspaceRoot: this.workspaceRoot,
       artifactStore: this.artifactStore,
+      costGuard: this.costGuard,
       transport: this.customTransport,
       approvalValidator: (token, command) => {
         if (this.toolHost && typeof this.toolHost.validateApprovalToken === 'function') {
@@ -126,7 +128,7 @@ class CodexService extends EventEmitter {
    * validates zero-cost constraints, and executes verification through native Codex service.
    */
   async executeVerification(params = {}) {
-    const { files = [], workspaceRoot = this.workspaceRoot, prompt, targetDigest } = params;
+    const { files = [], workspaceRoot = this.workspaceRoot, prompt, targetDigest, stage, requireTargetDigest } = params;
     const adapter = await this.getAdapter();
 
     // P9-R04-003: Must reject empty file list fail-closed
@@ -137,6 +139,7 @@ class CodexService extends EventEmitter {
     }
 
     // 1. Boundary verification: strictly check each file is inside canonical workspace
+    let boundaryVerifiedCount = 0;
     for (const f of files) {
       if (typeof f !== 'string' || !f.trim()) {
         const err = new Error('ERR_INVALID_FILE_PATH: File path must be a non-empty string');
@@ -144,6 +147,7 @@ class CodexService extends EventEmitter {
         throw err;
       }
       adapter.verifyWorkspaceBoundary(f);
+      boundaryVerifiedCount++;
     }
 
     // 2. Syntax verification on files: verifies existence & parses code, detects corrupt syntax fail-closed
@@ -209,7 +213,16 @@ class CodexService extends EventEmitter {
       }
     }
 
-    // 3. Digest check if targetDigest is specified
+    // 3. Digest check: In VERIFY stage or when required, targetDigest is strictly mandatory
+    if (stage === 'VERIFY' || requireTargetDigest) {
+      if (!targetDigest || typeof targetDigest !== 'string' || !targetDigest.trim()) {
+        const errDigest = new Error('ERR_MISSING_TARGET_DIGEST: Target digest is mandatory for verification stage');
+        errDigest.code = 'ERR_MISSING_TARGET_DIGEST';
+        throw errDigest;
+      }
+    }
+
+    let digestVerified = false;
     if (targetDigest) {
       const primaryFile = path.resolve(workspaceRoot, files[0]);
       const actualDigest = crypto.createHash('sha256').update(fs.readFileSync(primaryFile)).digest('hex');
@@ -218,9 +231,11 @@ class CodexService extends EventEmitter {
         errDigest.code = 'ERR_DIGEST_MISMATCH';
         throw errDigest;
       }
+      digestVerified = true;
     }
 
-    // 4. Zero-Cost Confirmation: verifies paidApiEnabled is strictly false
+    // 4. Zero-Cost Confirmation: verifies paidApiEnabled is strictly false via CostGuard or env
+    let zeroCostConfirmed = false;
     if (this.costGuard) {
       const isPaidAllowed = typeof this.costGuard.isPaidApiAllowed === 'function'
         ? this.costGuard.isPaidApiAllowed()
@@ -230,13 +245,18 @@ class CodexService extends EventEmitter {
         errCost.code = 'ERR_ZERO_COST_VIOLATION';
         throw errCost;
       }
+      zeroCostConfirmed = true;
+    } else {
+      const paidKey = process.env.OPENAI_API_KEY || process.env.ANTHROPIC_API_KEY;
+      zeroCostConfirmed = !paidKey || paidKey.trim().length === 0;
     }
 
     return {
       success: true,
-      syntaxVerified: syntaxVerifiedCount > 0,
-      securityBoundaryVerified: files.length > 0,
-      zeroCostConfirmed: true,
+      syntaxVerified: syntaxVerifiedCount === files.length && files.length > 0,
+      securityBoundaryVerified: boundaryVerifiedCount === files.length && files.length > 0,
+      zeroCostConfirmed,
+      digestVerified,
       nativeService: 'codexService',
       verifiedFiles: files,
       timestamp: Date.now(),

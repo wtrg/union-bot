@@ -8,6 +8,7 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
+import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 import {
@@ -356,7 +357,34 @@ describe('Union Bot Phase P6: Native Codex Agent Adapter Suite', () => {
     assert.equal(validRes.securityBoundaryVerified, true);
     assert.equal(validRes.zeroCostConfirmed, true);
 
-    // 4. Rejects corrupt JSON
+    // 4. P9-R04-003: Mandatory targetDigest in VERIFY stage fails-closed when omitted
+    assert.throws(
+      () => adapter.executeVerification({ files: ['package.json'], stage: 'VERIFY' }),
+      /ERR_MISSING_TARGET_DIGEST/
+    );
+
+    // 5. Rejects mismatched targetDigest
+    assert.throws(
+      () => adapter.executeVerification({ files: ['package.json'], targetDigest: '0'.repeat(64) }),
+      /ERR_DIGEST_MISMATCH/
+    );
+
+    // 6. Accepts authentic matching targetDigest
+    const expectedDigest = crypto.createHash('sha256').update(fs.readFileSync(path.resolve(workspaceRoot, 'package.json'))).digest('hex');
+    const digestRes = adapter.executeVerification({ files: ['package.json'], stage: 'VERIFY', targetDigest: expectedDigest });
+    assert.equal(digestRes.success, true);
+    assert.equal(digestRes.digestVerified, true);
+
+    // 7. Rejects paid API egress when CostGuard allows paid APIs
+    const paidCostGuard = new CostGuard();
+    (paidCostGuard as any).paidApiEnabled = true;
+    const paidAdapter = new CodexAdapter({ workspaceRoot, costGuard: paidCostGuard });
+    assert.throws(
+      () => paidAdapter.executeVerification({ files: ['package.json'] }),
+      /ERR_ZERO_COST_VIOLATION/
+    );
+
+    // 8. Rejects corrupt JSON
     const scratchDir = path.join(workspaceRoot, 'scratch/codex-verify-test');
     fs.mkdirSync(scratchDir, { recursive: true });
     try {

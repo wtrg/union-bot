@@ -249,11 +249,14 @@ export class CodexAdapter extends EventEmitter {
     files?: string[];
     workspaceRoot?: string;
     targetDigest?: string;
+    stage?: string;
+    requireTargetDigest?: boolean;
   } = {}): {
     success: boolean;
     syntaxVerified: boolean;
     securityBoundaryVerified: boolean;
     zeroCostConfirmed: boolean;
+    digestVerified?: boolean;
     nativeService: 'codexService';
     verifiedFiles: string[];
     timestamp: number;
@@ -267,6 +270,7 @@ export class CodexAdapter extends EventEmitter {
       throw err;
     }
 
+    let boundaryVerifiedCount = 0;
     for (const f of files) {
       if (typeof f !== 'string' || !f.trim()) {
         const err = new Error('ERR_INVALID_FILE_PATH: File path must be a non-empty string');
@@ -274,6 +278,7 @@ export class CodexAdapter extends EventEmitter {
         throw err;
       }
       this.verifyWorkspaceBoundary(f);
+      boundaryVerifiedCount++;
     }
 
     let syntaxVerifiedCount = 0;
@@ -337,6 +342,15 @@ export class CodexAdapter extends EventEmitter {
       }
     }
 
+    if (params.stage === 'VERIFY' || params.requireTargetDigest) {
+      if (!params.targetDigest || typeof params.targetDigest !== 'string' || !params.targetDigest.trim()) {
+        const errDigest = new Error('ERR_MISSING_TARGET_DIGEST: Target digest is mandatory for verification stage');
+        (errDigest as any).code = 'ERR_MISSING_TARGET_DIGEST';
+        throw errDigest;
+      }
+    }
+
+    let digestVerified = false;
     if (params.targetDigest) {
       const primaryFile = path.resolve(root, files[0]);
       const actualDigest = crypto.createHash('sha256').update(fs.readFileSync(primaryFile)).digest('hex');
@@ -345,8 +359,10 @@ export class CodexAdapter extends EventEmitter {
         (errDigest as any).code = 'ERR_DIGEST_MISMATCH';
         throw errDigest;
       }
+      digestVerified = true;
     }
 
+    let zeroCostConfirmed = false;
     if (this.costGuard) {
       const paidAllowed = typeof (this.costGuard as any).isPaidApiAllowed === 'function'
         ? (this.costGuard as any).isPaidApiAllowed()
@@ -356,13 +372,18 @@ export class CodexAdapter extends EventEmitter {
         (errCost as any).code = 'ERR_ZERO_COST_VIOLATION';
         throw errCost;
       }
+      zeroCostConfirmed = true;
+    } else {
+      const paidKey = process.env.OPENAI_API_KEY || process.env.ANTHROPIC_API_KEY;
+      zeroCostConfirmed = !paidKey || paidKey.trim().length === 0;
     }
 
     return {
       success: true,
-      syntaxVerified: syntaxVerifiedCount > 0,
-      securityBoundaryVerified: files.length > 0,
-      zeroCostConfirmed: true,
+      syntaxVerified: syntaxVerifiedCount === files.length && files.length > 0,
+      securityBoundaryVerified: boundaryVerifiedCount === files.length && files.length > 0,
+      zeroCostConfirmed,
+      digestVerified,
       nativeService: 'codexService',
       verifiedFiles: files,
       timestamp: Date.now(),
