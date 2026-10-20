@@ -1,55 +1,56 @@
-# Technical Leader Audit Verdict: Phase P8 Round R02
+# Technical Leader Audit Verdict: Phase P8 Formal Gate Approval
 
 **Date:** 2026-10-20  
 **Repository:** `https://github.com/wtrg/union-bot.git`  
-**Commit Audited:** `2560282e2aada5fc1a0aff3a1c97477bf4815c4d`  
+**Commit Audited:** `f378e7fea349a21bae43aeab48e21830cf9c0fd4`  
 **Auditor:** Technical Leader (ChatGPT Web - "Ý tưởng AI Workspace")  
-**Verdict:** **`CHANGES REQUIRED — P8 ROUND R02 CHƯA ĐƯỢC PHÊ DUYỆT GO_P9`**
+**Verdict:** **`APPROVED — GO_P9`**
 
 ---
 
-## 1. Audit Summary & Acknowledgments
+## 1. Formal Technical Leader Sign-off
 
-The Technical Leader audited commit `2560282`, TS/CJS sources, `REVIEW_PACKET_P8.md`, and Electron P8 E2E evidence.
-- **Confirmed Positive Progress:**
-  - `runGraph()` remediation state machine is confirmed working properly (`REVIEW` failure transitions to `REMEDIATING`, `FIX` dependencies are satisfied, `FIX` completion resets `REVIEW` to `PENDING`, clears votes, and updates code digest).
-  - Synthetic approval has been completely removed from the execution path.
-- **Identified Blockers (Round R02):**
-  - Two critical trust-boundary blockers remain before Phase P8 can be signed off for `GO_P9`.
+```text
+APPROVED — GO_P9
 
----
+Tôi đã audit trực tiếp Round R04 tại commit f378e7fea349a21bae43aeab48e21830cf9c0fd4, tập trung đúng hai trust-boundary blocker còn lại.
 
-## 2. Critical Blockers to Resolve in Round R03
+P8-R03-004 đã được đóng đúng: taskGraphStep không còn nằm trong production preload API; chỉ được expose trong explicit E2E harness. Main-process IPC cũng fail-closed ngoài NODE_ENV=test + UNION_BOT_E2E_HARNESS=1, và ngay trong test harness vẫn phải qua getRunnableNodes() nên không thể step IMPLEMENT khi PLAN chưa hoàn tất.
 
-### Blocker P8-R02-001 — CRITICAL: Vote có thể tự thiết lập digest trước khi code tồn tại
-- **Vấn đề:**
-  - `submitVote()` currently allows binding `node.targetDigest = vote.reviewedDigest` if `!node.targetDigest`.
-  - Reviewer should never be allowed to dictate `targetDigest`.
-  - `targetDigest` must only be produced by completed upstream `IMPLEMENT` or `FIX` nodes.
-  - If a `REVIEW` node does not yet have a locked `targetDigest`, any vote submission must be rejected fail-closed (e.g. `ERR_REVIEW_TARGET_NOT_READY`).
-  - No pre-approval of non-existent code.
+P8-R03-005 cũng đã được đóng: production renderer không còn API mutate reviewer registry; handler task-graph-register-reviewer chặn production bằng ERR_UNAUTHORIZED_ACTION. Evidence production xác nhận cả productionTaskGraphStepDisabled và productionTaskGraphRegisterReviewerDisabled đều true.
 
-### Blocker P8-R02-002 — CRITICAL: Authorized reviewer registry vẫn tự cấp quyền qua renderer IPC
-- **Vấn đề:**
-  - `union-bot:task-graph-register-reviewer` allows arbitrary renderer IPC callers to register privileged roles (e.g. `QA_SECURITY`).
-  - Fail-closed registry requirement: If a review node's graph has no authorized reviewers, voting is blocked completely (`ERR_UNAUTHORIZED_VOTER`).
-  - Renderer cannot self-assign privileged roles (`QA_SECURITY`, `LEADER`) via public renderer IPC without trusted orchestration authority.
-  - `submitVote()` should determine voter role directly from the trusted backend registry/session rather than trusting caller input.
-  - Mandatory regression test: Self-registering fake QA via renderer IPC must be DENIED fail-closed.
+Tôi cũng xác nhận regression evidence P8 hiện có prematureStepDenied: true, đồng thời các bảo vệ từ R02/R03 vẫn còn: anti-pre-approval, forged voter denial, stale-digest denial, dedup vote, required-role consensus và canonical junction defense.
+
+Technical Gate Verdict
+
+APPROVED — GO_P9
+
+Phase P8 — Multi-Agent Task Graph & Consensus Engine được nghiệm thu chính thức và đóng gate.
+
+Team được phép bắt đầu Phase P9 — Web Provider Extensions & 6-AI Collaboration Integration.
+
+Điều kiện kiến trúc bắt buộc khi sang P9: mỗi web provider/session phải có identity riêng được backend xác thực, không được để DOM/renderer tự khai role hoặc voter identity; mọi provider action phải tiếp tục đi qua orchestration, approval, canonical-boundary và zero-cost policy của P5–P8.
+
+Phạm vi nghiệm thu này dựa trên độc lập audit source/diff và evidence đã commit trên GitHub; tôi không tuyên bố đã trực tiếp chạy Windows Electron suite trên máy Antigravity.
+```
 
 ---
 
-## 3. Remediation Directives for Round R03
-1. Add `ERR_REVIEW_TARGET_NOT_READY` error code to protocol schemas and CJS parity.
-2. In `task-graph.ts` and `task-graph-service.cjs`:
-   - In `submitVote()`: If `!node.targetDigest`, throw `ERR_REVIEW_TARGET_NOT_READY`.
-   - Never allow `submitVote()` to set `node.targetDigest`.
-   - If `authorizedReviewers` is empty or undefined, fail-closed (`ERR_UNAUTHORIZED_VOTER`).
-   - Automatically derive `voterRole` from the trusted registry: `const auth = policy.authorizedReviewers.find(r => r.voterId === vote.voterId); vote.voterRole = auth.role;`
-3. In Electron main IPC (`main.js`):
-   - Protect `union-bot:task-graph-register-reviewer`: deny renderer attempts to register privileged reviewer roles (`QA_SECURITY`, `LEADER`) from untrusted renderer frames (`ERR_UNAUTHORIZED_ACTION`).
-4. Update unit tests in `task-graph.test.ts` and E2E in `desktop-p8.test.js`:
-   - Test `ERR_REVIEW_TARGET_NOT_READY` when voting before `IMPLEMENT` locks `outputDigest`.
-   - Test renderer IPC registration denial for fake `QA_SECURITY`.
-   - Test full real flow: create pipeline -> run IMPLEMENT -> locks digest -> authorized QA_SECURITY votes on real digest -> consensus reached -> FIX skipped -> VERIFY pass -> graph COMPLETED.
-5. Pass all 7 verification gates in `scripts/verify.ps1`, commit, push, and submit Round R03 for final `APPROVED — GO_P9`.
+## 2. Gate Verification History
+
+| Round | Commit | Verdict | Key Findings & Remediation |
+| :--- | :--- | :--- | :--- |
+| **R01** | `2560282` | `CHANGES_REQUIRED` | Synthetic default approval fail-closed, missing autonomous remediation in `runGraph()`, voter registry binding. |
+| **R02** | `2560282` | `CHANGES_REQUIRED` | `P8-R02-001` (Anti-pre-approval digest lock), `P8-R02-002` (Renderer privileged registration denial). |
+| **R03** | `b0f3760` | `CHANGES_REQUIRED` | `P8-R03-004` (`taskGraphStep` production exposure), `P8-R03-005` (Reviewer registry writable in production). |
+| **R04** | `f378e7f` | **`APPROVED — GO_P9`** | Complete resolution of trust boundaries, test-only isolation, DAG runnable scheduler enforcement, 24/24 Electron checks pass, 7/7 verification gates pass with exit code 0. |
+
+---
+
+## 3. Transition to Phase P9
+
+- **Authorized Phase:** Phase P9 — Web Provider Extensions & 6-AI Collaboration Integration.
+- **Architectural Directives for P9:**
+  1. Each web provider/session must have a dedicated, backend-authenticated identity.
+  2. The renderer/DOM must never self-declare roles or voter identities.
+  3. All provider actions must flow through orchestration, human approval token gate, canonical workspace boundary containment, and strict Zero-Cost enforcement ($0.00 / 0đ).
