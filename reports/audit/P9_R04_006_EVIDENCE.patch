@@ -1,0 +1,74 @@
+diff --git a/apps/desktop/src/codex-service.cjs b/apps/desktop/src/codex-service.cjs
+index a294832..d199da4 100644
+--- a/apps/desktop/src/codex-service.cjs
++++ b/apps/desktop/src/codex-service.cjs
+@@ -237,24 +241,31 @@ class CodexService extends EventEmitter {
+     // 4. Zero-Cost Confirmation: strictly requires an active, authentic CostGuard instance fail-closed (P9-R04-005)
+     if (!this.costGuard || typeof this.costGuard.isUrlAllowed !== 'function') {
+       const errNoGuard = new Error('ERR_COST_GUARD_REQUIRED: Codex verification requires an active, authentic CostGuard instance implementing isUrlAllowed() fail-closed');
+       errNoGuard.code = 'ERR_COST_GUARD_REQUIRED';
+       throw errNoGuard;
+     }
+
+     const testPaidUrls = [
+       'https://api.openai.com/v1/chat/completions',
+       'https://api.anthropic.com/v1/messages',
+       'https://generativelanguage.googleapis.com/v1beta/models',
+     ];
+
+     for (const paidUrl of testPaidUrls) {
+       if (this.costGuard.isUrlAllowed(paidUrl)) {
+         const errCost = new Error(`ERR_ZERO_COST_VIOLATION: CostGuard permits paid API endpoint '${paidUrl}' fail-closed`);
+         errCost.code = 'ERR_ZERO_COST_VIOLATION';
+         throw errCost;
+       }
+     }
+     const zeroCostConfirmed = true;
+
+diff --git a/apps/desktop/src/main.js b/apps/desktop/src/main.js
+index e9d16f7..3e97963 100644
+--- a/apps/desktop/src/main.js
++++ b/apps/desktop/src/main.js
+@@ -4515,9 +4515,13 @@ function createWindow() {
+
+         let costGuardPaidViolationFailedClosed = false;
+         try {
+-          const fakePaidGuard = { isUrlAllowed: (u) => u.includes('openai.com') };
++          const permissiveGuard = {
++            isUrlAllowed(rawUrl) {
++              return new URL(rawUrl).hostname === 'api.openai.com';
++            }
++          };
+           const { CodexService: RawCodexService } = require('./codex-service.cjs');
+-          const paidGuardService = new RawCodexService(prodGraph.workspaceRoot, artifactStore, toolHost, fakePaidGuard);
++          const paidGuardService = new RawCodexService(prodGraph.workspaceRoot, artifactStore, toolHost, permissiveGuard);
+           await paidGuardService.executeVerification({ files: [prodImplFile], stage: 'VERIFY', targetDigest: prodImplDigest });
+         } catch (err) {
+           costGuardPaidViolationFailedClosed = Boolean(err.message && err.message.includes('ERR_ZERO_COST_VIOLATION'));
+
+diff --git a/packages/agent-codex/tests/codex-agent.test.ts b/packages/agent-codex/tests/codex-agent.test.ts
+index aee235c..82944d9 100644
+--- a/packages/agent-codex/tests/codex-agent.test.ts
++++ b/packages/agent-codex/tests/codex-agent.test.ts
+@@ -389,11 +389,17 @@ describe('Union Bot Phase P6: Native Codex Agent Adapter Suite', () => {
+       /ERR_COST_GUARD_REQUIRED/
+     );
+
+-    // 9. P9-R04-005: Rejects guard that permits paid API endpoints
+-    const leakyCostGuard = {
+-      isUrlAllowed: (url: string) => url.includes('openai.com'),
++    // 9. P9-R04-005 & P9-R04-006: Rejects hostname-based permissive guard fail-closed
++    const permissiveCostGuard = {
++      isUrlAllowed: (rawUrl: string) => {
++        try {
++          return new URL(rawUrl).hostname === 'api.openai.com';
++        } catch {
++          return false;
++        }
++      },
+     };
+-    const leakyAdapter = new CodexAdapter({ workspaceRoot, costGuard: leakyCostGuard as any });
++    const leakyAdapter = new CodexAdapter({ workspaceRoot, costGuard: permissiveCostGuard as any });
+     assert.throws(
+       () => leakyAdapter.executeVerification({ files: ['package.json'] }),
+       /ERR_ZERO_COST_VIOLATION/
