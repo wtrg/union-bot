@@ -181,6 +181,16 @@ const api = {
   probeCapability: async (providerId) => {
     return ipcRenderer.invoke('union-bot:probe-capability', providerId);
   },
+  // Phase V4: Two-Way Conversation Router & Thread Receipts (UB-V4-U04)
+  dispatchToProvider: async (payload) => {
+    return ipcRenderer.invoke('union-bot:dispatch-to-provider', payload);
+  },
+  ingestProviderReply: async (payload) => {
+    return ipcRenderer.invoke('union-bot:ingest-provider-reply', payload);
+  },
+  listDeliveryAttempts: async (payload) => {
+    return ipcRenderer.invoke('union-bot:list-delivery-attempts', payload);
+  },
   listGoals: async (projectId) => {
     return ipcRenderer.invoke('union-bot:list-goals', projectId);
   },

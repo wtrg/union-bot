@@ -32,6 +32,7 @@ const { AntigravityService } = require('./antigravity-service.cjs');
 const { TaskGraphService } = require('./task-graph-service.cjs');
 const { DiscoveryService } = require('./services/discovery-service.cjs');
 const { CapabilityRegistry } = require('./services/capability-registry.cjs');
+const { ConversationRouter } = require('./services/conversation-router.cjs');
 
 // Custom test userData override for isolated multi-process E2E testing
 const customUserDataArg = process.argv.find((a) => a.startsWith('--test-user-data=') || a.startsWith('--user-data-dir='));
@@ -139,6 +140,7 @@ antigravityService.on('error', (err) => {
 
 const taskGraphService = new TaskGraphService(path.resolve(__dirname, '../../..'), costGuard, storage);
 const capabilityRegistry = new CapabilityRegistry({ antigravityService, codexService });
+const conversationRouter = new ConversationRouter(storage);
 
 taskGraphService.on('graph-event', (evt) => {
   if (mainWindow && !mainWindow.isDestroyed()) {
@@ -5380,6 +5382,39 @@ ipcMain.handle('union-bot:probe-capability', async (event, providerId) => {
     return { success: true, capability: cap };
   } catch (err) {
     return { success: false, error: err.message };
+  }
+});
+
+// Phase V4: Two-Way Conversation Router & Thread Receipts (UB-V4-U04)
+ipcMain.handle('union-bot:dispatch-to-provider', async (event, payload) => {
+  if (!checkSenderAuthorized(event)) return { success: false, error: 'Unauthorized IPC sender' };
+  if (appStatus !== 'READY') return { success: false, error: 'Storage offline' };
+  try {
+    const res = conversationRouter.dispatchToProvider(payload);
+    return { success: true, attempt: res };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('union-bot:ingest-provider-reply', async (event, payload) => {
+  if (!checkSenderAuthorized(event)) return { success: false, error: 'Unauthorized IPC sender' };
+  if (appStatus !== 'READY') return { success: false, error: 'Storage offline' };
+  try {
+    const res = conversationRouter.ingestProviderReply(payload);
+    return res;
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('union-bot:list-delivery-attempts', async (event, payload) => {
+  if (!checkSenderAuthorized(event)) return [];
+  if (appStatus !== 'READY') return [];
+  try {
+    return conversationRouter.listAttempts(payload?.projectId || 'default', payload?.limit || 50);
+  } catch (err) {
+    return [];
   }
 });
 

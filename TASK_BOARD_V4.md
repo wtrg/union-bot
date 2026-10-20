@@ -17,8 +17,8 @@
 | **U01** | Schema V4, Event Authority & Core Contracts | VERIFIED | RU01 | Zod schemas, SQLite migrations (native+worker), unit tests pass | SELF_VERIFIED |
 | **U02** | `/chat`: Discovery, BA Questioning & Project Memory | VERIFIED | RU02 | Slash parser, Fact ledger, Decision compaction | SELF_VERIFIED |
 | **U03** | Provider Capability & Native Runtime Truth | VERIFIED | RU03 | Capability registry per session, preflight checks | SELF_VERIFIED |
-| **U04** | Two-Way Conversation Router & Thread Receipts | IN_PROGRESS | RU04 | Router, DeliveryAttempt, freshness watermarks | PENDING_REVIEW |
-| **U05** | Artifact Handoff & Multimodal Fidelity | QUEUED | RU05 | CAS bytes, MIME validation, screenshot fidelity | PENDING_REVIEW |
+| **U04** | Two-Way Conversation Router & Thread Receipts | VERIFIED | RU04 | Router, DeliveryAttempt, freshness watermarks | SELF_VERIFIED |
+| **U05** | Artifact Handoff & Multimodal Fidelity | IN_PROGRESS | RU05 | CAS bytes, MIME validation, screenshot fidelity | PENDING_REVIEW |
 | **U06** | `/work`: Plan Registry, Critical Review & Goal Approval | QUEUED | RU06 | Plan revision, frozen brief digest, approval gate | PENDING_REVIEW |
 | **U07** | WorkflowSupervisor: Continuous Durable Orchestration | QUEUED | RU07 | Durable leases, recovery, task progression | PENDING_REVIEW |
 | **U08** | GitHub Push Approval & ChatGPT Code Review Loop | QUEUED | RU08 | Push consent, SHA binding, review packet intake | PENDING_REVIEW |
@@ -64,3 +64,11 @@
 - [x] `U03-004`: Browser Web Session Probe: Cloudflare Turnstile detection, Login detection, and Authenticated workspace verification
 - [x] `U03-005`: Dynamic UI Badges in `Sidebar.tsx`, `BrowserPanel.tsx`, and `ChatRoom.tsx` (`.status-free-local`, `.status-ready-manual`, `.status-unavailable`, `.status-challenge`)
 - [x] `U03-006`: Safe IPC exposure (`union-bot:get-capabilities`, `union-bot:probe-capability`) and unit tests (5/5 PASS)
+
+### U04 — Two-Way Conversation Router & Thread Receipts
+- [x] `U04-001`: `ConversationRouter` service: outbound message routing and durable `DeliveryAttempt` creation with `SENT` state and `correlation_id`
+- [x] `U04-002`: Two-way correlation: incoming provider reply matched against active in-flight request and transitioned to `COMPLETED`
+- [x] `U04-003`: Freshness Watermark: fail-closed rejection of stale replies older than thread watermark (`ERR_STALE_WATERMARK`)
+- [x] `U04-004`: Deterministic Thread Receipts (`latencyMs`, `ack_at`, `verified: true`) and anti-duplicate reply prevention (`ERR_DUPLICATE_REPLY`)
+- [x] `U04-005`: Timeout and failure tracking: mark timed-out attempts, reject replies on expired correlations (`ERR_EXPIRED_CORRELATION`)
+- [x] `U04-006`: Safe IPC exposure (`union-bot:dispatch-to-provider`, `union-bot:ingest-provider-reply`, `union-bot:list-delivery-attempts`) and unit tests (6/6 PASS)

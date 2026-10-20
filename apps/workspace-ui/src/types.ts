@@ -179,7 +179,7 @@ export interface UnionBotAPI {
   approveToken: (tokenId: string | { tokenId: string; decisionContext?: any }, decisionContext?: any) => Promise<{ success: boolean; error?: string; code?: string }>;
   rejectApproval: (tokenId: string, reason?: string) => Promise<{ success: boolean; tokenId?: string; error?: string }>;
   saveAttachment: (payload: { filename: string; mimeType?: string; dataBase64?: string; textContent?: string }) => Promise<{ success: boolean; attachment?: AttachmentInfo; error?: string }>;
-  // Phase V4: Goal-Driven Multi-Agent API (UB-V4-U01, U02, U03)
+  // Phase V4: Goal-Driven Multi-Agent API (UB-V4-U01, U02, U03, U04)
   getDiscoveryState?: (projectId: string) => Promise<{ success: boolean; session?: any; facts: RequirementFactInfo[]; questions: OpenQuestionInfo[] }>;
   saveRequirementFact?: (fact: any) => Promise<{ success: boolean; error?: string }>;
   saveOpenQuestion?: (question: any) => Promise<{ success: boolean; error?: string }>;
@@ -188,6 +188,9 @@ export interface UnionBotAPI {
   compactDiscoveryContext?: (discoveryId?: string) => Promise<{ facts: any[]; openQuestions: any[]; digest: string; error?: string }>;
   getCapabilities?: () => Promise<{ success: boolean; capabilities?: any; agents?: AgentInfo[]; error?: string }>;
   probeCapability?: (providerId: string) => Promise<{ success: boolean; capability?: any; error?: string }>;
+  dispatchToProvider?: (payload: { messageId: string; projectId?: string; targetProvider?: string; correlationId?: string; watermark?: number }) => Promise<{ success: boolean; attempt?: any; error?: string }>;
+  ingestProviderReply?: (payload: { correlationId: string; responseRef?: string; watermark?: number; replyPayload?: any }) => Promise<{ success: boolean; receipt?: any; error?: string; code?: string }>;
+  listDeliveryAttempts?: (payload?: { projectId?: string; limit?: number }) => Promise<any[]>;
   listGoals?: (projectId: string) => Promise<GoalInfo[]>;
   saveGoal?: (goal: any) => Promise<{ success: boolean; error?: string }>;
   approvePlanRevision?: (payload: any) => Promise<{ success: boolean; error?: string }>;
