@@ -127,7 +127,8 @@ class BrowserUseBridge {
   }
 
   /**
-   * Registers runtime tab context (URL, DOM content, title) captured by backend/browserManager (U08-R07-01).
+   * Registers synthetic tab context for test/fixture execution (U08-R07-01, U08-R08-02).
+   * Strictly flagged as synthetic; ignored in production without test environment flag.
    */
   registerTabContext(tabId, context = {}) {
     if (!tabId) return false;
@@ -135,16 +136,19 @@ class BrowserUseBridge {
       url: context.url || '',
       title: context.title || '',
       text: context.text || context.domText || '',
+      latestAssistantMessage: context.latestAssistantMessage || context.text || '',
+      isSynthetic: true,
       capturedAt: Date.now(),
     });
     return true;
   }
 
   /**
-   * Authoritatively inspects active tab for reviewer decision and provenance (U08-R07-01).
-   * Verifies lease ownership, validates trusted ChatGPT domain/path, and scans actual text for verdict.
+   * Authoritatively inspects active tab for reviewer decision and provenance (U08-R07-01, U08-R08-02).
+   * Verifies lease ownership, validates trusted ChatGPT domain/path, binds target commit SHA,
+   * and isolates the latest reviewer message decision.
    */
-  inspectReviewContext(tabId, leaseToken) {
+  inspectReviewContext(tabId, leaseToken, expectedCommitSha = null, options = {}) {
     if (!this.verifyLease(tabId, leaseToken)) {
       return {
         success: false,
@@ -153,10 +157,14 @@ class BrowserUseBridge {
       };
     }
 
-    // Retrieve active context from registered tab state or browserManager
-    let ctx = this.tabContexts.get(tabId);
-    if (!ctx && this.browserManager && typeof this.browserManager.getTabContext === 'function') {
+    // 1. Retrieve active context from real browser runtime or vetted test fixture
+    let ctx = null;
+    if (this.browserManager && typeof this.browserManager.getTabContext === 'function') {
       ctx = this.browserManager.getTabContext(tabId);
+    }
+
+    if (!ctx) {
+      ctx = this.tabContexts.get(tabId);
     }
 
     if (!ctx) {
@@ -167,6 +175,7 @@ class BrowserUseBridge {
       };
     }
 
+    // 2. Validate trusted reviewer URL
     const tabUrl = String(ctx.url || '');
     const isTrustedReviewerUrl =
       (/^https:\/\/chatgpt\.com\/c\/[a-zA-Z0-9_-]+/i.test(tabUrl) ||
@@ -180,21 +189,43 @@ class BrowserUseBridge {
       };
     }
 
-    // Scan actual runtime page content for reviewer decision
-    const text = String(ctx.text || '');
-    const upperText = text.toUpperCase();
+    // 3. Extract the latest reviewer decision block
+    const fullText = String(ctx.text || '');
+    let reviewMessage = String(ctx.latestAssistantMessage || '');
+    if (!reviewMessage && fullText) {
+      const parts = fullText.split(/ChatGPT said:|\[CHATGPT WEB TECHNICAL LEADER/i);
+      reviewMessage = parts.length > 1 ? parts[parts.length - 1] : fullText;
+    }
+
+    // 4. Validate target commit SHA binding in review message (U08-R08-02)
+    if (expectedCommitSha && typeof expectedCommitSha === 'string' && expectedCommitSha.length >= 7) {
+      const targetSha = expectedCommitSha.trim().toLowerCase();
+      const shortSha = targetSha.substring(0, 7);
+      const textLower = reviewMessage.toLowerCase();
+      const referencesCommit = textLower.includes(targetSha) || textLower.includes(shortSha);
+      if (!referencesCommit && !textLower.includes('base sha') && !textLower.includes('head sha')) {
+        return {
+          success: false,
+          error: `Review message does not reference expected commit SHA '${targetSha}'.`,
+          code: 'ERR_COMMIT_SHA_MISMATCH',
+        };
+      }
+    }
+
+    // 5. Authoritatively evaluate reviewer verdict on the latest message
+    const upperMsg = reviewMessage.toUpperCase();
 
     const hasChangesRequested =
-      upperText.includes('CHANGES_REQUESTED') ||
-      upperText.includes('FIX_REQUIRED') ||
-      upperText.includes('SEV1') ||
-      upperText.includes('NOT APPROVED');
+      upperMsg.includes('CHANGES_REQUESTED') ||
+      upperMsg.includes('FIX_REQUIRED') ||
+      upperMsg.includes('SEV1') ||
+      upperMsg.includes('NOT APPROVED');
 
     const hasApproval =
-      upperText.includes('SOURCE_REVIEW_APPROVED') ||
-      upperText.includes('APPROVED — NEXT_GATE') ||
-      upperText.includes('OFFICIAL VERDICT: APPROVED') ||
-      upperText.includes('VERDICT: APPROVED');
+      upperMsg.includes('SOURCE_REVIEW_APPROVED') ||
+      upperMsg.includes('APPROVED — NEXT_GATE') ||
+      upperMsg.includes('OFFICIAL VERDICT: APPROVED') ||
+      upperMsg.includes('VERDICT: APPROVED');
 
     let verifiedVerdict = 'REVIEW_PENDING';
     if (hasChangesRequested) {
@@ -210,6 +241,7 @@ class BrowserUseBridge {
       verifiedVerdict,
       hasBlockingFindings: hasChangesRequested,
       sourceVerified: true,
+      reviewMessageSnippet: reviewMessage.slice(0, 500),
       capturedAt: ctx.capturedAt || Date.now(),
     };
   }

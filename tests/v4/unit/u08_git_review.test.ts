@@ -94,7 +94,7 @@ describe('UB-V4-U08: GitHub Push Approval & ChatGPT Code Review Loop', () => {
     const browserBridge = new BrowserUseBridge();
     browserBridge.registerTabContext('tab_123', {
       url: 'https://chatgpt.com/c/6ad64b63',
-      text: 'VERDICT: SOURCE_REVIEW_APPROVED — NEXT_GATE',
+      text: 'VERDICT: SOURCE_REVIEW_APPROVED — NEXT_GATE\nTarget commit: 7051ff78de8cc657d76319f1d094e1ba3734ff7b',
     });
     const lease = browserBridge.acquireControllerLease('tab_123', 'agent_chatgpt');
     const service: any = new GitReviewService({ browserBridge });
@@ -463,7 +463,7 @@ describe('UB-V4-U08: GitHub Push Approval & ChatGPT Code Review Loop', () => {
       const browserBridge = new BrowserUseBridge();
       browserBridge.registerTabContext('tab_leader', {
         url: 'https://chatgpt.com/c/6ad64b63-ad44-83ec-90ca-83cacbc26da5',
-        text: 'Review pending discussion',
+        text: 'Review pending discussion for commit baf7b703f780418f3b535628022152e9d105d6cf',
       });
       browserBridge.registerTabContext('tab_untrusted', {
         url: 'https://attacker.site/spoofed-review',
@@ -471,19 +471,20 @@ describe('UB-V4-U08: GitHub Push Approval & ChatGPT Code Review Loop', () => {
       });
       browserBridge.registerTabContext('tab_leader_2', {
         url: 'https://chatgpt.com/c/6ad64b63-ad44-83ec-90ca-83cacbc26da5',
-        text: 'VERDICT: SOURCE_REVIEW_APPROVED — NEXT_GATE',
+        text: 'VERDICT: SOURCE_REVIEW_APPROVED — NEXT_GATE\nTarget commit: baf7b703f780418f3b535628022152e9d105d6cf',
       });
       browserBridge.registerTabContext('tab_leader_3', {
         url: 'https://chatgpt.com/c/6ad64b63-ad44-83ec-90ca-83cacbc26da5',
-        text: 'VERDICT: SOURCE_REVIEW_APPROVED — NEXT_GATE',
+        text: 'VERDICT: SOURCE_REVIEW_APPROVED — NEXT_GATE\nTarget commit: baf7b703f780418f3b535628022152e9d105d6cf',
       });
       browserBridge.registerTabContext('tab_leader_4', {
         url: 'https://chatgpt.com/c/6ad64b63-ad44-83ec-90ca-83cacbc26da5',
-        text: 'VERDICT: SOURCE_REVIEW_APPROVED — NEXT_GATE',
+        text: 'VERDICT: SOURCE_REVIEW_APPROVED — NEXT_GATE\nTarget commit: baf7b703f780418f3b535628022152e9d105d6cf',
       });
       const lease1 = browserBridge.acquireControllerLease('tab_leader', 'agent_chatgpt');
       const leaseUntrusted = browserBridge.acquireControllerLease('tab_untrusted', 'agent_chatgpt');
-      const service: any = new GitReviewService({ browserBridge, storage });
+      const poAuthorityKey = Buffer.from('fixture_po_sec_key_1').toString('hex');
+      const service: any = new GitReviewService({ browserBridge, storage, poAuthorityKey });
       const commitSha = 'baf7b703f780418f3b535628022152e9d105d6cf';
 
       // =========================================================================
@@ -535,11 +536,14 @@ describe('UB-V4-U08: GitHub Push Approval & ChatGPT Code Review Loop', () => {
       assert.equal(unverifiedPo.code, 'ERR_PO_CONSENT_UNVERIFIED');
 
       // 1.5 PO_MANUAL_CONSENT: Token registered for commit A, submitted for commit B -> rejected
-      service.registerPoConsent({
-        token: 'po_token_commit_a',
-        commitSha: '0000000000000000000000000000000000000001',
-        changeSetId: 'cs_test',
-      });
+      service.issuePoConsent(
+        { role: 'PRODUCT_OWNER', authorityKey: poAuthorityKey },
+        {
+          token: 'po_token_commit_a',
+          commitSha: '0000000000000000000000000000000000000001',
+          changeSetId: 'cs_test',
+        }
+      );
       const mismatchedPo = service.intakeTrustedReview({
         source: 'PO_MANUAL_CONSENT',
         commitSha,
@@ -549,11 +553,14 @@ describe('UB-V4-U08: GitHub Push Approval & ChatGPT Code Review Loop', () => {
       assert.equal(mismatchedPo.code, 'ERR_PO_CONSENT_MISMATCH');
 
       // 1.6 PO_MANUAL_CONSENT: Properly registered in backend registry -> succeeds
-      service.registerPoConsent({
-        token: 'po_token_valid',
-        commitSha,
-        changeSetId: 'cs_valid_po',
-      });
+      service.issuePoConsent(
+        { role: 'PRODUCT_OWNER', authorityKey: poAuthorityKey },
+        {
+          token: 'po_token_valid',
+          commitSha,
+          changeSetId: 'cs_valid_po',
+        }
+      );
       const validPoIntake = service.intakeTrustedReview({
         source: 'PO_MANUAL_CONSENT',
         commitSha,
@@ -775,7 +782,7 @@ describe('UB-V4-U08: GitHub Push Approval & ChatGPT Code Review Loop', () => {
       // Caller claiming verdict: 'APPROVED' must fail closed with ERR_APPROVAL_EVIDENCE_MISMATCH
       browserBridge.registerTabContext('tab_changes_req', {
         url: 'https://chatgpt.com/c/6ad64b63-ad44-83ec-90ca-83cacbc26da5',
-        text: 'OFFICIAL VERDICT: CHANGES_REQUESTED — FIX_REQUIRED\nU08-R07-01: SEV1 finding',
+        text: `OFFICIAL VERDICT: CHANGES_REQUESTED — FIX_REQUIRED\nTarget commit: ${commitSha}\nU08-R07-01: SEV1 finding`,
       });
       const leaseChanges = browserBridge.acquireControllerLease('tab_changes_req', 'agent_chatgpt');
       const mismatchIntake = service.intakeTrustedReview({
@@ -787,11 +794,25 @@ describe('UB-V4-U08: GitHub Push Approval & ChatGPT Code Review Loop', () => {
       assert.equal(mismatchIntake.success, false);
       assert.equal(mismatchIntake.code, 'ERR_APPROVAL_EVIDENCE_MISMATCH');
 
-      // 1.3 Browser tab with ChatGPT URL and verified SOURCE_REVIEW_APPROVED:
+      // 1.3 Target commit SHA mismatch in reviewer message -> rejected (U08-R08-02)
+      browserBridge.registerTabContext('tab_wrong_sha', {
+        url: 'https://chatgpt.com/c/6ad64b63-ad44-83ec-90ca-83cacbc26da5',
+        text: 'OFFICIAL VERDICT: SOURCE_REVIEW_APPROVED\nTarget commit: 0000000000000000000000000000000000000001',
+      });
+      const leaseWrongSha = browserBridge.acquireControllerLease('tab_wrong_sha', 'agent_chatgpt');
+      const wrongShaIntake = service.intakeTrustedReview({
+        source: 'BROWSER_BRIDGE',
+        commitSha, // e1cfe83d8f...
+        evidence: { tabId: 'tab_wrong_sha', leaseToken: leaseWrongSha.leaseToken },
+      });
+      assert.equal(wrongShaIntake.success, false);
+      assert.equal(wrongShaIntake.code, 'ERR_COMMIT_SHA_MISMATCH');
+
+      // 1.4 Browser tab with ChatGPT URL, matching target commit SHA, and verified SOURCE_REVIEW_APPROVED:
       // Successfully issues receipt with locked APPROVED verdict
       browserBridge.registerTabContext('tab_verified_pass', {
         url: 'https://chatgpt.com/c/6ad64b63-ad44-83ec-90ca-83cacbc26da5',
-        text: 'OFFICIAL VERDICT: SOURCE_REVIEW_APPROVED — NEXT_GATE',
+        text: `OFFICIAL VERDICT: SOURCE_REVIEW_APPROVED — NEXT_GATE\nTarget commit: ${commitSha}`,
       });
       const leasePass = browserBridge.acquireControllerLease('tab_verified_pass', 'agent_chatgpt');
       const passIntake = service.intakeTrustedReview({
@@ -805,10 +826,10 @@ describe('UB-V4-U08: GitHub Push Approval & ChatGPT Code Review Loop', () => {
       assert.equal(passIntake.receipt.verdict, 'APPROVED');
 
       // =========================================================================
-      // PART 2: U08-R07-02 — CRYPTOGRAPHIC PO AUTHORITY KEY & STRICT CONSENT ISSUANCE
+      // PART 2: U08-R07-02 & U08-R08-01 — CRYPTOGRAPHIC PO AUTHORITY KEY ENFORCEMENT
       // =========================================================================
 
-      // 2.1 Unauthorized caller trying to issue PO consent grant -> rejected
+      // 2.1 Unauthorized caller trying to issue PO consent grant -> rejected (U08-R08-01)
       assert.throws(() => {
         service.issuePoConsent(
           { role: 'UNAUTHORIZED_CALLER', authorityKey: 'bad' },
@@ -816,8 +837,16 @@ describe('UB-V4-U08: GitHub Push Approval & ChatGPT Code Review Loop', () => {
         );
       }, /ERR_UNAUTHORIZED_PO_ISSUANCE/);
 
-      // 2.2 Authorized PO authority context -> successfully issues HMAC token
-      const poAuthContext = { role: 'PRODUCT_OWNER', authorityKey: poMasterKey, source: 'DESKTOP_MAIN_PROCESS' };
+      // Caller without authorityKey trying to invoke issuePoConsent -> rejected
+      assert.throws(() => {
+        service.issuePoConsent(
+          { role: 'PRODUCT_OWNER' },
+          { commitSha, changeSetId: 'cs_unauth' }
+        );
+      }, /ERR_UNAUTHORIZED_PO_ISSUANCE/);
+
+      // 2.2 Authorized PO authority context with valid poAuthorityKey -> successfully issues HMAC token
+      const poAuthContext = { role: 'PRODUCT_OWNER', authorityKey: poMasterKey };
       const validPoToken = service.issuePoConsent(poAuthContext, {
         commitSha,
         changeSetId: 'cs_po_auth_r07',
@@ -851,7 +880,7 @@ describe('UB-V4-U08: GitHub Push Approval & ChatGPT Code Review Loop', () => {
       assert.equal(poReplay.code, 'ERR_PO_CONSENT_ALREADY_USED');
 
       // =========================================================================
-      // PART 3: U08-R07-03 — SQLITE WORKER PERSISTENCE, TRANSACTIONS & DURABILITY
+      // PART 3: U08-R07-03 & U08-R08-03 — SQLITE WORKER RPC, TRANSACTIONS & PARITY
       // =========================================================================
 
       // 3.1 Ingest batch inside atomic SQLite transaction
@@ -902,6 +931,52 @@ describe('UB-V4-U08: GitHub Push Approval & ChatGPT Code Review Loop', () => {
       }, /ERR_STORAGE_UNAVAILABLE/);
 
       await freshStorage.closeAsync();
+
+      // 3.4 REAL DEDICATED STORAGE WORKER PROCESS TEST (U08-R08-03)
+      const workerDbPath = path.join(tempDir, 'worker-real-persistence.sqlite');
+      const workerClient = new StorageServiceClient(workerDbPath, { forceWorker: true });
+      await workerClient.ready;
+      assert.equal(workerClient.isNative, false);
+      assert.ok(workerClient.worker);
+
+      const workerBatchRes = await workerClient.ingestReviewFindingsBatchAsync(
+        'cs_worker_real',
+        'chatgpt_web',
+        rawFindings
+      );
+      assert.equal(workerBatchRes.inserted, 2);
+      assert.equal(workerBatchRes.duplicates, 0);
+
+      const workerFindings = await workerClient.getReviewFindingsAsync('cs_worker_real');
+      assert.equal(workerFindings.length, 2);
+      const wf1 = workerFindings.find((f: any) => f.file === 'git-review-service.cjs');
+      assert.ok(wf1);
+
+      const workerUpdate = await workerClient.updateReviewFindingStateAsync(wf1.id, 'VERIFIED_FIXED');
+      assert.equal(workerUpdate, true);
+
+      // Kill / close worker client and re-open to verify durability across restart
+      await workerClient.closeAsync();
+
+      const restartedWorker = new StorageServiceClient(workerDbPath, { forceWorker: true });
+      await restartedWorker.ready;
+      assert.equal(restartedWorker.isNative, false);
+      const reloadedWorkerFindings = await restartedWorker.getReviewFindingsAsync('cs_worker_real');
+      assert.equal(reloadedWorkerFindings.length, 2);
+      const reloadedWf1 = reloadedWorkerFindings.find((f: any) => f.id === wf1.id);
+      assert.ok(reloadedWf1);
+      assert.equal(reloadedWf1.state, 'VERIFIED_FIXED');
+      await restartedWorker.closeAsync();
+
+      // 3.5 100% Native / Worker Parity: Open the exact same database file with native client
+      const nativeParityClient = new StorageServiceClient(workerDbPath, { forceWorker: false });
+      await nativeParityClient.ready;
+      const nativeFindings = nativeParityClient.getReviewFindings('cs_worker_real');
+      assert.equal(nativeFindings.length, 2);
+      const nativeWf1 = nativeFindings.find((f: any) => f.id === wf1.id);
+      assert.ok(nativeWf1);
+      assert.equal(nativeWf1.state, 'VERIFIED_FIXED');
+      await nativeParityClient.closeAsync();
     } finally {
       try {
         fs.rmSync(tempDir, { recursive: true, force: true });

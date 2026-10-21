@@ -35,16 +35,18 @@ class GitReviewService {
   }
 
   /**
-   * Authoritatively issues a backend-verified Product Owner manual consent grant (U08-R06-01, U08-R07-02).
+   * Authoritatively issues a backend-verified Product Owner manual consent grant (U08-R06-01, U08-R07-02, U08-R08-01).
    * Caller must prove trusted Product Owner authority context with matching backend authorityKey.
+   * Disallows auto-fill bypasses or unverified self-delegation.
    */
   issuePoConsent(authContext, params) {
     if (
       !authContext ||
       (authContext.role !== 'PRODUCT_OWNER' && authContext.role !== 'product_owner') ||
-      (authContext.authorityKey !== this.poAuthorityKey && authContext.source !== 'DESKTOP_MAIN_PROCESS')
+      !authContext.authorityKey ||
+      authContext.authorityKey !== this.poAuthorityKey
     ) {
-      throw new Error('ERR_UNAUTHORIZED_PO_ISSUANCE: Only trusted Product Owner authority handler can issue consent grants (U08-R07-02)');
+      throw new Error('ERR_UNAUTHORIZED_PO_ISSUANCE: Only trusted Product Owner authority handler presenting valid authorityKey can issue consent grants (U08-R08-01)');
     }
 
     const { commitSha, changeSetId = 'default', gate = 'U08', verdict = 'APPROVED', ttlMs = 3600000 } = params || {};
@@ -83,23 +85,6 @@ class GitReviewService {
     }
 
     return token;
-  }
-
-  /**
-   * Registers a backend-authorized Product Owner manual consent record (U08-R06-01, U08-R07-02).
-   * Supports both (authContext, params) and backward-compatible (params) with internal authority check.
-   */
-  registerPoConsent(paramsOrAuth, maybeParams) {
-    if (maybeParams !== undefined) {
-      return this.issuePoConsent(paramsOrAuth, maybeParams);
-    }
-    const params = paramsOrAuth || {};
-    const authContext = {
-      role: params.role || 'PRODUCT_OWNER',
-      authorityKey: params.authorityKey || params.poAuthorityKey || this.poAuthorityKey,
-      source: params.source || 'DESKTOP_MAIN_PROCESS',
-    };
-    return this.issuePoConsent(authContext, params);
   }
 
   /**
@@ -171,7 +156,7 @@ class GitReviewService {
         };
       }
 
-      const inspection = activeBridge.inspectReviewContext(tabId, leaseToken);
+      const inspection = activeBridge.inspectReviewContext(tabId, leaseToken, normSha);
       if (!inspection || !inspection.success) {
         return {
           success: false,
