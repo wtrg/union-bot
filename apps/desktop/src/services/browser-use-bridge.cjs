@@ -243,6 +243,15 @@ class BrowserUseBridge {
       };
     }
 
+    // Freshness check: reject stale snapshots older than 5 minutes (U08-R12-01)
+    if (msgObj.capturedAt && (Date.now() - msgObj.capturedAt > 300000)) {
+      return {
+        success: false,
+        error: `Review message snapshot for tab '${tabId}' is stale (> 5 minutes). Live extraction is required (U08-R12-01).`,
+        code: 'ERR_UNVERIFIED_EVIDENCE',
+      };
+    }
+
     const reviewMessage = msgObj.text;
 
     // 4. Strict absolute commit SHA binding (U08-R09-01)
@@ -298,6 +307,32 @@ class BrowserUseBridge {
       reviewMessageSnippet: reviewMessage.slice(0, 500),
       capturedAt: ctx.capturedAt || Date.now(),
     };
+  }
+
+  /**
+   * Asynchronously inspects active tab for reviewer decision with live WebContents extraction (U08-R12-01).
+   * Directly invokes live DOM extraction from active WebContents before checking context and verdict.
+   */
+  async inspectReviewContextAsync(tabId, leaseToken, expectedCommitSha = null, options = {}) {
+    if (!this.verifyLease(tabId, leaseToken)) {
+      return {
+        success: false,
+        error: 'Invalid, expired, or unowned browser controller lease token.',
+        code: 'ERR_INVALID_BROWSER_LEASE',
+      };
+    }
+
+    // Trigger live WebContents DOM extraction on browserManager if available (U08-R12-01)
+    if (this.browserManager && typeof this.browserManager.extractReviewMessageFromWebContents === 'function') {
+      try {
+        await this.browserManager.extractReviewMessageFromWebContents(tabId);
+      } catch (err) {
+        console.warn(`[BrowserUseBridge] WebContents extraction failed for tab '${tabId}':`, err.message);
+      }
+    }
+
+    // Perform authoritative inspection on fresh context
+    return this.inspectReviewContext(tabId, leaseToken, expectedCommitSha, options);
   }
 
   /**

@@ -982,6 +982,68 @@ describe('UB-V4-U08: GitHub Push Approval & ChatGPT Code Review Loop', () => {
       assert.equal(missingIdentityIntake.code, 'ERR_UNVERIFIED_EVIDENCE');
       browserBridge.browserManager = null;
 
+      // U08-R12-01: Live WebContents extraction wiring & freshness verification
+      let liveExtractionCalls = 0;
+      let cachedMsg: any = null;
+      const mockLiveRuntime = {
+        extractReviewMessageFromWebContents: async (tId: string) => {
+          liveExtractionCalls++;
+          cachedMsg = {
+            role: 'assistant',
+            messageId: 'msg_live_001',
+            conversationId: '6ad64b63-ad44-83ec-90ca-83cacbc26da5',
+            text: `OFFICIAL VERDICT: SOURCE_REVIEW_APPROVED\nTarget commit: ${commitSha}`,
+            capturedAt: Date.now(),
+          };
+          return cachedMsg;
+        },
+        getTabContext: (tId: string) => ({
+          tabId: tId,
+          url: 'https://chatgpt.com/c/6ad64b63-ad44-83ec-90ca-83cacbc26da5',
+          title: 'Live ChatGPT Review Tab',
+          isSynthetic: false,
+          capturedAt: Date.now(),
+          structuredMessage: cachedMsg,
+        }),
+      };
+      browserBridge.browserManager = mockLiveRuntime;
+      const liveAsyncIntake = await prodService.intakeTrustedReviewAsync({
+        source: 'BROWSER_BRIDGE',
+        commitSha,
+        evidence: { tabId: 'tab_live_async', leaseToken: browserBridge.acquireControllerLease('tab_live_async', 'agent_chatgpt').leaseToken },
+      });
+      assert.equal(liveAsyncIntake.success, true);
+      assert.equal(liveAsyncIntake.receipt.verdict, 'APPROVED');
+      assert.equal(liveExtractionCalls, 1);
+      assert.equal(liveAsyncIntake.receipt.evidence.messageIdentity.messageId, 'msg_live_001');
+
+      // Stale cache rejection (> 5 minutes): Stale snapshot without fresh extraction is rejected
+      const mockStaleRuntime = {
+        getTabContext: (tId: string) => ({
+          tabId: tId,
+          url: 'https://chatgpt.com/c/6ad64b63-ad44-83ec-90ca-83cacbc26da5',
+          title: 'Stale Review Tab',
+          isSynthetic: false,
+          capturedAt: Date.now() - 360000, // 6 minutes ago
+          structuredMessage: {
+            role: 'assistant',
+            messageId: 'msg_stale',
+            conversationId: '6ad64b63-ad44-83ec-90ca-83cacbc26da5',
+            text: `OFFICIAL VERDICT: SOURCE_REVIEW_APPROVED\nTarget commit: ${commitSha}`,
+            capturedAt: Date.now() - 360000,
+          },
+        }),
+      };
+      browserBridge.browserManager = mockStaleRuntime;
+      const staleIntake = prodService.intakeTrustedReview({
+        source: 'BROWSER_BRIDGE',
+        commitSha,
+        evidence: { tabId: 'tab_stale', leaseToken: browserBridge.acquireControllerLease('tab_stale', 'agent_chatgpt').leaseToken },
+      });
+      assert.equal(staleIntake.success, false);
+      assert.equal(staleIntake.code, 'ERR_UNVERIFIED_EVIDENCE');
+      browserBridge.browserManager = null;
+
       // =========================================================================
       // PART 2: U08-R07-02 & U08-R08-01 — CRYPTOGRAPHIC PO AUTHORITY KEY ENFORCEMENT
       // =========================================================================

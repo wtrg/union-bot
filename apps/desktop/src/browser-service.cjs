@@ -245,10 +245,16 @@ class BrowserService {
       }
     });
 
-    // Loading & state change listeners
+    // Loading & state change listeners (clears stale review snapshot on navigation/reload - U08-R12-01)
     view.webContents.on('did-start-loading', () => {
-      this.stateManager.updateTab(tab.id, { isLoading: true, lastError: null });
+      view.__latestStructuredMessage = null;
+      this.stateManager.updateTab(tab.id, { isLoading: true, lastError: null, structuredMessage: null });
       this._notifyRenderer();
+    });
+
+    view.webContents.on('did-navigate', () => {
+      view.__latestStructuredMessage = null;
+      this.stateManager.updateTab(tab.id, { structuredMessage: null });
     });
 
     view.webContents.on('did-stop-loading', () => {

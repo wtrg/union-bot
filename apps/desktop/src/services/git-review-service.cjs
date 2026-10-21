@@ -282,6 +282,125 @@ class GitReviewService {
   }
 
   /**
+   * Asynchronous Trusted Review Intake with live WebContents extraction (U08-R12-01).
+   * Directly triggers live DOM extraction from WebContents before intake verification.
+   */
+  async intakeTrustedReviewAsync(params) {
+    const {
+      source,
+      reviewer = 'chatgpt_web',
+      commitSha,
+      gate = 'U08',
+      changeSetId = 'default',
+      verdict = 'REVIEW_PENDING',
+      evidence,
+    } = params || {};
+
+    if (!source || !TRUSTED_INTAKE_SOURCES.includes(source)) {
+      return {
+        success: false,
+        error: `Review Intake Violation: Untrusted source '${source}'. Self-issuance is strictly prohibited.`,
+        code: 'ERR_UNVERIFIED_EVIDENCE',
+      };
+    }
+
+    if (!commitSha || typeof commitSha !== 'string' || !/^[0-9a-f]{40}$/i.test(commitSha.trim())) {
+      return {
+        success: false,
+        error: 'Review Intake Violation: A valid full 40-character commit SHA is strictly required.',
+        code: 'ERR_INVALID_COMMIT_SHA',
+      };
+    }
+
+    if (!evidence || typeof evidence !== 'object') {
+      return {
+        success: false,
+        error: 'Review Intake Violation: Evidence reference is required for trusted review intake.',
+        code: 'ERR_MISSING_EVIDENCE',
+      };
+    }
+
+    const normSha = commitSha.trim().toLowerCase();
+    let verifiedVerdict = verdict;
+
+    if (source === 'BROWSER_BRIDGE') {
+      const { tabId, leaseToken } = evidence;
+      if (!tabId || !leaseToken) {
+        return {
+          success: false,
+          error: 'Review Intake Violation: Browser bridge review evidence missing tabId or leaseToken.',
+          code: 'ERR_MISSING_LEASE_CREDENTIALS',
+        };
+      }
+
+      const activeBridge = this.browserBridge;
+      if (!activeBridge) {
+        return {
+          success: false,
+          error: 'Review Intake Violation: No authoritative browser bridge available to inspect review context.',
+          code: 'ERR_UNVERIFIED_EVIDENCE',
+        };
+      }
+
+      const inspectionOptions = {
+        allowSyntheticFixture: this.allowSyntheticFixture === true,
+      };
+
+      const inspection = typeof activeBridge.inspectReviewContextAsync === 'function'
+        ? await activeBridge.inspectReviewContextAsync(tabId, leaseToken, normSha, inspectionOptions)
+        : activeBridge.inspectReviewContext(tabId, leaseToken, normSha, inspectionOptions);
+
+      if (!inspection || !inspection.success) {
+        return {
+          success: false,
+          error: `Review Intake Violation: Browser tab verification failed: ${(inspection && inspection.error) || 'Invalid lease'}`,
+          code: (inspection && inspection.code) || 'ERR_INVALID_BROWSER_LEASE',
+        };
+      }
+
+      evidence.inspectedUrl = inspection.url;
+      evidence.verifiedVerdict = inspection.verifiedVerdict;
+      evidence.messageIdentity = inspection.messageIdentity;
+      evidence.sourceVerified = true;
+
+      if (verdict === 'APPROVED' && inspection.verifiedVerdict !== 'APPROVED') {
+        return {
+          success: false,
+          error: 'Review Intake Violation: Cannot issue APPROVED receipt when browser active tab does not contain verified reviewer approval decision (U08-R07-01).',
+          code: 'ERR_APPROVAL_EVIDENCE_MISMATCH',
+        };
+      }
+
+      verifiedVerdict = inspection.verifiedVerdict;
+    } else if (source === 'PO_MANUAL_CONSENT') {
+      return this.intakeTrustedReview(params);
+    }
+
+    let effectiveVerdict = 'REVIEW_PENDING';
+    if (verifiedVerdict === 'APPROVED') {
+      effectiveVerdict = 'APPROVED';
+    }
+
+    const receiptId = `rcpt_${crypto.randomBytes(16).toString('hex')}`;
+    const receipt = {
+      id: receiptId,
+      source,
+      reviewer,
+      commitSha: normSha,
+      gate: gate || 'U08',
+      changeSetId,
+      verdict: effectiveVerdict,
+      evidence,
+      verified: true,
+      issuedAt: Date.now(),
+      used: false,
+    };
+
+    this.authorizedReviewReceipts.set(receiptId, receipt);
+    return { success: true, receiptId, receipt };
+  }
+
+  /**
    * Consumes a trusted review receipt atomically with full constraint binding (U08-R06-02).
    * Ràng buộc đầy đủ commitSha, changeSetId, gate, reviewer, verdict và trạng thái single-use.
    */
