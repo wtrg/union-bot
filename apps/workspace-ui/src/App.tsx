@@ -281,6 +281,13 @@ export const App: React.FC = () => {
     document.documentElement.style.setProperty('--chat-font-size', `${chatFontSize}px`);
   }, []);
 
+  // Protect WebContentsView against modal bleed (Ticket P4-008)
+  useEffect(() => {
+    if (window.unionBotAPI && typeof window.unionBotAPI.browserSetModalActive === 'function') {
+      window.unionBotAPI.browserSetModalActive(isBridgeModalOpen);
+    }
+  }, [isBridgeModalOpen]);
+
   // Day/Night Theme toggle
   const toggleTheme = () => {
     const nextDay = !isDayTheme;

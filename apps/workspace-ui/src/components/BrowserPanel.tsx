@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { BrowserTabInfo, BrowserManagerState } from '../types.ts';
 
 interface BrowserPanelProps {
@@ -7,8 +7,24 @@ interface BrowserPanelProps {
   activeRoomId: string;
 }
 
+const getProviderBadge = (providerId: string): string => {
+  switch (providerId) {
+    case 'chatgpt':
+      return '🟢';
+    case 'gemini':
+      return '🔷';
+    case 'claude':
+      return '🟠';
+    case 'deepseek':
+      return '🐋';
+    default:
+      return '🌐';
+  }
+};
+
 export const BrowserPanel: React.FC<BrowserPanelProps> = ({ isOpen, onClose, activeRoomId }) => {
   const mountRef = useRef<HTMLDivElement>(null);
+  const [dockMode, setDockMode] = useState<'modal' | 'drawer'>('modal');
   const [browserState, setBrowserState] = useState<BrowserManagerState>({
     tabs: [],
     activeTabId: null,
@@ -123,31 +139,39 @@ export const BrowserPanel: React.FC<BrowserPanelProps> = ({ isOpen, onClose, act
   }, []);
 
   // Update bounds to Electron main whenever panel is resized or visible
-  const updateBounds = () => {
+  const updateBounds = useCallback(() => {
     if (!isOpen || !mountRef.current || !window.unionBotAPI || typeof window.unionBotAPI.browserSetBounds !== 'function') {
       return;
     }
     const rect = mountRef.current.getBoundingClientRect();
-    window.unionBotAPI.browserSetBounds({
-      x: Math.round(rect.left),
-      y: Math.round(rect.top),
-      width: Math.round(rect.width),
-      height: Math.round(rect.height),
-    });
-  };
+    if (rect.width > 0 && rect.height > 0) {
+      window.unionBotAPI.browserSetBounds({
+        x: Math.round(rect.left),
+        y: Math.round(rect.top),
+        width: Math.round(rect.width),
+        height: Math.round(rect.height),
+      });
+    }
+  }, [isOpen]);
 
   useEffect(() => {
     if (isOpen) {
+      // Immediate update and slight delay after CSS transitions settle
       updateBounds();
+      const timer = setTimeout(() => {
+        updateBounds();
+      }, 60);
+
       const ro = new ResizeObserver(() => updateBounds());
       if (mountRef.current) ro.observe(mountRef.current);
       window.addEventListener('resize', updateBounds);
       return () => {
+        clearTimeout(timer);
         ro.disconnect();
         window.removeEventListener('resize', updateBounds);
       };
     }
-  }, [isOpen]);
+  }, [isOpen, dockMode, updateBounds]);
 
   const activeTab = browserState.tabs.find((t) => t.id === browserState.activeTabId) || browserState.tabs[0];
 
@@ -231,7 +255,7 @@ export const BrowserPanel: React.FC<BrowserPanelProps> = ({ isOpen, onClose, act
   if (!isOpen) return null;
 
   return (
-    <aside className="browser-panel" data-testid="browser-panel-container">
+    <aside className={`browser-panel mode-${dockMode}`} data-testid="browser-panel-container">
       {/* 1. Browser Tab Strip */}
       <div className="browser-tab-strip" data-testid="browser-tab-strip">
         <div className="browser-tabs-scroll">
@@ -245,6 +269,7 @@ export const BrowserPanel: React.FC<BrowserPanelProps> = ({ isOpen, onClose, act
                 onClick={() => handleSelectTab(tab.id)}
                 title={`${tab.title} (${tab.partition})`}
               >
+                <span className="text-xs">{getProviderBadge(tab.providerId)}</span>
                 <span className="browser-tab-title">{tab.title}</span>
                 {browserState.tabs.length > 1 && (
                   <button
@@ -261,7 +286,42 @@ export const BrowserPanel: React.FC<BrowserPanelProps> = ({ isOpen, onClose, act
           })}
         </div>
         <div className="browser-tab-actions">
+          {/* Zoom Controls */}
           <button
+            type="button"
+            className="browser-btn-icon"
+            onClick={() => handleAction('zoom-out')}
+            title="Thu nhỏ trang (Zoom -)"
+          >
+            🔍-
+          </button>
+          <button
+            type="button"
+            className="browser-btn-icon"
+            onClick={() => handleAction('zoom-reset')}
+            title="Đặt lại kích thước trang 100%"
+          >
+            100%
+          </button>
+          <button
+            type="button"
+            className="browser-btn-icon"
+            onClick={() => handleAction('zoom-in')}
+            title="Phóng to trang (Zoom +)"
+          >
+            🔍+
+          </button>
+          {/* Layout Mode Toggle */}
+          <button
+            type="button"
+            className="browser-btn-icon"
+            onClick={() => setDockMode((prev) => (prev === 'modal' ? 'drawer' : 'modal'))}
+            title={dockMode === 'modal' ? 'Chuyển sang ngăn trượt bên phải (Drawer)' : 'Mở rộng toàn màn hình (Modal)'}
+          >
+            {dockMode === 'modal' ? '🗗 Ngăn phải' : '🗖 Toàn cảnh'}
+          </button>
+          <button
+            type="button"
             className="browser-btn-icon"
             data-testid="browser-add-tab-btn"
             onClick={() => handleAddTab('search')}
@@ -270,7 +330,8 @@ export const BrowserPanel: React.FC<BrowserPanelProps> = ({ isOpen, onClose, act
             +
           </button>
           <button
-            className="browser-btn-icon"
+            type="button"
+            className="browser-btn-icon close-btn"
             data-testid="browser-close-panel-btn"
             onClick={onClose}
             title="Close Browser Dock"
@@ -372,12 +433,17 @@ export const BrowserPanel: React.FC<BrowserPanelProps> = ({ isOpen, onClose, act
 
       {/* 3. Native WebContentsView Mount Container */}
       <div className="browser-group-context">
-        <span>{bindingMessage || `Hội thoại cho #${activeRoomId}`}</span>
-        <button onClick={async () => {
-          if (!activeTab || !window.unionBotAPI?.bindGroupThread) return;
-          const result = await window.unionBotAPI.bindGroupThread({ roomId: activeRoomId, tabId: activeTab.id });
-          setBindingMessage(result.success ? `Đã gắn hội thoại vào #${activeRoomId}` : result.error || 'Không gắn được hội thoại');
-        }}>Dùng cho nhóm</button>
+        <span>💬 {bindingMessage || `Hội thoại liên kết với #${activeRoomId}`}</span>
+        <button
+          type="button"
+          onClick={async () => {
+            if (!activeTab || !window.unionBotAPI?.bindGroupThread) return;
+            const result = await window.unionBotAPI.bindGroupThread({ roomId: activeRoomId, tabId: activeTab.id });
+            setBindingMessage(result.success ? `✓ Đã gắn hội thoại vào #${activeRoomId}` : result.error || 'Không gắn được hội thoại');
+          }}
+        >
+          🔗 Dùng cho nhóm
+        </button>
       </div>
       <div className="browser-view-container" ref={mountRef} data-testid="browser-view-mount">
         {/* Crash Recovery Card (Ticket P4-009) */}
