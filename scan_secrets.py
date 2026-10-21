@@ -147,6 +147,22 @@ BENIGN_FIXTURE_ALLOWLIST = [
             "a9c81fde910d08552b292ad7d7c8f118af0302387e287732567cca6cd89f10e7"
         ],
         "reason": "Phase P7 Antigravity discovery authStatus FREE_LOCAL enum value"
+    },
+    {
+        "path_suffix": "tests/v4/unit/u09_browser_bridge.test.ts",
+        "rule_id": "SEC-004",
+        "expected_match_sha256": [
+            "78a2951f11c241c0c40b0f6709615caaf6c08e1c6e0d16edf6e87d7c8f22d564"
+        ],
+        "reason": "Phase V4 U09 browser bridge unit test synthetic Google API key fixture"
+    },
+    {
+        "path_suffix": "tests/v4/unit/u09_browser_bridge.test.ts",
+        "rule_id": "SEC-003",
+        "expected_match_sha256": [
+            "1db61e13c133f7d98ceeae9ad1f8c83e06a420fcdc53111b2646078187f1657f"
+        ],
+        "reason": "Phase V4 U09 browser bridge unit test synthetic GitHub PAT fixture"
     }
 ]
 

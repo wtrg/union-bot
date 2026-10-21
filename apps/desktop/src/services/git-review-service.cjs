@@ -23,8 +23,9 @@ class GitReviewService {
   }
 
   /**
-   * Trusted Review Intake: Only callable by trusted backend channels (U08-R04-01).
+   * Trusted Review Intake: Only callable by trusted backend channels (U08-R04-01, U08-R05-01).
    * Renderer self-issuance is strictly prohibited.
+   * Requires authentic verified proof (browser bridge lease or PO explicit consent).
    */
   intakeTrustedReview(params) {
     const {
@@ -33,9 +34,9 @@ class GitReviewService {
       commitSha,
       gate,
       changeSetId = 'default',
-      verdict = 'FEEDBACK_RECORDED',
+      verdict = 'REVIEW_PENDING',
       evidence,
-    } = params;
+    } = params || {};
 
     // 1. Source verification (no renderer self-issuance)
     if (!source || !TRUSTED_INTAKE_SOURCES.includes(source)) {
@@ -56,12 +57,68 @@ class GitReviewService {
     }
 
     // 3. Evidence requirement
-    if (!evidence) {
+    if (!evidence || typeof evidence !== 'object') {
       return {
         success: false,
         error: 'Review Intake Violation: Evidence reference is required for trusted review intake.',
         code: 'ERR_MISSING_EVIDENCE',
       };
+    }
+
+    // 4. Active verification of source & reviewer evidence (U08-R05-01)
+    if (source === 'BROWSER_BRIDGE') {
+      // Must have authentic verification status and trusted reviewer origin
+      const isVerified = evidence.verified === true || evidence.verificationStatus === 'VERIFIED';
+      const targetUrl = evidence.threadUrl || evidence.url || '';
+      const isTrustedReviewerUrl =
+        typeof targetUrl === 'string' &&
+        (/^https:\/\/chatgpt\.com\/c\/[a-zA-Z0-9_-]+/i.test(targetUrl) ||
+          targetUrl.startsWith('https://chatgpt.com/'));
+
+      if (!isVerified) {
+        return {
+          success: false,
+          error: 'Review Intake Violation: Browser bridge review evidence lacks active verification proof (verified !== true).',
+          code: 'ERR_UNVERIFIED_EVIDENCE',
+        };
+      }
+
+      if (!isTrustedReviewerUrl) {
+        return {
+          success: false,
+          error: 'Review Intake Violation: Browser bridge review evidence missing trusted ChatGPT reviewer URL.',
+          code: 'ERR_UNTRUSTED_REVIEWER_URL',
+        };
+      }
+    } else if (source === 'PO_MANUAL_CONSENT') {
+      // Must have explicit verified PO consent record
+      const hasPoConsent =
+        Boolean(evidence.poConsentToken) ||
+        (evidence.authorizedBy === 'product_owner' && (evidence.consentGranted === true || evidence.confirmed === true));
+
+      if (!hasPoConsent) {
+        return {
+          success: false,
+          error: 'Review Intake Violation: Product Owner manual consent requires explicit verified authorization record.',
+          code: 'ERR_PO_CONSENT_UNVERIFIED',
+        };
+      }
+    }
+
+    // 5. Verdict consistency: If verdict is claimed as APPROVED, evidence must confirm approval
+    let effectiveVerdict = verdict;
+    if (verdict === 'APPROVED') {
+      const evidenceApproves =
+        evidence.verdict === 'APPROVED' ||
+        evidence.approvalConfirmed === true ||
+        evidence.reviewApproved === true;
+      if (!evidenceApproves) {
+        return {
+          success: false,
+          error: 'Review Intake Violation: Cannot issue APPROVED receipt when evidence does not confirm approval.',
+          code: 'ERR_APPROVAL_EVIDENCE_MISMATCH',
+        };
+      }
     }
 
     const receiptId = `rcpt_${crypto.randomBytes(16).toString('hex')}`;
@@ -72,8 +129,9 @@ class GitReviewService {
       commitSha: commitSha.trim().toLowerCase(),
       gate: gate || 'U08',
       changeSetId,
-      verdict,
+      verdict: effectiveVerdict,
       evidence,
+      verified: true,
       issuedAt: Date.now(),
       used: false,
     };
@@ -419,11 +477,12 @@ ${criteriaItems}
   }
 
   /**
-   * Parses review feedback into structured findings or approval (U08-004, U08-R03, U08-R04-01).
+   * Parses review feedback into structured findings or approval (U08-004, U08-R03, U08-R04-01, U08-R05-01).
    * ANTI-SPOOFING POLICY:
    * 1. Plain text with "LGTM" CANNOT grant APPROVED status.
-   * 2. APPROVED strictly requires a consumed backend-verified receipt token matching expected full 40-char commit SHA.
-   * 3. Any SEV1/SEV2 finding or rejection keyword forces status to CHANGES_REQUESTED.
+   * 2. APPROVED strictly requires an authentic verified receipt token matching expected full 40-char commit SHA.
+   * 3. Without authentic intake verification or PO consent, status strictly remains REVIEW_PENDING (U08-R05-01).
+   * 4. Any SEV1/SEV2 finding or rejection keyword forces status to CHANGES_REQUESTED.
    */
   parseReviewFeedback(feedbackInput, changeSetId = 'default') {
     let feedbackText = '';
@@ -434,15 +493,23 @@ ${criteriaItems}
       feedbackText = feedbackInput;
     } else if (feedbackInput && typeof feedbackInput === 'object') {
       feedbackText = feedbackInput.feedbackText || '';
-      receiptId = feedbackInput.receiptId || (feedbackInput.provenance && feedbackInput.provenance.receiptId) || null;
-      expectedCommitSha = feedbackInput.expectedCommitSha || (feedbackInput.provenance && feedbackInput.provenance.targetCommitSha) || null;
+      receiptId =
+        feedbackInput.receiptId ||
+        (feedbackInput.provenance && feedbackInput.provenance.receiptId) ||
+        feedbackInput.receiptToken ||
+        (feedbackInput.provenance && feedbackInput.provenance.receiptToken) ||
+        null;
+      expectedCommitSha =
+        feedbackInput.expectedCommitSha ||
+        (feedbackInput.provenance && feedbackInput.provenance.targetCommitSha) ||
+        null;
       if (feedbackInput.changeSetId) {
         changeSetId = feedbackInput.changeSetId;
       }
     }
 
     if (!feedbackText) {
-      return { status: 'PENDING', findings: [] };
+      return { status: 'REVIEW_PENDING', findings: [] };
     }
 
     const lower = feedbackText.toLowerCase();
@@ -498,7 +565,7 @@ ${criteriaItems}
 
     const hasBlockingFindings = findings.some((f) => f.severity === 'SEV1' || f.severity === 'SEV2');
 
-    let status = 'FEEDBACK_RECORDED';
+    let status = 'REVIEW_PENDING';
 
     if (hasRejectionKeywords || hasBlockingFindings) {
       status = 'CHANGES_REQUESTED';
@@ -513,7 +580,7 @@ ${criteriaItems}
         !lower.includes('not approved');
 
       if (hasApprovalKeywords && findings.length === 0) {
-        // Blocker 2 / U08-R04-01: Verify and atomically consume trusted review receipt
+        // Blocker 2 / U08-R04-01 / U08-R05-01: Verify and atomically consume trusted review receipt
         if (receiptId) {
           const consumeRes = this.consumeReviewReceipt(receiptId, expectedCommitSha);
           if (consumeRes && consumeRes.success) {
@@ -531,9 +598,11 @@ ${criteriaItems}
             };
           }
         } else {
-          // Without verified receipt, plain text containing "LGTM" is recorded as FEEDBACK_RECORDED
-          status = 'FEEDBACK_RECORDED';
+          // Without verified receipt from trusted intake or PO consent, state must remain REVIEW_PENDING (U08-R05-01)
+          status = 'REVIEW_PENDING';
         }
+      } else {
+        status = 'REVIEW_PENDING';
       }
     }
 
@@ -547,12 +616,27 @@ ${criteriaItems}
   }
 
   /**
-   * Parses review feedback and atomically persists findings into SQLite (U08-R04).
+   * Parses review feedback and atomically persists findings into SQLite (U08-R04, U08-R05-02).
    */
   ingestFeedbackAndPersist(params) {
-    const { storage, feedbackText, changeSetId = 'default', reviewer = 'chatgpt_web', receiptId = null, expectedCommitSha = null } = params;
+    const {
+      storage,
+      feedbackText,
+      changeSetId = 'default',
+      reviewer = 'chatgpt_web',
+      receiptId = null,
+      expectedCommitSha = null,
+    } = params || {};
+
+    const resolvedReceiptId =
+      receiptId ||
+      (params && params.provenance && params.provenance.receiptId) ||
+      (params && params.receiptToken) ||
+      (params && params.provenance && params.provenance.receiptToken) ||
+      null;
+
     const parsed = this.parseReviewFeedback(
-      { feedbackText, changeSetId, receiptId, expectedCommitSha },
+      { feedbackText, changeSetId, receiptId: resolvedReceiptId, expectedCommitSha },
       changeSetId
     );
 

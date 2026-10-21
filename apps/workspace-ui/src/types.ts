@@ -218,7 +218,7 @@ export interface UnionBotAPI {
   validatePushSafety?: (payload: { branch: string; forcePush?: boolean; commitCount?: number }) => Promise<{ allowed: boolean; branch?: string; policy?: string; error?: string; code?: string }>;
   computePushDigest?: (payload: { branch: string; headSha: string; commitMessage?: string; filesChanged?: string[] }) => Promise<{ digest: string; canonicalPayload: string }>;
   generateReviewPacket?: (payload: { gate: string; name: string; ticketIds?: string[]; headSha: string; baseSha?: string; branch?: string; summary?: string[]; criteriaEvidence?: string[] }) => Promise<string>;
-  parseReviewFeedback?: (payload: { feedbackText: string; changeSetId?: string }) => Promise<{ status: string; findingsCount: number; hasBlockingSev1: boolean; findings: any[] }>;
+  parseReviewFeedback?: (payload: { feedbackText: string; changeSetId?: string; receiptId?: string; receiptToken?: string; expectedCommitSha?: string; reviewer?: string }) => Promise<{ status: string; findingsCount?: number; hasBlockingSev1?: boolean; totalDetected?: number; insertedCount?: number; duplicateCount?: number; persistedFindings?: any[]; findings?: any[]; verifiedProvenance?: boolean; error?: string; code?: string }>;
 
   // Phase V4: Real Browser-Use & Context Bridge (UB-V4-U09)
   acquireBrowserControllerLease?: (payload: { tabId: string; controllerId: string }) => Promise<{ success: boolean; tabId?: string; controllerId?: string; leaseToken?: string; expiresAt?: number; holder?: string; error?: string; code?: string }>;

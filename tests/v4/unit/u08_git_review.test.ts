@@ -95,7 +95,7 @@ describe('UB-V4-U08: GitHub Push Approval & ChatGPT Code Review Loop', () => {
     const selfIssue = service.intakeTrustedReview({
       source: 'RENDERER_UNTRUSTED',
       commitSha: fullCommitSha,
-      evidence: { threadId: 'thread_123' },
+      evidence: { threadId: 'thread_123', url: 'https://chatgpt.com/c/6ad64b63', verified: true },
     });
     assert.equal(selfIssue.success, false);
     assert.equal(selfIssue.code, 'ERR_UNTRUSTED_REVIEW_INTAKE');
@@ -104,7 +104,7 @@ describe('UB-V4-U08: GitHub Push Approval & ChatGPT Code Review Loop', () => {
     const invalidSha = service.intakeTrustedReview({
       source: 'BROWSER_BRIDGE',
       commitSha: '7051ff7', // short SHA disallowed
-      evidence: { threadId: 'thread_123' },
+      evidence: { threadId: 'thread_123', url: 'https://chatgpt.com/c/6ad64b63', verified: true },
     });
     assert.equal(invalidSha.success, false);
     assert.equal(invalidSha.code, 'ERR_INVALID_COMMIT_SHA');
@@ -116,14 +116,15 @@ describe('UB-V4-U08: GitHub Push Approval & ChatGPT Code Review Loop', () => {
       commitSha: fullCommitSha,
       gate: 'U08',
       changeSetId: 'cs_123',
-      evidence: { threadId: 'thread_123', url: 'https://chatgpt.com/c/6ad64b63' },
+      verdict: 'APPROVED',
+      evidence: { threadId: 'thread_123', url: 'https://chatgpt.com/c/6ad64b63', verified: true, approvalConfirmed: true },
     });
     assert.equal(validIntake.success, true);
     assert.ok(validIntake.receiptId.startsWith('rcpt_'));
 
-    // 4. Raw text containing "LGTM" without receiptId -> status is strictly FEEDBACK_RECORDED (no fake approval)
+    // 4. Raw text containing "LGTM" without receiptId -> status is strictly REVIEW_PENDING (U08-R05-01, no fake approval)
     const unverified = service.parseReviewFeedback('LGTM! Báo cáo rất rõ ràng, đạt yêu cầu qua gate U08.');
-    assert.equal(unverified.status, 'FEEDBACK_RECORDED');
+    assert.equal(unverified.status, 'REVIEW_PENDING');
     assert.equal(unverified.verifiedProvenance, false);
 
     // 5. Verified receipt with matching full 40-character commit SHA -> valid APPROVED
@@ -339,7 +340,7 @@ describe('UB-V4-U08: GitHub Push Approval & ChatGPT Code Review Loop', () => {
       reviewer: 'chatgpt_web',
       commitSha: fullCommitSha,
       gate: 'U08',
-      evidence: { threadId: 'thread_123' },
+      evidence: { threadId: 'thread_123', url: 'https://chatgpt.com/c/6ad64b63', verified: true },
     });
 
     // Text mentioning LGTM or approved in the context of changes requested
@@ -432,6 +433,190 @@ describe('UB-V4-U08: GitHub Push Approval & ChatGPT Code Review Loop', () => {
 
       storage1.close();
       storage2.close();
+    } finally {
+      try {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+      } catch {
+        // Safe temp ignore on locked Windows handles
+      }
+    }
+  });
+
+  it('U08-R05-01 & U08-R05-02: active verification on intake sources and IPC-to-service-to-SQLite regression', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ub-u08-r05-test-'));
+    const dbPath = path.join(tempDir, 'review-r05.sqlite');
+
+    try {
+      const storage = new StorageEngine({ filename: dbPath });
+      const service: any = new GitReviewService();
+      const commitSha = '012ccd86db77a3b287347b237c061aab1fd937d4';
+
+      // --- Part 1: U08-R05-01 Active Verification Invariants ---
+
+      // 1.1 BROWSER_BRIDGE without active verification proof -> rejected
+      const unverifiedBridge = service.intakeTrustedReview({
+        source: 'BROWSER_BRIDGE',
+        commitSha,
+        evidence: { url: 'https://chatgpt.com/c/6ad64b63', verified: false },
+      });
+      assert.equal(unverifiedBridge.success, false);
+      assert.equal(unverifiedBridge.code, 'ERR_UNVERIFIED_EVIDENCE');
+
+      // 1.2 BROWSER_BRIDGE with untrusted URL -> rejected
+      const untrustedUrlBridge = service.intakeTrustedReview({
+        source: 'BROWSER_BRIDGE',
+        commitSha,
+        evidence: { url: 'https://attacker.site/spoofed-chat', verified: true },
+      });
+      assert.equal(untrustedUrlBridge.success, false);
+      assert.equal(untrustedUrlBridge.code, 'ERR_UNTRUSTED_REVIEWER_URL');
+
+      // 1.3 PO_MANUAL_CONSENT without authentic consent record -> rejected
+      const unverifiedPo = service.intakeTrustedReview({
+        source: 'PO_MANUAL_CONSENT',
+        commitSha,
+        evidence: { note: 'PO said ok on chat' },
+      });
+      assert.equal(unverifiedPo.success, false);
+      assert.equal(unverifiedPo.code, 'ERR_PO_CONSENT_UNVERIFIED');
+
+      // 1.4 PO_MANUAL_CONSENT with authentic consent token -> success
+      const verifiedPo = service.intakeTrustedReview({
+        source: 'PO_MANUAL_CONSENT',
+        commitSha,
+        evidence: { poConsentToken: 'po_token_valid_consent_123', confirmed: true },
+      });
+      assert.equal(verifiedPo.success, true);
+      assert.ok(verifiedPo.receiptId.startsWith('rcpt_'));
+
+      // 1.5 Claiming APPROVED verdict when evidence does not confirm -> rejected
+      const mismatchApproval = service.intakeTrustedReview({
+        source: 'BROWSER_BRIDGE',
+        commitSha,
+        verdict: 'APPROVED',
+        evidence: { url: 'https://chatgpt.com/c/6ad64b63', verified: true, approvalConfirmed: false },
+      });
+      assert.equal(mismatchApproval.success, false);
+      assert.equal(mismatchApproval.code, 'ERR_APPROVAL_EVIDENCE_MISMATCH');
+
+      // 1.6 Without authentic verified intake receipt, status is strictly REVIEW_PENDING (never fake APPROVED)
+      const unverifiedText = service.parseReviewFeedback('LGTM! Báo cáo hoàn toàn đạt, APPROVED 100%.');
+      assert.equal(unverifiedText.status, 'REVIEW_PENDING');
+      assert.equal(unverifiedText.verifiedProvenance, false);
+
+      // --- Part 2: U08-R05-02 IPC-to-service-to-SQLite Contract Consistency ---
+
+      // Simulate Electron IPC handler contract in main.js
+      const simulateIpcParseFeedback = async (payload: any) => {
+        return service.ingestFeedbackAndPersist({
+          storage,
+          feedbackText: payload && payload.feedbackText,
+          changeSetId: payload && payload.changeSetId,
+          reviewer: (payload && payload.reviewer) || 'chatgpt_web',
+          receiptId: payload && (payload.receiptId || (payload.provenance && payload.provenance.receiptId) || payload.receiptToken || (payload.provenance && payload.provenance.receiptToken)),
+          expectedCommitSha: payload && (payload.expectedCommitSha || (payload.provenance && payload.provenance.targetCommitSha)),
+        });
+      };
+
+      // 2.1 Issue verified intake receipt from valid browser bridge
+      const authenticIntake = service.intakeTrustedReview({
+        source: 'BROWSER_BRIDGE',
+        commitSha,
+        changeSetId: 'cs_ipc_1',
+        verdict: 'APPROVED',
+        evidence: {
+          threadUrl: 'https://chatgpt.com/c/6ad64b63-ad44-83ec-90ca-83cacbc26da5',
+          verified: true,
+          approvalConfirmed: true,
+          tabId: 'tab_chatgpt_leader',
+        },
+      });
+      assert.equal(authenticIntake.success, true);
+      const receiptId = authenticIntake.receiptId;
+
+      // 2.2 Call simulated IPC with changes requested & findings using 'receiptId'
+      const feedbackWithFindings = `
+      [CHATGPT WEB TECHNICAL LEADER — U08 REVIEW]
+      VERDICT: CHANGES_REQUESTED
+      U08-R05-01: SEV1 git-review-service.cjs:45: unverified intake source.
+      U08-R05-02: SEV2 main.js:5798: IPC receiptId field mismatch.
+      `;
+
+      const ipcResult1 = await simulateIpcParseFeedback({
+        receiptId,
+        feedbackText: feedbackWithFindings,
+        changeSetId: 'cs_ipc_1',
+        expectedCommitSha: commitSha,
+      });
+
+      assert.equal(ipcResult1.status, 'CHANGES_REQUESTED');
+      assert.equal(ipcResult1.hasBlockingSev1, true);
+      assert.equal(ipcResult1.totalDetected, 2);
+      assert.equal(ipcResult1.insertedCount, 2);
+
+      // Verify findings persisted into SQLite
+      const findingsInDb = storage.getReviewFindings('cs_ipc_1');
+      assert.equal(findingsInDb.length, 2);
+      assert.equal(findingsInDb[0].severity, 'SEV1');
+      assert.equal(findingsInDb[0].file, 'git-review-service.cjs');
+      assert.equal(findingsInDb[1].severity, 'SEV2');
+      assert.equal(findingsInDb[1].file, 'main.js');
+
+      // 2.3 Issue fresh receipt for final approval
+      const freshApprovalIntake = service.intakeTrustedReview({
+        source: 'BROWSER_BRIDGE',
+        commitSha,
+        changeSetId: 'cs_ipc_2',
+        verdict: 'APPROVED',
+        evidence: {
+          threadUrl: 'https://chatgpt.com/c/6ad64b63-ad44-83ec-90ca-83cacbc26da5',
+          verified: true,
+          approvalConfirmed: true,
+        },
+      });
+      assert.equal(freshApprovalIntake.success, true);
+
+      // 2.4 Call IPC with approval text and 'receiptId'
+      const approvalFeedback = `
+      [CHATGPT WEB TECHNICAL LEADER — U08 REVIEW]
+      VERDICT: SOURCE_REVIEW_APPROVED — QA_PENDING
+      Gate U08 passed review.
+      `;
+
+      const ipcResult2 = await simulateIpcParseFeedback({
+        receiptId: freshApprovalIntake.receiptId,
+        feedbackText: approvalFeedback,
+        changeSetId: 'cs_ipc_2',
+        expectedCommitSha: commitSha,
+      });
+
+      assert.equal(ipcResult2.status, 'APPROVED');
+      assert.equal(ipcResult2.verifiedProvenance, true);
+      assert.equal(ipcResult2.hasBlockingSev1, false);
+
+      // 2.5 Test backward compatibility fallback if legacy payload uses receiptToken
+      const legacyIntake = service.intakeTrustedReview({
+        source: 'BROWSER_BRIDGE',
+        commitSha,
+        changeSetId: 'cs_ipc_3',
+        verdict: 'APPROVED',
+        evidence: {
+          threadUrl: 'https://chatgpt.com/c/6ad64b63-ad44-83ec-90ca-83cacbc26da5',
+          verified: true,
+          approvalConfirmed: true,
+        },
+      });
+
+      const legacyResult = await simulateIpcParseFeedback({
+        receiptToken: legacyIntake.receiptId, // legacy property name
+        feedbackText: 'Gate U08 APPROVED and LGTM.',
+        changeSetId: 'cs_ipc_3',
+        expectedCommitSha: commitSha,
+      });
+      assert.equal(legacyResult.status, 'APPROVED');
+      assert.equal(legacyResult.verifiedProvenance, true);
+
+      storage.close();
     } finally {
       try {
         fs.rmSync(tempDir, { recursive: true, force: true });

@@ -5788,14 +5788,14 @@ ipcMain.handle('union-bot:validate-push-execution', async (event, payload) => {
 
 
 ipcMain.handle('union-bot:parse-review-feedback', async (event, payload) => {
-  if (!checkSenderAuthorized(event)) return { status: 'PENDING', findings: [] };
+  if (!checkSenderAuthorized(event)) return { status: 'REVIEW_PENDING', findings: [] };
   try {
     return gitReviewService.ingestFeedbackAndPersist({
       storage,
       feedbackText: payload && payload.feedbackText,
       changeSetId: payload && payload.changeSetId,
       reviewer: (payload && payload.reviewer) || 'chatgpt_web',
-      receiptToken: payload && (payload.receiptToken || (payload.provenance && payload.provenance.receiptToken)),
+      receiptId: payload && (payload.receiptId || (payload.provenance && payload.provenance.receiptId) || payload.receiptToken || (payload.provenance && payload.provenance.receiptToken)),
       expectedCommitSha: payload && (payload.expectedCommitSha || (payload.provenance && payload.provenance.targetCommitSha)),
     });
   } catch (err) {
