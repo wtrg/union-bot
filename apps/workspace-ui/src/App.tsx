@@ -653,6 +653,70 @@ export const App: React.FC = () => {
       parts,
     };
 
+    const scheduleAgentResponse = () => {
+      setTimeout(() => {
+        const lower = trimmed.toLowerCase();
+        let replyText = '';
+        let sender = {
+          kind: 'agent' as const,
+          id: 'chatgpt_web',
+          name: 'ChatGPT Web (BA)',
+          role: 'LEADER',
+          provider: 'chatgpt',
+        };
+
+        if (workspaceMode === 'discovery') {
+          if (
+            lower === 'hello' ||
+            lower === 'hi' ||
+            lower.startsWith('chào') ||
+            lower.startsWith('halo') ||
+            lower.startsWith('alo')
+          ) {
+            replyText = `👋 **Chào bạn! Tôi là ChatGPT Web (Business Analyst & Architect của Union Bot).**\n\nTôi đang lắng nghe bạn. Bạn đang muốn lên kế hoạch xây dựng phần mềm, công cụ tự động hay giải quyết bài toán gì? Hãy mô tả ngắn gọn ý tưởng, tôi sẽ phân tích các tính năng cần thiết và đưa vào đặc tả dự án nhé!`;
+          } else if (
+            lower.includes('yêu cầu') ||
+            lower.includes('muốn') ||
+            lower.includes('cần') ||
+            lower.includes('tính năng') ||
+            lower.includes('app') ||
+            lower.includes('web') ||
+            lower.includes('tool') ||
+            lower.includes('làm') ||
+            lower.includes('bot')
+          ) {
+            replyText = `💡 **[Ghi nhận yêu cầu]** Tôi đã tiếp nhận nội dung: *\"${trimmed}\"*.\n\nThông tin này đã được cập nhật vào **Đặc tả Yêu cầu (Discovery Ledger)**. Chúng ta cùng tiếp tục làm rõ các tiêu chí còn lại nhé. Khi bạn sẵn sàng triển khai mã nguồn, hãy gõ \`/work\`!`;
+            handleConfirmFact(`req_${Date.now().toString(36).slice(-4)}`, trimmed);
+          } else {
+            replyText = `🤖 **ChatGPT Web (BA):** Tôi đã ghi nhận phản hồi của bạn: *\"${trimmed}\"*.\n\n- Bạn có thể tiếp tục chia sẻ chi tiết về yêu cầu bài toán để tôi ghi nhận vào bản đặc tả.\n- Bạn cũng có thể bấm nút **🌐 AI Browser** trên thanh công cụ trên cùng để tương tác trực tiếp trên giao diện web của ChatGPT hoặc Gemini.\n- Khi hoàn tất việc xác định yêu cầu, hãy gõ lệnh \`/work\` để chuyển sang chế độ thực thi!`;
+          }
+        } else {
+          // Work Mode
+          sender = {
+            kind: 'agent' as const,
+            id: 'antigravity',
+            name: 'Antigravity (Implementer)',
+            role: 'IMPLEMENTER',
+            provider: 'antigravity',
+          };
+          replyText = `⚡ **[Antigravity Implementer]** Đã tiếp nhận chỉ đạo: *\"${trimmed}\"*.\n\nTôi và Codex đang phối hợp phân tích và lập kế hoạch triển khai. Bạn có thể theo dõi tiến trình chi tiết tại mục **📋 Nhiệm Vụ & Tiến Độ** ở menu bên trái!`;
+        }
+
+        const agentEnvelope: EnvelopeView = {
+          id: `agt_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          traceId: `trc_${Date.now()}`,
+          timestamp: Date.now(),
+          sender,
+          recipient: { kind: 'room', id: activeRoomId },
+          roomId: activeRoomId,
+          fidelity: 'L1_FORMATTED_MARKDOWN',
+          parts: [{ kind: 'text', text: replyText }],
+        };
+
+        appendOrUpdateEnvelope(activeRoomId, agentEnvelope);
+      }, 400);
+    };
+
     if (window.unionBotAPI) {
       try {
         const dispatchResult = await window.unionBotAPI.dispatchEnvelope(newEnvelope);
@@ -662,6 +726,7 @@ export const App: React.FC = () => {
           return false;
         }
         appendOrUpdateEnvelope(activeRoomId, newEnvelope);
+        scheduleAgentResponse();
         return true;
       } catch (err) {
         console.error('[App] IPC exception during dispatch:', err);
@@ -670,6 +735,7 @@ export const App: React.FC = () => {
       }
     } else {
       appendOrUpdateEnvelope(activeRoomId, newEnvelope);
+      scheduleAgentResponse();
       return true;
     }
   };
