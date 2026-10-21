@@ -24,6 +24,7 @@ class GitReviewService {
     this.poAuthorityKey = options.poAuthorityKey || crypto.randomBytes(32).toString('hex');
     this.authorizedReviewReceipts = new Map(); // receiptId -> receipt object
     this.registeredPoConsents = new Map(); // poConsentToken -> { token, commitSha, changeSetId, gate, expiresAt, used }
+    this.allowSyntheticFixture = options.allowSyntheticFixture === true;
   }
 
   setBrowserBridge(bridge) {
@@ -156,7 +157,10 @@ class GitReviewService {
         };
       }
 
-      const inspection = activeBridge.inspectReviewContext(tabId, leaseToken, normSha);
+      const inspectionOptions = {
+        allowSyntheticFixture: this.allowSyntheticFixture === true,
+      };
+      const inspection = activeBridge.inspectReviewContext(tabId, leaseToken, normSha, inspectionOptions);
       if (!inspection || !inspection.success) {
         return {
           success: false,

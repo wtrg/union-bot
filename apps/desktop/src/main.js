@@ -852,6 +852,7 @@ function createWindow() {
     browserService = new BrowserService(mainWindow, storage, artifactStore, path.resolve(__dirname, '../../..'));
     capabilityRegistry.browserService = browserService;
     taskGraphService.setSessionRegistry(browserService.sessionRegistry);
+    browserUseBridge.browserManager = browserService; // Connect real browser runtime for review inspection (U08-R10-01)
 
     // Phase P9 Production Transport Registration: Synchronously registered across all runtime modes (P9-R02-001)
     registerProduction6AITransports(taskGraphService, browserService, codexService, antigravityService);

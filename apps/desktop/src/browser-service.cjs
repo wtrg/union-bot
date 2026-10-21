@@ -803,6 +803,29 @@ class BrowserService {
   }
 
   /**
+   * Phase P4 / UB-V4-U08: Returns authoritative runtime tab context for review inspection (U08-R10-01)
+   */
+  getTabContext(tabId) {
+    const targetTabId = tabId || this.stateManager.getState().activeTabId;
+    if (!targetTabId) return null;
+    const tab = this.stateManager.tabs.get(targetTabId);
+    const view = this.views.get(targetTabId);
+    if (!tab && !view) return null;
+    const currentUrl = view && !view.webContents.isDestroyed() ? view.webContents.getURL() : (tab ? tab.url : '');
+    const currentTitle = view && !view.webContents.isDestroyed() ? view.webContents.getTitle() : (tab ? tab.title : '');
+    const threadRef = this.captureThreadReference(targetTabId);
+    return {
+      tabId: targetTabId,
+      url: currentUrl,
+      title: currentTitle,
+      providerId: tab ? tab.providerId : 'custom',
+      conversationId: threadRef ? threadRef.threadId : null,
+      isSynthetic: false,
+      capturedAt: Date.now(),
+    };
+  }
+
+  /**
    * Phase P9: Provenance-tracked manual & assisted text sharing (P9-XX2)
    */
   async shareTextWithProvenance(tabId, text, options = {}) {
