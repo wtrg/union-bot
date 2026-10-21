@@ -1459,6 +1459,105 @@ describe('UB-V4-U08: GitHub Push Approval & ChatGPT Code Review Loop', () => {
     const updatedTab = bs.stateManager.tabs.get('tab_clean');
     assert.equal(updatedTab.structuredMessage.messageId, 'msg_anti_toctou_verified');
 
+    // =========================================================================
+    // PART 4: U08-R14-01 — REAL ELECTRON NAVIGATION LISTENERS & SAME-URL RELOAD TOCTOU
+    // =========================================================================
+    const { EventEmitter } = require('node:events');
+
+    // 4.1 Same-URL reload race via real 'did-start-loading' listener
+    const reloadEmitter = new EventEmitter();
+    const reloadView = {
+      webContents: Object.assign(reloadEmitter, {
+        id: 201,
+        isDestroyed: () => false,
+        getURL: () => 'https://chatgpt.com/c/6ad64b63-ad44-83ec-90ca-83cacbc26da5', // Exactly identical URL before & after
+        getTitle: () => 'ChatGPT Review',
+        canGoBack: () => false,
+        canGoForward: () => false,
+        executeJavaScript: async () => {
+          // Fire real Electron event listener during async DOM execution (same-URL reload)
+          reloadEmitter.emit('did-start-loading');
+          return {
+            role: 'assistant',
+            messageId: 'msg_reload_race',
+            text: `OFFICIAL VERDICT: SOURCE_REVIEW_APPROVED\nTarget commit: ${commitSha}`,
+          };
+        },
+      }),
+    };
+    const reloadTab = bs.stateManager.createTab('chatgpt', 'https://chatgpt.com/c/6ad64b63-ad44-83ec-90ca-83cacbc26da5');
+    bs.views.set(reloadTab.id, reloadView);
+    bs.attachNavigationListeners(reloadTab, reloadView);
+
+    assert.equal(reloadTab.navigationGeneration, 1);
+    const reloadRes = await bs.extractReviewMessageFromWebContents(reloadTab.id);
+    assert.equal(reloadRes, null, 'Same-URL reload during extraction must be rejected fail-closed (U08-R14-01)');
+    const postReloadTab = bs.stateManager.tabs.get(reloadTab.id);
+    assert.equal(postReloadTab.navigationGeneration, 2);
+
+    // 4.2 In-page navigation race via real 'did-navigate-in-page' listener
+    const inPageEmitter = new EventEmitter();
+    const inPageView = {
+      webContents: Object.assign(inPageEmitter, {
+        id: 202,
+        isDestroyed: () => false,
+        getURL: () => 'https://chatgpt.com/c/6ad64b63-ad44-83ec-90ca-83cacbc26da5',
+        getTitle: () => 'ChatGPT Review',
+        canGoBack: () => false,
+        canGoForward: () => false,
+        executeJavaScript: async () => {
+          inPageEmitter.emit('did-navigate-in-page', {}, 'https://chatgpt.com/c/6ad64b63-ad44-83ec-90ca-83cacbc26da5#section', true);
+          return {
+            role: 'assistant',
+            messageId: 'msg_inpage_race',
+            text: `OFFICIAL VERDICT: SOURCE_REVIEW_APPROVED\nTarget commit: ${commitSha}`,
+          };
+        },
+      }),
+    };
+    const inPageTab = bs.stateManager.createTab('chatgpt', 'https://chatgpt.com/c/6ad64b63-ad44-83ec-90ca-83cacbc26da5');
+    bs.views.set(inPageTab.id, inPageView);
+    bs.attachNavigationListeners(inPageTab, inPageView);
+
+    assert.equal(inPageTab.navigationGeneration, 1);
+    const inPageRes = await bs.extractReviewMessageFromWebContents(inPageTab.id);
+    assert.equal(inPageRes, null, 'In-page navigation during extraction must be rejected fail-closed (U08-R14-01)');
+    const postInPageTab = bs.stateManager.tabs.get(inPageTab.id);
+    assert.equal(postInPageTab.navigationGeneration, 2);
+
+    // 4.3 Clean extraction without race + subsequent real navigation invalidation
+    const cleanRealEmitter = new EventEmitter();
+    const cleanRealView: any = {
+      webContents: Object.assign(cleanRealEmitter, {
+        id: 203,
+        isDestroyed: () => false,
+        getURL: () => 'https://chatgpt.com/c/6ad64b63-ad44-83ec-90ca-83cacbc26da5',
+        getTitle: () => 'ChatGPT Review',
+        canGoBack: () => false,
+        canGoForward: () => false,
+        executeJavaScript: async () => ({
+          role: 'assistant',
+          messageId: 'msg_clean_real',
+          text: `OFFICIAL VERDICT: SOURCE_REVIEW_APPROVED\nTarget commit: ${commitSha}`,
+        }),
+      }),
+    };
+    const cleanRealTab = bs.stateManager.createTab('chatgpt', 'https://chatgpt.com/c/6ad64b63-ad44-83ec-90ca-83cacbc26da5');
+    bs.views.set(cleanRealTab.id, cleanRealView);
+    bs.attachNavigationListeners(cleanRealTab, cleanRealView);
+
+    const cleanRealRes = await bs.extractReviewMessageFromWebContents(cleanRealTab.id);
+    assert.ok(cleanRealRes);
+    assert.equal(cleanRealRes.messageId, 'msg_clean_real');
+    assert.equal(bs.stateManager.tabs.get(cleanRealTab.id).structuredMessage.messageId, 'msg_clean_real');
+
+    // Emit did-navigate: generation increments and cache is invalidated
+    cleanRealEmitter.emit('did-navigate');
+    assert.equal(cleanRealView.__latestStructuredMessage, null);
+    const postNavTab = bs.stateManager.tabs.get(cleanRealTab.id);
+    assert.equal(postNavTab.structuredMessage, null);
+    assert.equal(postNavTab.navigationGeneration, 2);
+
     // Clean up module shim
     Module._resolveFilename = origResolve;
     delete (require as any).cache['electron'];

@@ -121,6 +121,71 @@ class BrowserService {
   }
 
   /**
+   * Attaches navigation, loading, and anti-TOCTOU generation listeners (U08-R12-01, U08-R14-01).
+   * Monotonically increments tab.navigationGeneration on loading, navigation, and in-page navigation.
+   */
+  attachNavigationListeners(tab, view) {
+    if (!view || !view.webContents) return;
+
+    view.webContents.on('did-start-loading', () => {
+      view.__latestStructuredMessage = null;
+      const currentTab = this.stateManager.tabs.get(tab.id);
+      const nextGen = ((currentTab && currentTab.navigationGeneration) || 0) + 1;
+      this.stateManager.updateTab(tab.id, {
+        isLoading: true,
+        lastError: null,
+        structuredMessage: null,
+        navigationGeneration: nextGen,
+      });
+      this._notifyRenderer();
+    });
+
+    view.webContents.on('did-navigate', (event, url) => {
+      view.__latestStructuredMessage = null;
+      const currentTab = this.stateManager.tabs.get(tab.id);
+      const nextGen = ((currentTab && currentTab.navigationGeneration) || 0) + 1;
+      this.stateManager.updateTab(tab.id, {
+        structuredMessage: null,
+        navigationGeneration: nextGen,
+      });
+    });
+
+    view.webContents.on('did-navigate-in-page', (event, url, isMainFrame) => {
+      if (isMainFrame !== false) {
+        view.__latestStructuredMessage = null;
+        const currentTab = this.stateManager.tabs.get(tab.id);
+        const nextGen = ((currentTab && currentTab.navigationGeneration) || 0) + 1;
+        this.stateManager.updateTab(tab.id, {
+          url: url || (currentTab && currentTab.url),
+          structuredMessage: null,
+          navigationGeneration: nextGen,
+        });
+      }
+    });
+
+    view.webContents.on('did-stop-loading', () => {
+      const currentUrl = view.webContents.getURL();
+      const currentTitle = view.webContents.getTitle();
+      const canGoBack = view.webContents.canGoBack();
+      const canGoForward = view.webContents.canGoForward();
+
+      this.stateManager.updateTab(tab.id, {
+        isLoading: false,
+        url: currentUrl || tab.url,
+        title: currentTitle || tab.title,
+        canGoBack,
+        canGoForward,
+      });
+      this._notifyRenderer();
+    });
+
+    view.webContents.on('page-title-updated', (event, title) => {
+      this.stateManager.updateTab(tab.id, { title });
+      this._notifyRenderer();
+    });
+  }
+
+  /**
    * Creates and attaches a WebContentsView for a given tab state
    */
   _createViewForTab(tab) {
@@ -245,38 +310,8 @@ class BrowserService {
       }
     });
 
-    // Loading & state change listeners (clears stale review snapshot on navigation/reload - U08-R12-01)
-    view.webContents.on('did-start-loading', () => {
-      view.__latestStructuredMessage = null;
-      this.stateManager.updateTab(tab.id, { isLoading: true, lastError: null, structuredMessage: null });
-      this._notifyRenderer();
-    });
-
-    view.webContents.on('did-navigate', () => {
-      view.__latestStructuredMessage = null;
-      this.stateManager.updateTab(tab.id, { structuredMessage: null });
-    });
-
-    view.webContents.on('did-stop-loading', () => {
-      const currentUrl = view.webContents.getURL();
-      const currentTitle = view.webContents.getTitle();
-      const canGoBack = view.webContents.canGoBack();
-      const canGoForward = view.webContents.canGoForward();
-
-      this.stateManager.updateTab(tab.id, {
-        isLoading: false,
-        url: currentUrl || tab.url,
-        title: currentTitle || tab.title,
-        canGoBack,
-        canGoForward,
-      });
-      this._notifyRenderer();
-    });
-
-    view.webContents.on('page-title-updated', (event, title) => {
-      this.stateManager.updateTab(tab.id, { title });
-      this._notifyRenderer();
-    });
+    // Loading & state change listeners (clears stale review snapshot on navigation/reload, increments navigationGeneration - U08-R12-01, U08-R14-01)
+    this.attachNavigationListeners(tab, view);
 
     view.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL) => {
       if (errorCode === -3) return; // Aborted by user / navigation
@@ -838,20 +873,20 @@ class BrowserService {
   }
 
   /**
-   * Phase P4 / UB-V4-U08: Extracts structured reviewer assistant message directly from WebContents DOM (U08-R11-01, U08-R13-03)
+   * Phase P4 / UB-V4-U08: Extracts structured reviewer assistant message directly from WebContents DOM (U08-R11-01, U08-R13-03, U08-R14-01)
    * Enforces Anti-TOCTOU consistency checks on WebContents ID, URL, conversationId and navigation generation.
    */
   async extractReviewMessageFromWebContents(tabId) {
     const targetTabId = tabId || this.stateManager.getState().activeTabId;
     if (!targetTabId) return null;
     const view = this.views.get(targetTabId);
-    const tab = this.stateManager.tabs.get(targetTabId);
-    if (!view || view.webContents.isDestroyed() || !tab) return null;
+    const preTab = this.stateManager.tabs.get(targetTabId);
+    if (!view || view.webContents.isDestroyed() || !preTab) return null;
 
-    // 1. Capture pre-extraction invariants (U08-R13-03)
+    // 1. Capture pre-extraction invariants (U08-R13-03, U08-R14-01)
     const preWebContentsId = view.webContents.id;
     const preUrl = view.webContents.getURL();
-    const preNavGen = tab.navigationGeneration || 0;
+    const preNavGen = preTab.navigationGeneration || 0;
     const preThreadRef = this.captureThreadReference(targetTabId);
     const preConvId = (preThreadRef && preThreadRef.threadId) || (preUrl.includes('/c/') ? preUrl.split('/c/')[1].split(/[?#]/)[0] : null);
 
@@ -877,13 +912,18 @@ class BrowserService {
         })()
       `);
 
-      // 2. Post-extraction invariants & Anti-TOCTOU consistency checks (U08-R13-03)
+      // 2. Post-extraction invariants & Anti-TOCTOU consistency checks (U08-R13-03, U08-R14-01)
       if (view.webContents.isDestroyed()) return null;
       if (view.webContents.id !== preWebContentsId) return null; // WebContents changed
       const postUrl = view.webContents.getURL();
       if (postUrl !== preUrl) return null; // URL changed during async execution
-      const postNavGen = tab.navigationGeneration || 0;
-      if (postNavGen !== preNavGen) return null; // Navigation occurred during async execution
+
+      // Re-read current tab from stateManager (guarantees reading fresh generation even after updateTab replacement - U08-R14-01)
+      const postTab = this.stateManager.tabs.get(targetTabId);
+      if (!postTab) return null;
+      const postNavGen = postTab.navigationGeneration || 0;
+      if (postNavGen !== preNavGen) return null; // Navigation or reload occurred during async execution
+
       const postThreadRef = this.captureThreadReference(targetTabId);
       const postConvId = (postThreadRef && postThreadRef.threadId) || (postUrl.includes('/c/') ? postUrl.split('/c/')[1].split(/[?#]/)[0] : null);
       if (postConvId !== preConvId || !postConvId) return null; // Conversation changed

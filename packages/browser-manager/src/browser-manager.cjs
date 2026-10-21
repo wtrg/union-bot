@@ -400,6 +400,7 @@ class BrowserStateManager {
       crashed: false,
       lastError: null,
       zoomFactor: 1.0,
+      navigationGeneration: 1,
       createdAt: Date.now(),
     };
 
