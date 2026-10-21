@@ -150,8 +150,9 @@ const conversationRouter = new ConversationRouter(storage);
 const artifactHandoffService = new ArtifactHandoffService(storage, artifactStore);
 const planRegistryService = new PlanRegistryService(storage);
 const workflowSupervisor = new WorkflowSupervisor({ storage, planRegistry: planRegistryService, conversationRouter, costGuard });
-const gitReviewService = new GitReviewService({ repoRoot: process.cwd() });
-const browserUseBridge = new BrowserUseBridge({ browserManager });
+const gitReviewService = new GitReviewService({ repoRoot: process.cwd(), browserBridge: null, storage });
+const browserUseBridge = new BrowserUseBridge();
+gitReviewService.browserBridge = browserUseBridge;
 const securityGuardService = new SecurityGuardService({ storage, costGuard });
 
 taskGraphService.on('graph-event', (evt) => {
@@ -5209,6 +5210,33 @@ function createWindow() {
         );
         console.log('[SmokeTest] Renderer anti-spoofing enforcement verified:', spoofBlocked);
 
+        // 8. Verify Phase V4 U08 Review Feedback IPC Roundtrip across real Electron boundary (U08-R06-03)
+        let reviewIpcResult = null;
+        try {
+          reviewIpcResult = await Promise.race([
+            mainWindow.webContents.executeJavaScript(`
+              (async () => {
+                if (!window.unionBotAPI || !window.unionBotAPI.parseReviewFeedback) return { error: 'API not found' };
+                return await window.unionBotAPI.parseReviewFeedback({
+                  feedbackText: 'CHANGES_REQUESTED: U08-R06-01: SEV1 git-review-service.cjs:25: smoke test finding',
+                  changeSetId: 'smoke_cs_review',
+                  expectedCommitSha: 'baf7b703f780418f3b535628022152e9d105d6cf'
+                });
+              })()
+            `),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 2000))
+          ]);
+        } catch (err) {
+          reviewIpcResult = { status: 'ERROR', error: err.message };
+        }
+        const reviewIpcVerified = Boolean(
+          reviewIpcResult &&
+          reviewIpcResult.status === 'CHANGES_REQUESTED' &&
+          reviewIpcResult.hasBlockingSev1 === true
+        );
+        console.log('[SmokeTest] reviewIpcResult raw:', JSON.stringify(reviewIpcResult));
+        console.log('[SmokeTest] Real GUI IPC parse review feedback verified:', reviewIpcVerified);
+
         const allChecksPassed = Boolean(
           testBlocked &&
           !schemeCheck.valid &&
@@ -5216,7 +5244,8 @@ function createWindow() {
           admissionCheck.allowed &&
           ipcSendSuccess &&
           historyVerified &&
-          spoofBlocked
+          spoofBlocked &&
+          reviewIpcVerified
         );
 
         const smokeReport = {
@@ -5230,6 +5259,7 @@ function createWindow() {
           orchestratorAdmissionPassed: admissionCheck.allowed,
           ipcRoundtripVerified: ipcSendSuccess && historyVerified,
           rendererSpoofingBlocked: spoofBlocked,
+          reviewFeedbackIpcVerified: reviewIpcVerified,
           result: allChecksPassed ? 'PASS' : 'FAIL',
         };
 

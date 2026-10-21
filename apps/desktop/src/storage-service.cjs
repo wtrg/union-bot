@@ -1232,6 +1232,117 @@ class StorageServiceClient extends EventEmitter {
     return this.sendRequest('testTamperApprovalPayload', { tokenId, tamperedPayload });
   }
 
+  // --- Phase V4 Review Findings Persistence (UB-V4-U08) ---
+  saveReviewFinding(finding) {
+    if (this.isNative && this.nativeDb) {
+      this.nativeDb.prepare(`
+        INSERT OR REPLACE INTO review_findings (
+          id, change_set_id, reviewer, file, line, severity, description, reproduction, state, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        finding.id,
+        finding.changeSetId,
+        finding.reviewer,
+        finding.file,
+        finding.line !== undefined ? finding.line : null,
+        finding.severity,
+        finding.description,
+        finding.reproduction || null,
+        finding.state,
+        new Date(finding.createdAt || Date.now()).toISOString()
+      );
+      return;
+    }
+    if (!this.fallbackReviewFindings) this.fallbackReviewFindings = new Map();
+    this.fallbackReviewFindings.set(finding.id, { ...finding });
+  }
+
+  getReviewFindings(changeSetId, state) {
+    if (this.isNative && this.nativeDb) {
+      let query = 'SELECT * FROM review_findings WHERE 1=1';
+      const params = [];
+      if (changeSetId) {
+        query += ' AND change_set_id = ?';
+        params.push(changeSetId);
+      }
+      if (state) {
+        query += ' AND state = ?';
+        params.push(state);
+      }
+      query += ' ORDER BY created_at ASC';
+      const rows = this.nativeDb.prepare(query).all(...params);
+      return rows.map((r) => ({
+        id: r.id,
+        changeSetId: r.change_set_id,
+        reviewer: r.reviewer,
+        file: r.file,
+        line: r.line !== null ? Number(r.line) : undefined,
+        severity: r.severity,
+        description: r.description,
+        reproduction: r.reproduction || undefined,
+        state: r.state,
+        createdAt: new Date(r.created_at).getTime(),
+      }));
+    }
+    if (!this.fallbackReviewFindings) this.fallbackReviewFindings = new Map();
+    let findings = Array.from(this.fallbackReviewFindings.values());
+    if (changeSetId) findings = findings.filter((f) => f.changeSetId === changeSetId);
+    if (state) findings = findings.filter((f) => f.state === state);
+    return findings;
+  }
+
+  updateReviewFindingState(id, state) {
+    if (this.isNative && this.nativeDb) {
+      const res = this.nativeDb.prepare('UPDATE review_findings SET state = ? WHERE id = ?').run(state, id);
+      return res.changes > 0;
+    }
+    if (!this.fallbackReviewFindings) return false;
+    const existing = this.fallbackReviewFindings.get(id);
+    if (!existing) return false;
+    existing.state = state;
+    return true;
+  }
+
+  ingestReviewFindingsBatch(changeSetId, reviewer, rawFindings) {
+    const existing = this.getReviewFindings(changeSetId);
+    const existingKeySet = new Set(
+      existing.map((f) => `${f.file || ''}#${f.line || ''}#${f.severity}#${(f.description || '').trim()}`)
+    );
+
+    let inserted = 0;
+    let duplicates = 0;
+    const insertedFindings = [];
+
+    for (const raw of rawFindings) {
+      const key = `${raw.file || ''}#${raw.line || ''}#${raw.severity}#${(raw.description || '').trim()}`;
+      if (existingKeySet.has(key)) {
+        duplicates++;
+        continue;
+      }
+
+      const findingId = `rf_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+      const finding = {
+        id: findingId,
+        changeSetId,
+        reviewer,
+        file: raw.file,
+        line: raw.line,
+        severity: raw.severity,
+        description: raw.description,
+        reproduction: raw.reproduction,
+        state: 'OPEN',
+        createdAt: Date.now(),
+      };
+
+      this.saveReviewFinding(finding);
+      existingKeySet.add(key);
+      insertedFindings.push(finding);
+      inserted++;
+    }
+
+    return { inserted, duplicates, findings: insertedFindings };
+  }
+
   async closeAsync() {
     this.isClosing = true;
     if (this.nativeDb) {

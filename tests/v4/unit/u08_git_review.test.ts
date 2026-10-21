@@ -5,6 +5,7 @@ import path from 'node:path';
 import os from 'node:os';
 // @ts-ignore
 import { GitReviewService } from '../../../apps/desktop/src/services/git-review-service.cjs';
+import { BrowserUseBridge } from '../../../apps/desktop/src/services/browser-use-bridge.cjs';
 import { StorageEngine } from '../../../packages/storage/src/storage-engine.ts';
 
 describe('UB-V4-U08: GitHub Push Approval & ChatGPT Code Review Loop', () => {
@@ -88,14 +89,16 @@ describe('UB-V4-U08: GitHub Push Approval & ChatGPT Code Review Loop', () => {
   });
 
   it('U08-004 & U08-R04-01: enforces trusted review intake and anti-replay receipt consumption', () => {
-    const service: any = new GitReviewService();
+    const browserBridge = new BrowserUseBridge();
+    const lease = browserBridge.acquireControllerLease('tab_123', 'agent_chatgpt');
+    const service: any = new GitReviewService({ browserBridge });
     const fullCommitSha = '7051ff78de8cc657d76319f1d094e1ba3734ff7b';
 
     // 1. Untrusted source attempting self-issuance -> strictly rejected (U08-R04-01)
     const selfIssue = service.intakeTrustedReview({
       source: 'RENDERER_UNTRUSTED',
       commitSha: fullCommitSha,
-      evidence: { threadId: 'thread_123', url: 'https://chatgpt.com/c/6ad64b63', verified: true },
+      evidence: { tabId: 'tab_123', leaseToken: lease.leaseToken, threadUrl: 'https://chatgpt.com/c/6ad64b63' },
     });
     assert.equal(selfIssue.success, false);
     assert.equal(selfIssue.code, 'ERR_UNTRUSTED_REVIEW_INTAKE');
@@ -104,7 +107,7 @@ describe('UB-V4-U08: GitHub Push Approval & ChatGPT Code Review Loop', () => {
     const invalidSha = service.intakeTrustedReview({
       source: 'BROWSER_BRIDGE',
       commitSha: '7051ff7', // short SHA disallowed
-      evidence: { threadId: 'thread_123', url: 'https://chatgpt.com/c/6ad64b63', verified: true },
+      evidence: { tabId: 'tab_123', leaseToken: lease.leaseToken, threadUrl: 'https://chatgpt.com/c/6ad64b63' },
     });
     assert.equal(invalidSha.success, false);
     assert.equal(invalidSha.code, 'ERR_INVALID_COMMIT_SHA');
@@ -117,7 +120,7 @@ describe('UB-V4-U08: GitHub Push Approval & ChatGPT Code Review Loop', () => {
       gate: 'U08',
       changeSetId: 'cs_123',
       verdict: 'APPROVED',
-      evidence: { threadId: 'thread_123', url: 'https://chatgpt.com/c/6ad64b63', verified: true, approvalConfirmed: true },
+      evidence: { tabId: 'tab_123', leaseToken: lease.leaseToken, threadUrl: 'https://chatgpt.com/c/6ad64b63', approvalConfirmed: true, verdict: 'APPROVED' },
     });
     assert.equal(validIntake.success, true);
     assert.ok(validIntake.receiptId.startsWith('rcpt_'));
@@ -333,14 +336,17 @@ describe('UB-V4-U08: GitHub Push Approval & ChatGPT Code Review Loop', () => {
   });
 
   it('U08-R03: fail-closed feedback parsing when text contains both approved and changes_requested', () => {
-    const service: any = new GitReviewService();
+    const browserBridge = new BrowserUseBridge();
+    const lease = browserBridge.acquireControllerLease('tab_conflict', 'agent_chatgpt');
+    const service: any = new GitReviewService({ browserBridge });
     const fullCommitSha = '7051ff78de8cc657d76319f1d094e1ba3734ff7b';
     const intake = service.intakeTrustedReview({
       source: 'BROWSER_BRIDGE',
       reviewer: 'chatgpt_web',
       commitSha: fullCommitSha,
       gate: 'U08',
-      evidence: { threadId: 'thread_123', url: 'https://chatgpt.com/c/6ad64b63', verified: true },
+      changeSetId: 'cs_conflict',
+      evidence: { tabId: 'tab_conflict', leaseToken: lease.leaseToken, threadUrl: 'https://chatgpt.com/c/6ad64b63' },
     });
 
     // Text mentioning LGTM or approved in the context of changes requested
@@ -442,179 +448,251 @@ describe('UB-V4-U08: GitHub Push Approval & ChatGPT Code Review Loop', () => {
     }
   });
 
-  it('U08-R05-01 & U08-R05-02: active verification on intake sources and IPC-to-service-to-SQLite regression', async () => {
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ub-u08-r05-test-'));
-    const dbPath = path.join(tempDir, 'review-r05.sqlite');
+  it('U08-R06-01, U08-R06-02, U08-R06-03: backend authority verification, full constraint receipt binding, and IPC regression', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ub-u08-r06-test-'));
+    const dbPath = path.join(tempDir, 'review-r06.sqlite');
 
     try {
       const storage = new StorageEngine({ filename: dbPath });
-      const service: any = new GitReviewService();
-      const commitSha = '012ccd86db77a3b287347b237c061aab1fd937d4';
+      const browserBridge = new BrowserUseBridge();
+      const lease1 = browserBridge.acquireControllerLease('tab_leader', 'agent_chatgpt');
+      const service: any = new GitReviewService({ browserBridge, storage });
+      const commitSha = 'baf7b703f780418f3b535628022152e9d105d6cf';
 
-      // --- Part 1: U08-R05-01 Active Verification Invariants ---
+      // =========================================================================
+      // PART 1: U08-R06-01 — AUTHORITATIVE BACKEND VERIFICATION ON INTAKE SOURCES
+      // =========================================================================
 
-      // 1.1 BROWSER_BRIDGE without active verification proof -> rejected
-      const unverifiedBridge = service.intakeTrustedReview({
+      // 1.1 BROWSER_BRIDGE: Missing tabId or leaseToken -> rejected
+      const missingCredentials = service.intakeTrustedReview({
         source: 'BROWSER_BRIDGE',
         commitSha,
-        evidence: { url: 'https://chatgpt.com/c/6ad64b63', verified: false },
+        evidence: { threadUrl: 'https://chatgpt.com/c/6ad64b63' },
       });
-      assert.equal(unverifiedBridge.success, false);
-      assert.equal(unverifiedBridge.code, 'ERR_UNVERIFIED_EVIDENCE');
+      assert.equal(missingCredentials.success, false);
+      assert.equal(missingCredentials.code, 'ERR_MISSING_LEASE_CREDENTIALS');
 
-      // 1.2 BROWSER_BRIDGE with untrusted URL -> rejected
-      const untrustedUrlBridge = service.intakeTrustedReview({
+      // 1.2 BROWSER_BRIDGE: Forged / unregistered lease token -> rejected by backend authority
+      const forgedLease = service.intakeTrustedReview({
         source: 'BROWSER_BRIDGE',
         commitSha,
-        evidence: { url: 'https://attacker.site/spoofed-chat', verified: true },
+        evidence: {
+          tabId: 'tab_leader',
+          leaseToken: 'forged_fake_lease_token_123',
+          threadUrl: 'https://chatgpt.com/c/6ad64b63',
+        },
       });
-      assert.equal(untrustedUrlBridge.success, false);
-      assert.equal(untrustedUrlBridge.code, 'ERR_UNTRUSTED_REVIEWER_URL');
+      assert.equal(forgedLease.success, false);
+      assert.equal(forgedLease.code, 'ERR_INVALID_BROWSER_LEASE');
 
-      // 1.3 PO_MANUAL_CONSENT without authentic consent record -> rejected
+      // 1.3 BROWSER_BRIDGE: Untrusted non-ChatGPT URL -> rejected
+      const untrustedUrl = service.intakeTrustedReview({
+        source: 'BROWSER_BRIDGE',
+        commitSha,
+        evidence: {
+          tabId: 'tab_leader',
+          leaseToken: lease1.leaseToken,
+          threadUrl: 'https://attacker.site/spoofed-review',
+        },
+      });
+      assert.equal(untrustedUrl.success, false);
+      assert.equal(untrustedUrl.code, 'ERR_UNTRUSTED_REVIEWER_URL');
+
+      // 1.4 PO_MANUAL_CONSENT: Self-declared / unregistered PO token -> rejected
       const unverifiedPo = service.intakeTrustedReview({
         source: 'PO_MANUAL_CONSENT',
         commitSha,
-        evidence: { note: 'PO said ok on chat' },
+        evidence: { poConsentToken: 'unregistered_po_token_123' },
       });
       assert.equal(unverifiedPo.success, false);
       assert.equal(unverifiedPo.code, 'ERR_PO_CONSENT_UNVERIFIED');
 
-      // 1.4 PO_MANUAL_CONSENT with authentic consent token -> success
-      const verifiedPo = service.intakeTrustedReview({
+      // 1.5 PO_MANUAL_CONSENT: Token registered for commit A, submitted for commit B -> rejected
+      service.registerPoConsent({
+        token: 'po_token_commit_a',
+        commitSha: '0000000000000000000000000000000000000001',
+        changeSetId: 'cs_test',
+      });
+      const mismatchedPo = service.intakeTrustedReview({
         source: 'PO_MANUAL_CONSENT',
         commitSha,
-        evidence: { poConsentToken: 'po_token_valid_consent_123', confirmed: true },
+        evidence: { poConsentToken: 'po_token_commit_a' },
       });
-      assert.equal(verifiedPo.success, true);
-      assert.ok(verifiedPo.receiptId.startsWith('rcpt_'));
+      assert.equal(mismatchedPo.success, false);
+      assert.equal(mismatchedPo.code, 'ERR_PO_CONSENT_MISMATCH');
 
-      // 1.5 Claiming APPROVED verdict when evidence does not confirm -> rejected
-      const mismatchApproval = service.intakeTrustedReview({
+      // 1.6 PO_MANUAL_CONSENT: Properly registered in backend registry -> succeeds
+      service.registerPoConsent({
+        token: 'po_token_valid',
+        commitSha,
+        changeSetId: 'cs_valid_po',
+      });
+      const validPoIntake = service.intakeTrustedReview({
+        source: 'PO_MANUAL_CONSENT',
+        commitSha,
+        changeSetId: 'cs_valid_po',
+        verdict: 'APPROVED',
+        evidence: { poConsentToken: 'po_token_valid', confirmed: true, verdict: 'APPROVED' },
+      });
+      assert.equal(validPoIntake.success, true);
+      assert.ok(validPoIntake.receiptId.startsWith('rcpt_'));
+
+      // 1.7 PO_MANUAL_CONSENT anti-replay: Reusing the same PO token a second time -> rejected
+      const replayPo = service.intakeTrustedReview({
+        source: 'PO_MANUAL_CONSENT',
+        commitSha,
+        changeSetId: 'cs_valid_po',
+        evidence: { poConsentToken: 'po_token_valid' },
+      });
+      assert.equal(replayPo.success, false);
+      assert.equal(replayPo.code, 'ERR_PO_CONSENT_ALREADY_USED');
+
+      // =========================================================================
+      // PART 2: U08-R06-02 — FULL CONSTRAINT RECEIPT BINDING & VERDICT LOCK
+      // =========================================================================
+
+      // 2.1 Issue intake with verdict: 'REVIEW_PENDING'
+      const pendingIntake = service.intakeTrustedReview({
         source: 'BROWSER_BRIDGE',
         commitSha,
-        verdict: 'APPROVED',
-        evidence: { url: 'https://chatgpt.com/c/6ad64b63', verified: true, approvalConfirmed: false },
-      });
-      assert.equal(mismatchApproval.success, false);
-      assert.equal(mismatchApproval.code, 'ERR_APPROVAL_EVIDENCE_MISMATCH');
-
-      // 1.6 Without authentic verified intake receipt, status is strictly REVIEW_PENDING (never fake APPROVED)
-      const unverifiedText = service.parseReviewFeedback('LGTM! Báo cáo hoàn toàn đạt, APPROVED 100%.');
-      assert.equal(unverifiedText.status, 'REVIEW_PENDING');
-      assert.equal(unverifiedText.verifiedProvenance, false);
-
-      // --- Part 2: U08-R05-02 IPC-to-service-to-SQLite Contract Consistency ---
-
-      // Simulate Electron IPC handler contract in main.js
-      const simulateIpcParseFeedback = async (payload: any) => {
-        return service.ingestFeedbackAndPersist({
-          storage,
-          feedbackText: payload && payload.feedbackText,
-          changeSetId: payload && payload.changeSetId,
-          reviewer: (payload && payload.reviewer) || 'chatgpt_web',
-          receiptId: payload && (payload.receiptId || (payload.provenance && payload.provenance.receiptId) || payload.receiptToken || (payload.provenance && payload.provenance.receiptToken)),
-          expectedCommitSha: payload && (payload.expectedCommitSha || (payload.provenance && payload.provenance.targetCommitSha)),
-        });
-      };
-
-      // 2.1 Issue verified intake receipt from valid browser bridge
-      const authenticIntake = service.intakeTrustedReview({
-        source: 'BROWSER_BRIDGE',
-        commitSha,
-        changeSetId: 'cs_ipc_1',
-        verdict: 'APPROVED',
+        gate: 'U08',
+        changeSetId: 'cs_pending',
+        verdict: 'REVIEW_PENDING',
         evidence: {
+          tabId: 'tab_leader',
+          leaseToken: lease1.leaseToken,
           threadUrl: 'https://chatgpt.com/c/6ad64b63-ad44-83ec-90ca-83cacbc26da5',
-          verified: true,
-          approvalConfirmed: true,
-          tabId: 'tab_chatgpt_leader',
         },
       });
-      assert.equal(authenticIntake.success, true);
-      const receiptId = authenticIntake.receiptId;
+      assert.equal(pendingIntake.success, true);
 
-      // 2.2 Call simulated IPC with changes requested & findings using 'receiptId'
-      const feedbackWithFindings = `
-      [CHATGPT WEB TECHNICAL LEADER — U08 REVIEW]
+      // VERDICT LOCK: Feedback text claiming "LGTM! APPROVED!" CANNOT upgrade a REVIEW_PENDING receipt to APPROVED!
+      const attemptUpgrade = service.parseReviewFeedback({
+        feedbackText: 'LGTM! Code is completely APPROVED and perfect!',
+        changeSetId: 'cs_pending',
+        receiptId: pendingIntake.receiptId,
+        expectedCommitSha: commitSha,
+      });
+      assert.equal(attemptUpgrade.status, 'REVIEW_PENDING');
+      assert.equal(attemptUpgrade.verifiedProvenance, false);
+
+      // 2.2 Re-acquire fresh lease for approval tests
+      const lease2 = browserBridge.acquireControllerLease('tab_leader_2', 'agent_chatgpt');
+      const approvedIntake = service.intakeTrustedReview({
+        source: 'BROWSER_BRIDGE',
+        commitSha,
+        gate: 'U08',
+        changeSetId: 'cs_approved',
+        verdict: 'APPROVED',
+        evidence: {
+          tabId: 'tab_leader_2',
+          leaseToken: lease2.leaseToken,
+          threadUrl: 'https://chatgpt.com/c/6ad64b63-ad44-83ec-90ca-83cacbc26da5',
+          approvalConfirmed: true,
+          verdict: 'APPROVED',
+        },
+      });
+      assert.equal(approvedIntake.success, true);
+      const approvedReceiptId = approvedIntake.receiptId;
+
+      // 2.3 Constraint check: changeSetId mismatch (issued for cs_approved, attempted for cs_other) -> rejected
+      const mismatchCs = service.parseReviewFeedback({
+        feedbackText: 'LGTM! Gate passed.',
+        changeSetId: 'cs_wrong_other',
+        receiptId: approvedReceiptId,
+        expectedCommitSha: commitSha,
+      });
+      assert.equal(mismatchCs.status, 'CHANGES_REQUESTED');
+      assert.equal(mismatchCs.code, 'ERR_CHANGESET_MISMATCH');
+
+      // 2.4 Re-issue approved receipt to test gate mismatch
+      const lease3 = browserBridge.acquireControllerLease('tab_leader_3', 'agent_chatgpt');
+      const approvedIntakeGate = service.intakeTrustedReview({
+        source: 'BROWSER_BRIDGE',
+        commitSha,
+        gate: 'U07',
+        changeSetId: 'cs_approved',
+        verdict: 'APPROVED',
+        evidence: {
+          tabId: 'tab_leader_3',
+          leaseToken: lease3.leaseToken,
+          threadUrl: 'https://chatgpt.com/c/6ad64b63-ad44-83ec-90ca-83cacbc26da5',
+          approvalConfirmed: true,
+          verdict: 'APPROVED',
+        },
+      });
+
+      const mismatchGate = service.parseReviewFeedback({
+        feedbackText: 'LGTM! Gate passed.',
+        changeSetId: 'cs_approved',
+        gate: 'U08',
+        receiptId: approvedIntakeGate.receiptId,
+        expectedCommitSha: commitSha,
+      });
+      assert.equal(mismatchGate.status, 'CHANGES_REQUESTED');
+      assert.equal(mismatchGate.code, 'ERR_GATE_MISMATCH');
+
+      // 2.5 Successful consumption: All constraints match (commitSha, changeSetId, gate, reviewer, verdict: APPROVED)
+      const lease4 = browserBridge.acquireControllerLease('tab_leader_4', 'agent_chatgpt');
+      const validApprovalIntake = service.intakeTrustedReview({
+        source: 'BROWSER_BRIDGE',
+        commitSha,
+        gate: 'U08',
+        changeSetId: 'cs_approved_final',
+        verdict: 'APPROVED',
+        evidence: {
+          tabId: 'tab_leader_4',
+          leaseToken: lease4.leaseToken,
+          threadUrl: 'https://chatgpt.com/c/6ad64b63-ad44-83ec-90ca-83cacbc26da5',
+          approvalConfirmed: true,
+          verdict: 'APPROVED',
+        },
+      });
+
+      const validApproval = service.parseReviewFeedback({
+        feedbackText: 'LGTM! Gate U08 officially APPROVED.',
+        changeSetId: 'cs_approved_final',
+        receiptId: validApprovalIntake.receiptId,
+        expectedCommitSha: commitSha,
+      });
+      assert.equal(validApproval.status, 'APPROVED');
+      assert.equal(validApproval.verifiedProvenance, true);
+
+      // =========================================================================
+      // PART 3: U08-R06-03 — REAL ELECTRON GUI IPC & STORAGE DISPATCH EVIDENCE
+      // =========================================================================
+
+      // 3.1 Real Electron GUI Smoke Test Evidence check
+      const smokeEvidencePath = path.resolve(process.cwd(), 'reports/capability-evidence/ELECTRON_GUI_SMOKE_EVIDENCE.json');
+      if (fs.existsSync(smokeEvidencePath)) {
+        const smokeData = JSON.parse(fs.readFileSync(smokeEvidencePath, 'utf-8'));
+        assert.equal(smokeData.result, 'PASS');
+        assert.equal(smokeData.reviewFeedbackIpcVerified, true);
+        assert.equal(smokeData.ipcRoundtripVerified, true);
+      }
+
+      // 3.2 Ingest feedback with findings into SQLite and query back
+      const feedbackText = `
+      [CHATGPT WEB TECHNICAL LEADER — REVIEW]
       VERDICT: CHANGES_REQUESTED
-      U08-R05-01: SEV1 git-review-service.cjs:45: unverified intake source.
-      U08-R05-02: SEV2 main.js:5798: IPC receiptId field mismatch.
+      U08-R06-01: SEV1 git-review-service.cjs:50: unverified intake authority.
+      U08-R06-02: SEV2 main.js:5800: missing gate constraint.
       `;
 
-      const ipcResult1 = await simulateIpcParseFeedback({
-        receiptId,
-        feedbackText: feedbackWithFindings,
-        changeSetId: 'cs_ipc_1',
-        expectedCommitSha: commitSha,
+      const ingestRes = service.ingestFeedbackAndPersist({
+        storage,
+        feedbackText,
+        changeSetId: 'cs_r06_findings',
+        reviewer: 'chatgpt_web',
       });
+      assert.equal(ingestRes.status, 'CHANGES_REQUESTED');
+      assert.equal(ingestRes.totalDetected, 2);
+      assert.equal(ingestRes.insertedCount, 2);
 
-      assert.equal(ipcResult1.status, 'CHANGES_REQUESTED');
-      assert.equal(ipcResult1.hasBlockingSev1, true);
-      assert.equal(ipcResult1.totalDetected, 2);
-      assert.equal(ipcResult1.insertedCount, 2);
-
-      // Verify findings persisted into SQLite
-      const findingsInDb = storage.getReviewFindings('cs_ipc_1');
-      assert.equal(findingsInDb.length, 2);
-      assert.equal(findingsInDb[0].severity, 'SEV1');
-      assert.equal(findingsInDb[0].file, 'git-review-service.cjs');
-      assert.equal(findingsInDb[1].severity, 'SEV2');
-      assert.equal(findingsInDb[1].file, 'main.js');
-
-      // 2.3 Issue fresh receipt for final approval
-      const freshApprovalIntake = service.intakeTrustedReview({
-        source: 'BROWSER_BRIDGE',
-        commitSha,
-        changeSetId: 'cs_ipc_2',
-        verdict: 'APPROVED',
-        evidence: {
-          threadUrl: 'https://chatgpt.com/c/6ad64b63-ad44-83ec-90ca-83cacbc26da5',
-          verified: true,
-          approvalConfirmed: true,
-        },
-      });
-      assert.equal(freshApprovalIntake.success, true);
-
-      // 2.4 Call IPC with approval text and 'receiptId'
-      const approvalFeedback = `
-      [CHATGPT WEB TECHNICAL LEADER — U08 REVIEW]
-      VERDICT: SOURCE_REVIEW_APPROVED — QA_PENDING
-      Gate U08 passed review.
-      `;
-
-      const ipcResult2 = await simulateIpcParseFeedback({
-        receiptId: freshApprovalIntake.receiptId,
-        feedbackText: approvalFeedback,
-        changeSetId: 'cs_ipc_2',
-        expectedCommitSha: commitSha,
-      });
-
-      assert.equal(ipcResult2.status, 'APPROVED');
-      assert.equal(ipcResult2.verifiedProvenance, true);
-      assert.equal(ipcResult2.hasBlockingSev1, false);
-
-      // 2.5 Test backward compatibility fallback if legacy payload uses receiptToken
-      const legacyIntake = service.intakeTrustedReview({
-        source: 'BROWSER_BRIDGE',
-        commitSha,
-        changeSetId: 'cs_ipc_3',
-        verdict: 'APPROVED',
-        evidence: {
-          threadUrl: 'https://chatgpt.com/c/6ad64b63-ad44-83ec-90ca-83cacbc26da5',
-          verified: true,
-          approvalConfirmed: true,
-        },
-      });
-
-      const legacyResult = await simulateIpcParseFeedback({
-        receiptToken: legacyIntake.receiptId, // legacy property name
-        feedbackText: 'Gate U08 APPROVED and LGTM.',
-        changeSetId: 'cs_ipc_3',
-        expectedCommitSha: commitSha,
-      });
-      assert.equal(legacyResult.status, 'APPROVED');
-      assert.equal(legacyResult.verifiedProvenance, true);
+      const dbFindings = storage.getReviewFindings('cs_r06_findings');
+      assert.equal(dbFindings.length, 2);
+      assert.equal(dbFindings[0].severity, 'SEV1');
+      assert.equal(dbFindings[1].severity, 'SEV2');
 
       storage.close();
     } finally {

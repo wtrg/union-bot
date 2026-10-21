@@ -19,23 +19,55 @@ class GitReviewService {
   constructor(options = {}) {
     this.repoRoot = options.repoRoot || process.cwd();
     this.allowedReviewBranch = options.allowedReviewBranch || 'feature/union-bot-v4-autonomous';
+    this.browserBridge = options.browserBridge || null;
+    this.storage = options.storage || null;
     this.authorizedReviewReceipts = new Map(); // receiptId -> receipt object
+    this.registeredPoConsents = new Map(); // poConsentToken -> { token, commitSha, changeSetId, gate, expiresAt, used }
+  }
+
+  setBrowserBridge(bridge) {
+    this.browserBridge = bridge;
+  }
+
+  setStorage(storage) {
+    this.storage = storage;
   }
 
   /**
-   * Trusted Review Intake: Only callable by trusted backend channels (U08-R04-01, U08-R05-01).
-   * Renderer self-issuance is strictly prohibited.
-   * Requires authentic verified proof (browser bridge lease or PO explicit consent).
+   * Registers a backend-authorized Product Owner manual consent record (U08-R06-01).
+   * Callers cannot self-declare PO consent without registering with backend authority.
+   */
+  registerPoConsent(params) {
+    const { token, commitSha, changeSetId = 'default', gate = 'U08', ttlMs = 3600000 } = params || {};
+    if (!token || typeof token !== 'string') throw new Error('Valid PO consent token required');
+    if (!commitSha || !/^[0-9a-f]{40}$/i.test(commitSha.trim())) throw new Error('Full 40-char commitSha required');
+
+    this.registeredPoConsents.set(token, {
+      token,
+      commitSha: commitSha.trim().toLowerCase(),
+      changeSetId,
+      gate,
+      expiresAt: Date.now() + ttlMs,
+      used: false,
+    });
+    return token;
+  }
+
+  /**
+   * Trusted Review Intake: Only callable by trusted backend channels (U08-R04-01, U08-R05-01, U08-R06-01).
+   * Verifies against authoritative backend registries (BrowserUseBridge lease or PO consent registry).
+   * Fails closed: if no verifiable authority, returns error and never issues false receipt.
    */
   intakeTrustedReview(params) {
     const {
       source,
       reviewer = 'chatgpt_web',
       commitSha,
-      gate,
+      gate = 'U08',
       changeSetId = 'default',
       verdict = 'REVIEW_PENDING',
       evidence,
+      browserBridge = this.browserBridge,
     } = params || {};
 
     // 1. Source verification (no renderer self-issuance)
@@ -65,23 +97,18 @@ class GitReviewService {
       };
     }
 
-    // 4. Active verification of source & reviewer evidence (U08-R05-01)
+    const normSha = commitSha.trim().toLowerCase();
+
+    // 4. Authoritative backend verification (U08-R06-01)
     if (source === 'BROWSER_BRIDGE') {
-      // Must have authentic verification status and trusted reviewer origin
-      const isVerified = evidence.verified === true || evidence.verificationStatus === 'VERIFIED';
-      const targetUrl = evidence.threadUrl || evidence.url || '';
+      // Must have authentic lease credentials and trusted reviewer URL
+      const { tabId, leaseToken, threadUrl, url } = evidence;
+      const targetUrl = threadUrl || url || '';
+
       const isTrustedReviewerUrl =
         typeof targetUrl === 'string' &&
         (/^https:\/\/chatgpt\.com\/c\/[a-zA-Z0-9_-]+/i.test(targetUrl) ||
           targetUrl.startsWith('https://chatgpt.com/'));
-
-      if (!isVerified) {
-        return {
-          success: false,
-          error: 'Review Intake Violation: Browser bridge review evidence lacks active verification proof (verified !== true).',
-          code: 'ERR_UNVERIFIED_EVIDENCE',
-        };
-      }
 
       if (!isTrustedReviewerUrl) {
         return {
@@ -90,22 +117,92 @@ class GitReviewService {
           code: 'ERR_UNTRUSTED_REVIEWER_URL',
         };
       }
-    } else if (source === 'PO_MANUAL_CONSENT') {
-      // Must have explicit verified PO consent record
-      const hasPoConsent =
-        Boolean(evidence.poConsentToken) ||
-        (evidence.authorizedBy === 'product_owner' && (evidence.consentGranted === true || evidence.confirmed === true));
 
-      if (!hasPoConsent) {
+      // Check authoritative browser lease registry
+      if (!tabId || !leaseToken) {
         return {
           success: false,
-          error: 'Review Intake Violation: Product Owner manual consent requires explicit verified authorization record.',
+          error: 'Review Intake Violation: Browser bridge review evidence missing tabId or leaseToken.',
+          code: 'ERR_MISSING_LEASE_CREDENTIALS',
+        };
+      }
+
+      const activeBridge = browserBridge || this.browserBridge;
+      if (!activeBridge || typeof activeBridge.verifyLease !== 'function') {
+        return {
+          success: false,
+          error: 'Review Intake Violation: No authoritative browser bridge available to verify lease.',
+          code: 'ERR_UNVERIFIED_EVIDENCE',
+        };
+      }
+
+      const leaseValid = activeBridge.verifyLease(tabId, leaseToken);
+      if (!leaseValid) {
+        return {
+          success: false,
+          error: 'Review Intake Violation: Browser lease token is invalid, expired, or not owned by tabId.',
+          code: 'ERR_INVALID_BROWSER_LEASE',
+        };
+      }
+    } else if (source === 'PO_MANUAL_CONSENT') {
+      const { poConsentToken } = evidence;
+      if (!poConsentToken || typeof poConsentToken !== 'string') {
+        return {
+          success: false,
+          error: 'Review Intake Violation: Product Owner manual consent requires valid poConsentToken.',
+          code: 'ERR_PO_CONSENT_UNVERIFIED',
+        };
+      }
+
+      // 1. Check in-memory registered PO consents
+      const registered = this.registeredPoConsents.get(poConsentToken);
+      let verifiedConsent = false;
+
+      if (registered) {
+        if (registered.used) {
+          return {
+            success: false,
+            error: 'Review Intake Violation: PO consent token has already been consumed (replay blocked).',
+            code: 'ERR_PO_CONSENT_ALREADY_USED',
+          };
+        }
+        if (registered.expiresAt <= Date.now()) {
+          return {
+            success: false,
+            error: 'Review Intake Violation: PO consent token has expired.',
+            code: 'ERR_PO_CONSENT_EXPIRED',
+          };
+        }
+        if (registered.commitSha !== normSha) {
+          return {
+            success: false,
+            error: `Review Intake Violation: PO consent token was issued for commit ${registered.commitSha}, not ${normSha}.`,
+            code: 'ERR_PO_CONSENT_MISMATCH',
+          };
+        }
+        registered.used = true;
+        verifiedConsent = true;
+      } else if (this.storage && typeof this.storage.consumePermissionGrant === 'function') {
+        // 2. Check SQLite permission_grants
+        verifiedConsent = this.storage.consumePermissionGrant({
+          id: poConsentToken,
+          payloadDigest: normSha,
+          actor: 'product_owner',
+          action: 'PO_REVIEW_APPROVAL',
+        });
+      }
+
+      if (!verifiedConsent) {
+        return {
+          success: false,
+          error: 'Review Intake Violation: PO consent token not found in backend registry or rejected by database.',
           code: 'ERR_PO_CONSENT_UNVERIFIED',
         };
       }
     }
 
-    // 5. Verdict consistency: If verdict is claimed as APPROVED, evidence must confirm approval
+    // 5. Verdict consistency (U08-R06-01, U08-R06-02):
+    // If verdict is claimed as APPROVED, evidence must confirm approval
     let effectiveVerdict = verdict;
     if (verdict === 'APPROVED') {
       const evidenceApproves =
@@ -119,6 +216,8 @@ class GitReviewService {
           code: 'ERR_APPROVAL_EVIDENCE_MISMATCH',
         };
       }
+    } else {
+      effectiveVerdict = 'REVIEW_PENDING';
     }
 
     const receiptId = `rcpt_${crypto.randomBytes(16).toString('hex')}`;
@@ -126,7 +225,7 @@ class GitReviewService {
       id: receiptId,
       source,
       reviewer,
-      commitSha: commitSha.trim().toLowerCase(),
+      commitSha: normSha,
       gate: gate || 'U08',
       changeSetId,
       verdict: effectiveVerdict,
@@ -141,9 +240,10 @@ class GitReviewService {
   }
 
   /**
-   * Consumes a trusted review receipt atomically (anti-replay).
+   * Consumes a trusted review receipt atomically with full constraint binding (U08-R06-02).
+   * Ràng buộc đầy đủ commitSha, changeSetId, gate, reviewer, verdict và trạng thái single-use.
    */
-  consumeReviewReceipt(receiptId, expectedCommitSha) {
+  consumeReviewReceipt(receiptId, expectedParams = {}) {
     if (!receiptId || !this.authorizedReviewReceipts.has(receiptId)) {
       return { error: 'Review receipt is invalid or does not exist.', code: 'ERR_INVALID_REVIEW_RECEIPT' };
     }
@@ -158,12 +258,54 @@ class GitReviewService {
       return { error: 'Review receipt has expired.', code: 'ERR_RECEIPT_EXPIRED' };
     }
 
+    let expectedCommitSha = null;
+    let expectedChangeSetId = null;
+    let expectedGate = null;
+    let expectedReviewer = null;
+
+    if (typeof expectedParams === 'string') {
+      expectedCommitSha = expectedParams;
+    } else if (expectedParams && typeof expectedParams === 'object') {
+      expectedCommitSha = expectedParams.expectedCommitSha || expectedParams.commitSha || null;
+      expectedChangeSetId = expectedParams.expectedChangeSetId || expectedParams.changeSetId || null;
+      expectedGate = expectedParams.expectedGate || expectedParams.gate || null;
+      expectedReviewer = expectedParams.expectedReviewer || expectedParams.reviewer || null;
+    }
+
+    // Strict constraint checking
     if (expectedCommitSha) {
-      const exp = expectedCommitSha.trim().toLowerCase();
-      if (receipt.commitSha !== exp) {
+      const expSha = expectedCommitSha.trim().toLowerCase();
+      if (receipt.commitSha !== expSha) {
         return {
-          error: `Receipt commit SHA (${receipt.commitSha}) does not match expected SHA (${exp}).`,
-          code: 'ERR_INVALID_REVIEW_RECEIPT',
+          error: `Receipt commit SHA (${receipt.commitSha}) does not match expected SHA (${expSha}).`,
+          code: 'ERR_COMMIT_SHA_MISMATCH',
+        };
+      }
+    }
+
+    if (expectedChangeSetId) {
+      if (receipt.changeSetId !== expectedChangeSetId) {
+        return {
+          error: `Receipt changeSetId ('${receipt.changeSetId}') does not match expected ('${expectedChangeSetId}').`,
+          code: 'ERR_CHANGESET_MISMATCH',
+        };
+      }
+    }
+
+    if (expectedGate) {
+      if (receipt.gate !== expectedGate) {
+        return {
+          error: `Receipt gate ('${receipt.gate}') does not match expected gate ('${expectedGate}').`,
+          code: 'ERR_GATE_MISMATCH',
+        };
+      }
+    }
+
+    if (expectedReviewer) {
+      if (receipt.reviewer !== expectedReviewer) {
+        return {
+          error: `Receipt reviewer ('${receipt.reviewer}') does not match expected reviewer ('${expectedReviewer}').`,
+          code: 'ERR_REVIEWER_MISMATCH',
         };
       }
     }
@@ -488,6 +630,8 @@ ${criteriaItems}
     let feedbackText = '';
     let receiptId = null;
     let expectedCommitSha = null;
+    let gate = 'U08';
+    let reviewer = 'chatgpt_web';
 
     if (typeof feedbackInput === 'string') {
       feedbackText = feedbackInput;
@@ -505,6 +649,12 @@ ${criteriaItems}
         null;
       if (feedbackInput.changeSetId) {
         changeSetId = feedbackInput.changeSetId;
+      }
+      if (feedbackInput.gate) {
+        gate = feedbackInput.gate;
+      }
+      if (feedbackInput.reviewer) {
+        reviewer = feedbackInput.reviewer;
       }
     }
 
@@ -542,7 +692,7 @@ ${criteriaItems}
         findings.push({
           id: `rf_fb_${Date.now()}_${findings.length}`,
           changeSetId,
-          reviewer: 'chatgpt_web',
+          reviewer,
           file,
           line: lineNum,
           severity: 'SEV1',
@@ -553,7 +703,7 @@ ${criteriaItems}
         findings.push({
           id: `rf_fb_${Date.now()}_${findings.length}`,
           changeSetId,
-          reviewer: 'chatgpt_web',
+          reviewer,
           file,
           line: lineNum,
           severity: 'SEV2',
@@ -580,11 +730,26 @@ ${criteriaItems}
         !lower.includes('not approved');
 
       if (hasApprovalKeywords && findings.length === 0) {
-        // Blocker 2 / U08-R04-01 / U08-R05-01: Verify and atomically consume trusted review receipt
+        // Blocker 2 / U08-R04-01 / U08-R05-01 / U08-R06-02:
+        // Verify and atomically consume trusted review receipt with full constraint binding
         if (receiptId) {
-          const consumeRes = this.consumeReviewReceipt(receiptId, expectedCommitSha);
+          const consumeRes = this.consumeReviewReceipt(receiptId, {
+            expectedCommitSha,
+            expectedChangeSetId: changeSetId,
+            expectedGate: gate,
+            expectedReviewer: reviewer,
+          });
+
           if (consumeRes && consumeRes.success) {
-            status = 'APPROVED';
+            // STRICT VERDICT ENFORCEMENT (U08-R06-02):
+            // Only a receipt whose verified verdict is strictly 'APPROVED' can produce status = 'APPROVED'!
+            // A receipt with verdict: 'REVIEW_PENDING' CANNOT be upgraded to 'APPROVED' by text keywords.
+            if (consumeRes.receipt.verdict === 'APPROVED') {
+              status = 'APPROVED';
+            } else {
+              // Receipt has not been approved by authority; status remains REVIEW_PENDING
+              status = 'REVIEW_PENDING';
+            }
           } else {
             // Receipt mismatch, already used (replay), or non-existent -> rejected
             return {
@@ -616,7 +781,7 @@ ${criteriaItems}
   }
 
   /**
-   * Parses review feedback and atomically persists findings into SQLite (U08-R04, U08-R05-02).
+   * Parses review feedback and atomically persists findings into SQLite (U08-R04, U08-R05-02, U08-R06-02).
    */
   ingestFeedbackAndPersist(params) {
     const {
@@ -626,6 +791,7 @@ ${criteriaItems}
       reviewer = 'chatgpt_web',
       receiptId = null,
       expectedCommitSha = null,
+      gate = 'U08',
     } = params || {};
 
     const resolvedReceiptId =
@@ -636,13 +802,21 @@ ${criteriaItems}
       null;
 
     const parsed = this.parseReviewFeedback(
-      { feedbackText, changeSetId, receiptId: resolvedReceiptId, expectedCommitSha },
+      {
+        feedbackText,
+        changeSetId,
+        receiptId: resolvedReceiptId,
+        expectedCommitSha,
+        gate,
+        reviewer,
+      },
       changeSetId
     );
 
     let persistenceResult = { inserted: 0, duplicates: 0, findings: [] };
-    if (storage && parsed.findings.length > 0) {
-      persistenceResult = storage.ingestReviewFindingsBatch(
+    const effectiveStorage = storage || this.storage;
+    if (effectiveStorage && parsed.findings.length > 0) {
+      persistenceResult = effectiveStorage.ingestReviewFindingsBatch(
         changeSetId,
         reviewer,
         parsed.findings.map((f) => ({
@@ -662,6 +836,8 @@ ${criteriaItems}
       duplicateCount: persistenceResult.duplicates,
       persistedFindings: persistenceResult.findings,
       verifiedProvenance: parsed.verifiedProvenance,
+      error: parsed.error,
+      code: parsed.code,
     };
   }
 }
