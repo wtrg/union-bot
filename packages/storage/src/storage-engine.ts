@@ -26,6 +26,10 @@ import {
   ArtifactHandoffSchema,
   type PermissionGrant,
   PermissionGrantSchema,
+  type ReviewFinding,
+  ReviewFindingSchema,
+  type ReviewFindingState,
+  type FindingSeverity,
 } from '../../protocol/src/index.ts';
 import { UnionBotError } from './errors.ts';
 
@@ -561,6 +565,113 @@ export class StorageEngine {
 
     const res = this.db.prepare('UPDATE permission_grants SET used = 1 WHERE id = ? AND used = 0').run(id);
     return res.changes > 0;
+  }
+
+  // --- Review Findings Persistence & Ingestion (UB-V4-U08) ---
+  public saveReviewFinding(finding: ReviewFinding): void {
+    const parsed = ReviewFindingSchema.parse(finding);
+    this.db.prepare(`
+      INSERT OR REPLACE INTO review_findings (
+        id, change_set_id, reviewer, file, line, severity, description, reproduction, state, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      parsed.id,
+      parsed.changeSetId,
+      parsed.reviewer,
+      parsed.file,
+      parsed.line !== undefined ? parsed.line : null,
+      parsed.severity,
+      parsed.description,
+      parsed.reproduction || null,
+      parsed.state,
+      new Date(parsed.createdAt).toISOString()
+    );
+  }
+
+  public getReviewFindings(changeSetId?: string, state?: string): ReviewFinding[] {
+    let query = 'SELECT * FROM review_findings WHERE 1=1';
+    const params: any[] = [];
+    if (changeSetId) {
+      query += ' AND change_set_id = ?';
+      params.push(changeSetId);
+    }
+    if (state) {
+      query += ' AND state = ?';
+      params.push(state);
+    }
+    query += ' ORDER BY created_at ASC';
+
+    const rows = this.db.prepare(query).all(...params) as any[];
+    return rows.map((r) => ({
+      id: r.id,
+      changeSetId: r.change_set_id,
+      reviewer: r.reviewer,
+      file: r.file,
+      line: r.line !== null ? Number(r.line) : undefined,
+      severity: r.severity as FindingSeverity,
+      description: r.description,
+      reproduction: r.reproduction || undefined,
+      state: r.state as ReviewFindingState,
+      createdAt: new Date(r.created_at).getTime(),
+    }));
+  }
+
+  public updateReviewFindingState(id: string, state: ReviewFindingState): boolean {
+    const res = this.db.prepare('UPDATE review_findings SET state = ? WHERE id = ?').run(state, id);
+    return res.changes > 0;
+  }
+
+  public ingestReviewFindingsBatch(
+    changeSetId: string,
+    reviewer: string,
+    rawFindings: Array<{ file?: string; line?: number; severity: FindingSeverity; description: string; reproduction?: string }>
+  ): { inserted: number; duplicates: number; findings: ReviewFinding[] } {
+    return this.transaction(() => {
+      const existing = this.getReviewFindings(changeSetId);
+      const existingKeySet = new Set(
+        existing.map((e) => `${e.reviewer}::${(e.file || '').trim()}::${e.description.trim()}`)
+      );
+
+      let insertedCount = 0;
+      let duplicateCount = 0;
+      const resultFindings: ReviewFinding[] = [];
+
+      for (const item of rawFindings) {
+        const file = (item.file || 'unknown').trim();
+        const desc = item.description.trim();
+        const dedupeKey = `${reviewer}::${file}::${desc}`;
+
+        if (existingKeySet.has(dedupeKey)) {
+          duplicateCount++;
+          continue;
+        }
+
+        const now = Date.now();
+        const finding: ReviewFinding = {
+          id: `rf_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+          changeSetId,
+          reviewer,
+          file,
+          line: item.line,
+          severity: item.severity,
+          description: desc,
+          reproduction: item.reproduction,
+          state: 'OPEN',
+          createdAt: now,
+        };
+
+        this.saveReviewFinding(finding);
+        existingKeySet.add(dedupeKey);
+        insertedCount++;
+        resultFindings.push(finding);
+      }
+
+      return {
+        inserted: insertedCount,
+        duplicates: duplicateCount,
+        findings: resultFindings,
+      };
+    });
   }
 
   // --- Transaction Support ---

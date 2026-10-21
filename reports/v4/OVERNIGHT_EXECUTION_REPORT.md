@@ -38,11 +38,11 @@ Toàn bộ các tính năng cốt lõi, schema database SQLite 24 bảng, hệ t
 | **U05** | Artifact Handoff & Multimodal Fidelity | `RU05` | `a2d1279` | `ArtifactHandoffService`, CAS byte hash SHA-256, cách ly file thực thi nguy hiểm, 6/6 tests PASS | **0 VNĐ** (PASS) |
 | **U06** | `/work`: Plan Registry & Goal Approval | `RU06` | `4a970b4` | `PlanRegistryService`, DAG milestone, chặn duyệt khi có SEV1 blocker, 4/4 tests PASS | **0 VNĐ** (PASS) |
 | **U07** | WorkflowSupervisor: Durable Orchestration | `RU07` | `742588c` | Lease thực thi tái tục (TTL Heartbeat), Crash recovery khi khởi động, `/pause` & `/resume`, 4/4 tests PASS | **0 VNĐ** (PASS) |
-| **U08** | GitHub Push Approval & ChatGPT Review Loop | `RU08` | `183b077` | `GitReviewService`, fail-closed git safety, push approval digest, parser phản hồi review (4/4 tests) | **0 VNĐ** (PASS) |
+| **U08** | GitHub Push Approval & ChatGPT Review Loop | `RU08` | `183b077` | `GitReviewService`, fail-closed git safety, push changeset digest, 5 findings (U08-R01..R05) resolved, 8/8 tests PASS | **0 VNĐ** (PASS) |
 | **U09** | Real Browser-Use & Context Bridge | `RU09` | `ee8df56` | `BrowserUseBridge`, lease độc quyền cho tab, DOM snapshot kèm hash SHA-256, che giấu dữ liệu nhạy cảm (4/4 tests) | **0 VNĐ** (PASS) |
 | **U10** | Pragmatic Low-Noise UX & Accessibility | `RU10` | `439cbb9` | `ActivityFeedPanel.tsx`, `CommandPaletteModal.tsx` (`Ctrl+K`), High-contrast dark/light theme, Vite build PASS | **0 VNĐ** (PASS) |
 | **U11** | Security, Reliability & Performance Guard | `RU11` | `1fed9df` | `SecurityGuardService`, phát hiện injection & Trojan Source bidi (`\u202E`), kiểm toán 0đ egress, SQLite health check (4/4 tests) | **0 VNĐ** (PASS) |
-| **U12** | End-to-End UAT, Windows Portable & Release | `RU12` | `14601fc` | 47/47 V4 unit tests, gói Portable Windows x64 tại `release/union-bot-portable-win-x64/`, Dossier & HDSD Tiếng Việt | **0 VNĐ** (PASS) |
+| **U12** | End-to-End UAT, Windows Portable & Release | `RU12` | `14601fc` | 51/51 V4 unit tests, gói Portable Windows x64 tại `release/union-bot-portable-win-x64/`, Dossier & HDSD Tiếng Việt | **0 VNĐ** (PASS) |
 
 ---
 
@@ -72,10 +72,10 @@ d4c87ea feat(v3.1): final acceptance release - project scoping, codex thread iso
 
 ## 4. CHI TIẾT BẰNG CHỨNG KIỂM THỬ (TEST VERIFICATION EVIDENCE)
 
-### 4.1. Unit & Integration Tests (10/10 Suites, 47/47 Tests PASS)
+### 4.1. Unit & Integration Tests (10/10 Suites, 51/51 Tests PASS)
 - Lệnh chạy: `npx tsx --test tests/v4/unit/*.test.ts`
-- Thời gian chạy: ~830ms
-- Tỷ lệ thành công: **100% (47/47 PASS, 0 FAIL, 0 CANCELLED, 0 SKIPPED)**
+- Thời gian chạy: ~850ms
+- Tỷ lệ thành công: **100% (51/51 PASS, 0 FAIL, 0 CANCELLED, 0 SKIPPED)**
   1. `u01_schema_and_events.test.ts` (6 tests): Kiểm tra tính hợp lệ của GoalSchema, PlanRevisionSchema, requirement facts, open questions, ActivityEvent immutable stream, single-use PermissionGrant.
   2. `u02_discovery_service.test.ts` (4 tests): Kiểm tra parser slash command (`/brief`, `/scope`, `/ask`), vòng đời fact cập nhật, de-duplication open questions, `DiscoveryReadyGate` tính digest.
   3. `u03_capability_registry.test.ts` (5 tests): Xác thực runtime truth, phát hiện Cloudflare/Login, cấp badge `FREE_LOCAL` cho Antigravity 1.4.2 và `PENDING_QA` cho Codex.

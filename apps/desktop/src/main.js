@@ -5777,12 +5777,35 @@ ipcMain.handle('union-bot:generate-review-packet', async (event, payload) => {
   }
 });
 
+ipcMain.handle('union-bot:validate-push-execution', async (event, payload) => {
+  if (!checkSenderAuthorized(event)) return { allowed: false, error: 'Unauthorized IPC sender' };
+  try {
+    return gitReviewService.validatePushExecution({ ...(payload || {}), storage });
+  } catch (err) {
+    return { allowed: false, error: err.message };
+  }
+});
+
 ipcMain.handle('union-bot:parse-review-feedback', async (event, payload) => {
   if (!checkSenderAuthorized(event)) return { status: 'PENDING', findings: [] };
   try {
-    return gitReviewService.parseReviewFeedback(payload.feedbackText, payload.changeSetId);
+    return gitReviewService.ingestFeedbackAndPersist({
+      storage,
+      feedbackText: payload && payload.feedbackText,
+      changeSetId: payload && payload.changeSetId,
+      reviewer: (payload && payload.reviewer) || 'chatgpt_web',
+    });
   } catch (err) {
     return { status: 'ERROR', error: err.message, findings: [] };
+  }
+});
+
+ipcMain.handle('union-bot:get-review-findings', async (event, payload) => {
+  if (!checkSenderAuthorized(event)) return [];
+  try {
+    return storage.getReviewFindings(payload && payload.changeSetId, payload && payload.state);
+  } catch (err) {
+    return [];
   }
 });
 

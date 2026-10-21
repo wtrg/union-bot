@@ -62,8 +62,8 @@ All 13 gates (U00 to U12) achieved 100% completion with complete auditability, v
 ## 4. VERIFICATION EVIDENCE SUMMARY
 
 - **Unit & Regression Test Suites**:
-  - `tests/v4/unit/*.test.ts`: **47 / 47 PASS (100%)**
-  - Execution duration: ~420ms
+  - `tests/v4/unit/*.test.ts`: **51 / 51 PASS (100%)**
+  - Execution duration: ~850ms
 - **TypeScript Compilation**:
   - `pnpm typecheck`: **0 errors** (tsc root & workspace-ui strict)
 - **UI Production Build**:

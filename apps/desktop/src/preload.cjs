@@ -261,6 +261,9 @@ const api = {
   validatePushSafety: async (payload) => {
     return ipcRenderer.invoke('union-bot:validate-push-safety', payload);
   },
+  validatePushExecution: async (payload) => {
+    return ipcRenderer.invoke('union-bot:validate-push-execution', payload);
+  },
   computePushDigest: async (payload) => {
     return ipcRenderer.invoke('union-bot:compute-push-digest', payload);
   },
@@ -269,6 +272,9 @@ const api = {
   },
   parseReviewFeedback: async (payload) => {
     return ipcRenderer.invoke('union-bot:parse-review-feedback', payload);
+  },
+  getReviewFindings: async (payload) => {
+    return ipcRenderer.invoke('union-bot:get-review-findings', payload);
   },
 
   // Phase V4: Real Browser-Use & Context Bridge (UB-V4-U09)
