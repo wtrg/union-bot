@@ -54,15 +54,15 @@ export const PROVIDER_REGISTRY: Record<ProviderId, ProviderDefinition> = {
     id: 'search',
     name: 'Web Search',
     partition: 'persist:mcb-web-search',
-    defaultUrl: 'https://duckduckgo.com/',
-    approvedOrigin: 'https://duckduckgo.com',
+    defaultUrl: 'https://www.google.com/',
+    approvedOrigin: 'https://www.google.com',
   },
   custom: {
     id: 'custom',
     name: 'Custom URL',
     partition: 'persist:mcb-web-custom',
-    defaultUrl: 'https://duckduckgo.com/',
-    approvedOrigin: 'https://duckduckgo.com',
+    defaultUrl: 'https://www.google.com/',
+    approvedOrigin: 'https://www.google.com',
   },
   codex: {
     id: 'codex',
@@ -99,13 +99,13 @@ export const BLOCKED_API_PATTERNS = [
  */
 export function isCostGuardBlockedUrl(url: string): boolean {
   if (!url || typeof url !== 'string') return false;
-  const lower = url.toLowerCase();
-  for (const pattern of BLOCKED_API_PATTERNS) {
-    if (lower.includes(pattern)) {
-      return true;
-    }
+  try {
+    // OAuth audience/redirect parameters are not network destinations.
+    const host = new URL(url).hostname.toLowerCase().replace(/\.$/, '');
+    return BLOCKED_API_PATTERNS.some(domain => host === domain || host.endsWith(`.${domain}`));
+  } catch {
+    return true;
   }
-  return false;
 }
 
 /**

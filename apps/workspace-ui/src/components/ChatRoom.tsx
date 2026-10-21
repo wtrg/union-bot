@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { EnvelopeView, AttachmentInfo, MessagePart } from '../types.ts';
 
 interface ChatRoomProps {
@@ -418,6 +418,20 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ roomName, envelopes, onSendM
   const [exportStatus, setExportStatus] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const feedRef = useRef<HTMLDivElement>(null);
+  const followBottom = useRef(true);
+  useEffect(() => {
+    const feed = feedRef.current;
+    if (!feed) return;
+    const observer = new ResizeObserver(() => {
+      if (followBottom.current) feed.scrollTop = feed.scrollHeight;
+    });
+    observer.observe(feed);
+    return () => observer.disconnect();
+  }, []);
+  useEffect(() => {
+    if (followBottom.current && feedRef.current) feedRef.current.scrollTop = feedRef.current.scrollHeight;
+  }, [envelopes]);
 
   const handleExportBundle = async () => {
     if (!window.unionBotAPI?.exportTranscriptBundle) return;
@@ -471,6 +485,7 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ roomName, envelopes, onSendM
     if ((!textToSend && pendingAttachments.length === 0) || isSubmitting) return;
 
     setIsSubmitting(true);
+    followBottom.current = true;
     try {
       const attachmentsToSend = [...pendingAttachments];
       const result = await onSendMessage(textToSend || '(Attached files)', attachmentsToSend);
@@ -671,7 +686,10 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ roomName, envelopes, onSendM
       </div>
 
       {/* Chat Messages Feed */}
-      <div className="chat-feed">
+      <div className="chat-feed" ref={feedRef} onScroll={() => {
+        const feed = feedRef.current;
+        if (feed && !followBottom.current) followBottom.current = feed.scrollHeight - feed.scrollTop - feed.clientHeight < 180;
+      }} onWheel={event => { if (event.deltaY < 0) followBottom.current = false; }}>
         {filteredEnvelopes.length === 0 ? (
           <div className="hero-onboarding">
             <div className="hero-icon">UB</div>
@@ -739,22 +757,22 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ roomName, envelopes, onSendM
           filteredEnvelopes.map((env) => {
             const isUser = env.sender?.kind === 'user';
             const senderId = (env.sender?.id || '').toLowerCase();
-
-            let avatarNode = <span className="message-avatar agent-default">✨</span>;
-            if (isUser) {
-              avatarNode = <span className="message-avatar user-avatar">👤</span>;
-            } else if (senderId.includes('chatgpt')) {
-              avatarNode = <span className="message-avatar agent-chatgpt">🤖</span>;
-            } else if (senderId.includes('antigravity')) {
-              avatarNode = <span className="message-avatar agent-antigravity">⚡</span>;
-            } else if (senderId.includes('codex')) {
-              avatarNode = <span className="message-avatar agent-codex">🛡️</span>;
-            }
+            const providerId = senderId.includes('system_router') ? 'router' :
+              env.delivery?.provider || env.sender?.provider ||
+              (senderId.includes('chatgpt') ? 'chatgpt' : senderId.includes('antigravity') ? 'antigravity' : senderId.includes('codex') ? 'codex' : 'default');
+            const providerIcon: Record<string, string> = {
+              chatgpt: '✳', antigravity: '⚡', codex: '⌘', gemini: '✦', claude: '☼', deepseek: '◇', router: '✧', default: '✦',
+            };
+            const avatarNode = (
+              <span className={`message-avatar ${isUser ? 'user-avatar' : `agent-${providerId}`}`} aria-hidden="true">
+                {isUser ? '☺' : providerIcon[providerId] || providerIcon.default}
+              </span>
+            );
 
             return (
               <div
                 key={env.id}
-                className={`message-row ${isUser ? 'user' : 'agent'}`}
+                className={`message-row ${isUser ? 'user' : 'agent'} provider-${providerId}`}
                 data-testid="envelope-card"
               >
                 {avatarNode}
@@ -770,6 +788,17 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ roomName, envelopes, onSendM
                       <span className="message-role-chip">
                         <HighlightedText text={env.sender.role} query={searchQuery} />
                       </span>
+                    )}
+                    {env.delivery && (
+                      <span className={`group-delivery ${env.delivery.state}`} data-testid="group-delivery-state" role="status" aria-live="polite">
+                        {{ sending: 'Đang kết nối…', streaming: 'Đang trả lời…', completed: 'Đã trả lời', blocked: 'Cần xử lý' }[env.delivery.state]}
+                      </span>
+                    )}
+                    {env.delivery?.sourceUrl && (
+                      <button className="group-source-link" onClick={async () => {
+                        const result = await window.unionBotAPI?.openGroupThread({ roomId: env.roomId, provider: env.delivery!.provider });
+                        if (result?.success) window.dispatchEvent(new CustomEvent('union-bot:toggle-browser', { detail: true }));
+                      }}>Mở hội thoại gốc ↗</button>
                     )}
                     {env.isDemo && (
                       <span
@@ -793,6 +822,13 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ roomName, envelopes, onSendM
                   </div>
 
                   <div className="message-body">
+                    {(env.delivery?.state === 'sending' || env.delivery?.state === 'streaming') &&
+                      !env.parts.some(part => (part.kind === 'text' && part.text?.trim()) || (part.kind === 'code' && (part.content || part.code)?.trim())) && (
+                        <div className="member-thinking" role="status" aria-live="polite">
+                          <span className="thinking-orb" aria-hidden="true"><i /><i /><i /></span>
+                          <span>{env.delivery.state === 'sending' ? `Đang kết nối ${env.sender?.name || 'thành viên'}…` : 'Đang viết phản hồi…'}</span>
+                        </div>
+                      )}
                     {env.parts.map((part: MessagePart, idx: number) => {
                       switch (part.kind) {
                         case 'text':
@@ -960,7 +996,7 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ roomName, envelopes, onSendM
           <textarea
             className="composer-textarea chat-input"
             data-testid="chat-composer-textarea"
-            placeholder="Nhập tin nhắn hoặc chỉ thị (Enter để gửi, Shift+Enter xuống dòng)..."
+            placeholder="Nhắn cho ChatGPT · @antigravity, @codex, @gemini hoặc @all để gọi thành viên…"
             value={inputText}
             onChange={(e) => setInputText(e.target.value)}
             onKeyDown={handleKeyDown}

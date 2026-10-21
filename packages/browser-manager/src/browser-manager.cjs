@@ -20,7 +20,7 @@ const DISALLOWED_SCHEMES = new Set([
 ]);
 
 const ALLOWED_SCHEMES = new Set(['https:', 'http:']);
-const DEFAULT_SEARCH_ENGINE_URL = 'https://duckduckgo.com/?q=';
+const DEFAULT_SEARCH_ENGINE_URL = 'https://www.google.com/search?q=';
 
 function isPrivateOrLoopbackHost(hostname) {
   if (!hostname) return true;
@@ -191,8 +191,8 @@ const PROVIDER_AUTH_ORIGINS = {
     'https://auth.deepseek.com',
   ],
   search: [
-    'https://duckduckgo.com',
-    'https://html.duckduckgo.com',
+    'https://www.google.com',
+    'https://images.google.com',
   ],
 };
 
@@ -283,15 +283,15 @@ const PROVIDER_REGISTRY = {
     id: 'search',
     name: 'Web Search',
     partition: 'persist:mcb-web-search',
-    defaultUrl: 'https://duckduckgo.com/',
-    approvedOrigin: 'https://duckduckgo.com',
+    defaultUrl: 'https://www.google.com/',
+    approvedOrigin: 'https://www.google.com',
   },
   custom: {
     id: 'custom',
     name: 'Custom URL',
     partition: 'persist:mcb-web-custom',
-    defaultUrl: 'https://duckduckgo.com/',
-    approvedOrigin: 'https://duckduckgo.com',
+    defaultUrl: 'https://www.google.com/',
+    approvedOrigin: 'https://www.google.com',
   },
   codex: {
     id: 'codex',
@@ -322,11 +322,14 @@ const BLOCKED_API_PATTERNS = [
 
 function isCostGuardBlockedUrl(url) {
   if (!url || typeof url !== 'string') return false;
-  const lower = url.toLowerCase();
-  for (const pattern of BLOCKED_API_PATTERNS) {
-    if (lower.includes(pattern)) return true;
+  try {
+    // OAuth audience/redirect parameters can mention paid API domains.
+    // Only the actual destination host determines network egress.
+    const host = new URL(url).hostname.toLowerCase().replace(/\.$/, '');
+    return BLOCKED_API_PATTERNS.some(domain => host === domain || host.endsWith(`.${domain}`));
+  } catch {
+    return true;
   }
-  return false;
 }
 
 function inferAuthStatus(providerId, currentUrl, pageTitle) {

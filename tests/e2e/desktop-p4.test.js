@@ -206,7 +206,7 @@ describe('Union Bot Phase P4 Gate: Windows Real Electron E2E Suite', () => {
     assert.match(stdout, /\[P4-E2E\] P4-004 Dangerous javascript: scheme blocked: true/);
     assert.match(stdout, /\[P4-E2E\] P4-004 Dangerous powershell: scheme blocked: true/);
     assert.match(stdout, /\[P4-E2E\] P4-005 Loopback address navigation blocked: true/);
-    assert.match(stdout, /\[P4-E2E\] P4-004 Valid query resolved to DuckDuckGo search: true/);
+    assert.match(stdout, /\[P4-E2E\] P4-004 Valid query resolved to Google search: true/);
     assert.match(stdout, /\[P4-E2E\] P4-006 Cost Guard blocks paid APIs on browser session: true/);
     assert.match(stdout, /\[P4-E2E\] P4-007 Tab switching to Gemini succeeded: true/);
     assert.match(stdout, /\[P4-E2E\] P4-007 Zoom controls applied \(zoom-in \/ zoom-reset\): true/);

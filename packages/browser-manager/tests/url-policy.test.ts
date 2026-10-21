@@ -120,7 +120,7 @@ describe('Browser URL Policy & Navigation Safety (P4-002 / P4-005)', () => {
   it('resolves address bar input: turns search query into safe public search URL', () => {
     const res = resolveAddressBarInput('what is machine learning');
     assert.equal(res.valid, true);
-    assert.equal(res.sanitizedUrl, 'https://duckduckgo.com/?q=what%20is%20machine%20learning');
+    assert.equal(res.sanitizedUrl, 'https://www.google.com/search?q=what%20is%20machine%20learning');
   });
 
   it('resolves address bar input: prepends https:// to domain if missing scheme', () => {

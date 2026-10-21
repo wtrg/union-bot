@@ -8,6 +8,9 @@ const { contextBridge, ipcRenderer } = require('electron');
 const api = {
   isElectron: true,
   version: '1.0.0',
+  sendGroupMessage: envelope => ipcRenderer.invoke('union-bot:group-send-message', envelope),
+  bindGroupThread: payload => ipcRenderer.invoke('union-bot:group-bind-thread', payload),
+  openGroupThread: payload => ipcRenderer.invoke('union-bot:group-open-thread', payload),
 
   dispatchEnvelope: async (envelope) => {
     return ipcRenderer.invoke('union-bot:dispatch-envelope', envelope);

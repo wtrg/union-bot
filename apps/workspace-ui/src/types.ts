@@ -74,6 +74,14 @@ export interface EnvelopeView {
   parts: MessagePart[];
   fidelity: string;
   isDemo?: boolean;
+  delivery?: {
+    state: 'sending' | 'streaming' | 'completed' | 'blocked';
+    provider: string;
+    replyTo?: string;
+    sourceUrl?: string;
+    conversationId?: string;
+    memberName?: string;
+  };
 }
 
 export interface ApprovalTokenRecord {
@@ -156,6 +164,9 @@ export interface TaskItem {
 export interface UnionBotAPI {
   isElectron: boolean;
   version: string;
+  sendGroupMessage: (envelope: EnvelopeView) => Promise<{ success: boolean; envelopeId?: string; deduplicated?: boolean; error?: string }>;
+  bindGroupThread: (payload: { roomId: string; tabId: string }) => Promise<{ success: boolean; error?: string }>;
+  openGroupThread: (payload: { roomId: string; provider: string }) => Promise<{ success: boolean; error?: string }>;
   dispatchEnvelope: (envelope: any) => Promise<{ success: boolean; envelopeId?: string; deduplicated?: boolean; error?: string; code?: string }>;
   getRoomHistory: (roomId: string) => Promise<EnvelopeView[]>;
   getProjects: (options?: { includeArchived?: boolean }) => Promise<ProjectInfo[]>;

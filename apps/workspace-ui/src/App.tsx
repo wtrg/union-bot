@@ -405,7 +405,7 @@ export const App: React.FC = () => {
       window.unionBotAPI.getRoomHistory(activeRoomId).then((history) => {
         setRoomEnvelopes((prev) => ({
           ...prev,
-          [activeRoomId]: history || [],
+          [activeRoomId]: [...new Map([...(history || []), ...(prev[activeRoomId] || []).filter(e => !history?.some(h => h.id === e.id))].map(e => [e.id, e])).values()].sort((a, b) => a.timestamp - b.timestamp),
         }));
       });
 
@@ -527,11 +527,11 @@ export const App: React.FC = () => {
             id: `sys_${Date.now()}_chat`,
             traceId: `trc_${Date.now()}`,
             timestamp: Date.now(),
-            sender: { kind: 'agent', id: 'chatgpt_web', name: 'ChatGPT Web (BA)', role: 'LEADER' },
+            sender: { kind: 'agent', id: 'system_router', name: 'Union Bot', role: 'ROUTER' },
             recipient: { kind: 'room', id: activeRoomId },
             roomId: activeRoomId,
             fidelity: 'L1_FORMATTED_MARKDOWN',
-            parts: [{ kind: 'text', text: '💡 **[CHẾ ĐỘ /chat KÍCH HOẠT]** Đã bật Discovery Ledger. Tôi đang lắng nghe yêu cầu bài toán từ bạn để hoàn thiện đặc tả kỹ thuật trước khi thực thi.' }],
+            parts: [{ kind: 'text', text: '💡 **[CHẾ ĐỘ /chat KÍCH HOẠT]** Đã mở Discovery Ledger. Gửi tin nhắn tiếp theo để thảo luận với ChatGPT hoặc dùng @tên để gọi thành viên.' }],
           });
           return true;
         }
@@ -719,14 +719,13 @@ export const App: React.FC = () => {
 
     if (window.unionBotAPI) {
       try {
-        const dispatchResult = await window.unionBotAPI.dispatchEnvelope(newEnvelope);
+        const dispatchResult = await window.unionBotAPI.sendGroupMessage(newEnvelope);
         if (!dispatchResult || !dispatchResult.success) {
           console.error('[App] Failed to dispatch envelope via IPC:', dispatchResult?.error);
           alert(`Lỗi lưu trữ / Orchestrator: ${dispatchResult?.error || 'Unknown IPC Error'} (P3-C03: Bản nháp được bảo toàn)`);
           return false;
         }
         appendOrUpdateEnvelope(activeRoomId, newEnvelope);
-        scheduleAgentResponse();
         return true;
       } catch (err) {
         console.error('[App] IPC exception during dispatch:', err);

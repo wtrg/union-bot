@@ -41,6 +41,7 @@ export interface AntigravityTurnResult {
   durationSeconds: number;
   usage: AntigravityUsage;
   numTurns: number;
+  error?: string;
 }
 
 export interface AntigravityTransport {
@@ -414,6 +415,7 @@ export class AntigravityClient extends EventEmitter {
       let fullResponseText = '';
       let conversationId = options.conversationId || 'synthetic-session';
       let turnStatus: 'SUCCESS' | 'ERROR' | 'CANCELLED' = 'SUCCESS';
+      let permissionError: string | undefined;
       let durationSeconds = 0;
       let usage: AntigravityUsage = {
         inputTokens: 0,
@@ -483,6 +485,11 @@ export class AntigravityClient extends EventEmitter {
             const res = parsed.result;
             conversationId = res.conversation_id || conversationId;
             turnStatus = res.status === 'SUCCESS' ? 'SUCCESS' : 'ERROR';
+            if (Array.isArray(res.denied_actions) && res.denied_actions.length > 0) {
+              turnStatus = 'ERROR';
+              const actions = [...new Set(res.denied_actions.map((item: any) => String(item?.action || 'unknown')))];
+              permissionError = `ERR_ANTIGRAVITY_PERMISSION_REQUIRED: Headless tool permission denied (${actions.join(', ')}). Approve the requested action in an interactive Antigravity session before retrying.`;
+            }
             if (res.response && (!fullResponseText || fullResponseText.length < res.response.length)) {
               fullResponseText = res.response;
             }
@@ -527,6 +534,7 @@ export class AntigravityClient extends EventEmitter {
           durationSeconds,
           usage,
           numTurns: 1,
+          ...(permissionError ? { error: permissionError } : {}),
         };
 
         this.emit('turn_completed', result);

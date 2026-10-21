@@ -8,6 +8,7 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import os from 'node:os';
 import fs from 'node:fs';
+import { createRequire } from 'node:module';
 
 import {
   AntigravityDiscovery,
@@ -18,6 +19,35 @@ import {
 } from '../src/index.ts';
 import { CostGuard } from '../../cost-guard/src/index.ts';
 import { ArtifactStore } from '../../artifact-store/src/index.ts';
+
+const electronRuntime = createRequire(import.meta.url)('../src/agent-antigravity.cjs');
+
+describe('Antigravity permission denial regression', () => {
+  for (const [name, Client, Transport, Adapter] of [
+    ['typescript', AntigravityClient, MockAntigravityTransport, AntigravityAdapter],
+    ['electron', electronRuntime.AntigravityClient, electronRuntime.MockAntigravityTransport, electronRuntime.AntigravityAdapter],
+  ] as const) {
+    it(`${name}: does not treat exit-zero SUCCESS with denied_actions as completion`, async () => {
+      const transport = new Transport([JSON.stringify({ event: 'result', result: {
+        status: 'SUCCESS', response: '', conversation_id: 'denied-command',
+        denied_actions: [{ action: 'command', display_name: 'RunCommand' }],
+      } })]);
+      const result = await new Client().executeTurn('mock-agy', 'download image', {}, transport);
+      assert.equal(result.status, 'ERROR');
+      assert.match(result.error || '', /^ERR_ANTIGRAVITY_PERMISSION_REQUIRED:.*command/);
+      assert.equal(result.response, '');
+    });
+    it(`${name}: preserves the permission error through the service adapter`, async () => {
+      const transport = new Transport([JSON.stringify({ event: 'result', result: {
+        status: 'SUCCESS', response: '', denied_actions: [{ action: 'command' }],
+      } })]);
+      const adapter = new Adapter({ isUrlAllowed: () => false } as any, {} as any);
+      const result = await adapter.execute({ prompt: 'download image', workspaceRoot: process.cwd(), mockTransport: transport });
+      assert.equal(result.success, false);
+      assert.match(result.error || '', /^ERR_ANTIGRAVITY_PERMISSION_REQUIRED:/);
+    });
+  }
+});
 
 describe('Phase P7: Antigravity Native Agent Adapter Suite', () => {
   it('P7-001: Discovers local agy CLI binary and verifies version or returns structured fallback', () => {

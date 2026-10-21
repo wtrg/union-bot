@@ -19,7 +19,7 @@ export const DISALLOWED_SCHEMES = new Set([
 
 export const ALLOWED_SCHEMES = new Set(['https:', 'http:']);
 
-export const DEFAULT_SEARCH_ENGINE_URL = 'https://duckduckgo.com/?q=';
+export const DEFAULT_SEARCH_ENGINE_URL = 'https://www.google.com/search?q=';
 
 export interface UrlValidationResult {
   valid: boolean;
@@ -203,8 +203,8 @@ export const PROVIDER_AUTH_ORIGINS: Record<string, string[]> = {
     'https://auth.deepseek.com',
   ],
   search: [
-    'https://duckduckgo.com',
-    'https://html.duckduckgo.com',
+    'https://www.google.com',
+    'https://images.google.com',
   ],
 };
 

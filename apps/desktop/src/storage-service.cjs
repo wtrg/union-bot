@@ -430,7 +430,7 @@ class StorageServiceClient extends EventEmitter {
       case 'getRoomEnvelopes': {
         const list = this.fallbackEnvelopes.get(args.roomId) || [];
         const queryLimit = typeof args.limit === 'number' ? args.limit : 100;
-        return Promise.resolve(queryLimit === -1 ? list : list.slice(0, queryLimit));
+        return Promise.resolve(queryLimit === -1 ? list : queryLimit === 0 ? [] : list.slice(-queryLimit));
       }
       case 'createApprovalToken': {
         const token = args.token;
@@ -887,7 +887,7 @@ class StorageServiceClient extends EventEmitter {
           case 'getRoomEnvelopes': {
             const { roomId, limit = 100 } = args;
             const queryLimit = typeof limit === 'number' ? limit : 100;
-            const rows = this.nativeDb.prepare('SELECT raw_json FROM envelopes WHERE room_id = ? ORDER BY rowid ASC LIMIT ?')
+            const rows = this.nativeDb.prepare('SELECT raw_json FROM (SELECT rowid, raw_json FROM envelopes WHERE room_id = ? ORDER BY rowid DESC LIMIT ?) ORDER BY rowid ASC')
               .all(roomId, queryLimit);
             const envelopes = rows.map((r) => JSON.parse(r.raw_json));
             return Promise.resolve(envelopes);

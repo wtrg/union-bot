@@ -485,7 +485,7 @@ function handleRequest(msg) {
       case 'getRoomEnvelopes': {
         const { roomId, limit = 100 } = args;
         const queryLimit = typeof limit === 'number' ? limit : 100;
-        const rows = db.prepare('SELECT raw_json FROM envelopes WHERE room_id = ? ORDER BY rowid ASC LIMIT ?')
+        const rows = db.prepare('SELECT raw_json FROM (SELECT rowid, raw_json FROM envelopes WHERE room_id = ? ORDER BY rowid DESC LIMIT ?) ORDER BY rowid ASC')
           .all(roomId, queryLimit);
         const envelopes = rows.map((r) => JSON.parse(r.raw_json));
         process.send({ id, result: envelopes });

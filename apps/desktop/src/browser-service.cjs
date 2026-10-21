@@ -173,6 +173,7 @@ class BrowserService {
         isLoading: false,
         url: currentUrl || tab.url,
         title: currentTitle || tab.title,
+        authStatus: inferAuthStatus(tab.providerId, currentUrl, currentTitle),
         canGoBack,
         canGoForward,
       });
@@ -217,9 +218,14 @@ class BrowserService {
         sandbox: true,
         contextIsolation: true,
         nodeIntegration: false,
+        backgroundThrottling: false,
         // No privileged preload for untrusted provider websites
       },
     });
+
+    // Give inactive room tabs a real viewport so the provider can initialize
+    // its composer before the user opens the browser dock.
+    view.setBounds({ x: 0, y: 0, width: 1024, height: 768 });
 
     // UB-P4-R01-002: setWindowOpenHandler
     // Allows OAuth/auth popups in same partition session, denies/routes external links to OS browser safely
@@ -400,6 +406,11 @@ class BrowserService {
 
   getState() {
     return this.stateManager.getState();
+  }
+
+  runGroupTurn(options) {
+    delete require.cache[require.resolve('./services/web-group-turn.cjs')];
+    return require('./services/web-group-turn.cjs').runGroupTurn(this, options);
   }
 
   createTab(providerId, url, title) {

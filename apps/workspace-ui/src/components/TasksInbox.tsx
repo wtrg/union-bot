@@ -136,7 +136,7 @@ export const TasksInbox: React.FC<TasksInboxProps> = ({ activeProject, activeRoo
             setActionFeedback(`Task ${taskId} dispatched (status: ${res.status || 'running'}).`);
           }
         } else {
-          setActionFeedback(`Task ${taskId} failed: ${res?.error || 'Unknown execution error'}`);
+          setActionFeedback(`Task ${taskId} ${res?.status === 'blocked' ? 'is blocked' : 'failed'}: ${res?.error || 'Unknown execution error'}`);
         }
       } catch (err: any) {
         setActionFeedback(`Error dispatching task ${taskId}: ${err.message}`);
@@ -238,7 +238,7 @@ export const TasksInbox: React.FC<TasksInboxProps> = ({ activeProject, activeRoo
       </div>
 
       {actionFeedback && (
-        <div style={{ padding: '8px 12px', borderRadius: 6, marginBottom: 14, background: 'rgba(56, 189, 248, 0.15)', border: '1px solid var(--accent-blue)', color: 'var(--accent-blue)', fontSize: 12 }}>
+        <div style={{ padding: '8px 12px', borderRadius: 6, marginBottom: 14, background: 'rgba(56, 189, 248, 0.15)', border: '1px solid var(--accent-blue)', color: 'var(--accent-blue)', fontSize: 12, overflowWrap: 'anywhere' }}>
           {actionFeedback}
         </div>
       )}
@@ -336,9 +336,9 @@ export const TasksInbox: React.FC<TasksInboxProps> = ({ activeProject, activeRoo
                 }}
               >
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                  <div>
+                  <div style={{ minWidth: 0, flex: 1 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                      <span style={{ fontWeight: 600, fontSize: 15, color: 'var(--text-primary)' }}>
+                      <span style={{ fontWeight: 600, fontSize: 15, color: 'var(--text-primary)', minWidth: 0, overflowWrap: 'anywhere' }}>
                         {displayName}
                       </span>
                       <span
@@ -372,8 +372,8 @@ export const TasksInbox: React.FC<TasksInboxProps> = ({ activeProject, activeRoo
                   </div>
 
                   {/* Task Actions - Real Native Execution (No Fake Completions) */}
-                  <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                    {(t.status === 'pending' || t.status === 'failed' || t.status === 'cancelled') && (
+                  <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexShrink: 0 }}>
+                    {(t.status === 'pending' || t.status === 'failed' || t.status === 'cancelled' || t.status === 'blocked') && (
                       <button
                         disabled={dispatchingTaskIds.has(t.id)}
                         onClick={() => handleExecuteTask(t.id)}

@@ -18,6 +18,7 @@ export const BrowserPanel: React.FC<BrowserPanelProps> = ({ isOpen, onClose, act
   });
   const [addressInput, setAddressInput] = useState<string>('');
   const [shareSuccess, setShareSuccess] = useState<boolean>(false);
+  const [bindingMessage, setBindingMessage] = useState('');
 
   // Synchronize open state with Electron main
   useEffect(() => {
@@ -349,9 +350,9 @@ export const BrowserPanel: React.FC<BrowserPanelProps> = ({ isOpen, onClose, act
             <span
               className="browser-auth-chip ready"
               data-testid="browser-auth-ready"
-              title="Provider surface loaded and ready."
+              title="Trang đã tải. Trạng thái này chưa xác nhận tài khoản đã đăng nhập."
             >
-              ✓ Ready
+              ✓ Đã tải
             </span>
           ) : (
             <span className="browser-auth-chip unknown">Checking...</span>
@@ -370,6 +371,14 @@ export const BrowserPanel: React.FC<BrowserPanelProps> = ({ isOpen, onClose, act
       </div>
 
       {/* 3. Native WebContentsView Mount Container */}
+      <div className="browser-group-context">
+        <span>{bindingMessage || `Hội thoại cho #${activeRoomId}`}</span>
+        <button onClick={async () => {
+          if (!activeTab || !window.unionBotAPI?.bindGroupThread) return;
+          const result = await window.unionBotAPI.bindGroupThread({ roomId: activeRoomId, tabId: activeTab.id });
+          setBindingMessage(result.success ? `Đã gắn hội thoại vào #${activeRoomId}` : result.error || 'Không gắn được hội thoại');
+        }}>Dùng cho nhóm</button>
+      </div>
       <div className="browser-view-container" ref={mountRef} data-testid="browser-view-mount">
         {/* Crash Recovery Card (Ticket P4-009) */}
         {activeTab?.crashed && (

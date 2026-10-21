@@ -181,7 +181,7 @@ export class AntigravityAdapter {
           total: turnResult.usage.totalTokens,
         },
         artifact: artifactInfo,
-        error: turnResult.status !== 'SUCCESS' ? `ANTIGRAVITY_TURN_${turnResult.status}` : undefined,
+        error: turnResult.error || (turnResult.status !== 'SUCCESS' ? `ANTIGRAVITY_TURN_${turnResult.status}` : undefined),
       };
     } catch (err: any) {
       return {

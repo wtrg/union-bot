@@ -38,6 +38,7 @@ const { PlanRegistryService } = require('./services/plan-registry-service.cjs');
 const { WorkflowSupervisor } = require('./services/workflow-supervisor.cjs');
 const { GitReviewService } = require('./services/git-review-service.cjs');
 const { BrowserUseBridge } = require('./services/browser-use-bridge.cjs');
+const { GroupChatService } = require('./services/group-chat-service.cjs');
 const { SecurityGuardService } = require('./services/security-guard.cjs');
 
 // Custom test userData override for isolated multi-process E2E testing
@@ -71,6 +72,7 @@ if (!gotTheLock) {
 
 let mainWindow = null;
 let browserService = null;
+let groupChatService = null;
 let appStatus = 'STARTING'; // 'STARTING' | 'READY' | 'STORAGE_ERROR_BLOCKED'
 let storageInitError = null;
 const uiDistCandidates = [
@@ -872,6 +874,7 @@ function createWindow() {
   }
 
   mainWindow.on('closed', () => {
+    groupChatService = null;
     if (browserService) {
       browserService.destroy();
       browserService = null;
@@ -2945,7 +2948,7 @@ function createWindow() {
               validSearchNav && 
               validSearchNav.success === true && 
               typeof validSearchNav.sanitizedUrl === 'string' &&
-              validSearchNav.sanitizedUrl.includes('duckduckgo.com/?q=')
+              validSearchNav.sanitizedUrl.includes('www.google.com/search?q=')
             );
 
 
@@ -3125,7 +3128,7 @@ function createWindow() {
               const isDefaultSearchTab = Boolean(
                 newlyAddedTab &&
                 newlyAddedTab.providerId === 'search' &&
-                newlyAddedTab.url === 'https://duckduckgo.com/' &&
+                newlyAddedTab.url === 'https://www.google.com/' &&
                 newlyAddedTab.partition === 'persist:mcb-web-search'
               );
 
@@ -3172,7 +3175,7 @@ function createWindow() {
         console.log('[P4-E2E] P4-004 Dangerous javascript: scheme blocked:', p4Result.dangerousJsBlocked);
         console.log('[P4-E2E] P4-004 Dangerous powershell: scheme blocked:', p4Result.dangerousPsBlocked);
         console.log('[P4-E2E] P4-005 Loopback address navigation blocked:', p4Result.dangerousLoopbackBlocked);
-        console.log('[P4-E2E] P4-004 Valid query resolved to DuckDuckGo search:', p4Result.searchQueryResolved);
+        console.log('[P4-E2E] P4-004 Valid query resolved to Google search:', p4Result.searchQueryResolved);
         console.log('[P4-E2E] P4-R02-T01 CreateTab malicious/private denied fail-closed:', p4Result.t01CreateTabMaliciousDenied && p4Result.t01CreateTabPrivateDenied);
         console.log('[P4-E2E] P4-R02-T03 Comprehensive loopback/metadata blocked:', p4Result.t03LoopbackPrivateBlocked);
         console.log('[P4-E2E] P4-R03-A01 OAuth popup & HTTPS controlled, HTTP denied:', p4Result.a01OAuthControlledAndHttpDenied);
@@ -5959,6 +5962,61 @@ ipcMain.handle('union-bot:dispatch-envelope', async (event, envelope) => {
   return { success: true, envelopeId: result.envelopeId, roomId: result.roomId, deduplicated: result.deduplicated };
 });
 
+function getGroupChatService() {
+  if (!browserService) throw new Error('Trình duyệt AI chưa sẵn sàng.');
+  if (!groupChatService) groupChatService = new GroupChatService({
+    storage, browser: browserService, antigravity: antigravityService, codex: codexService,
+    workspaceRoot: path.resolve(__dirname, '../../..'),
+    stateFile: path.join(userDataPath, 'group-chat-threads.json'),
+    emit: envelope => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('union-bot:envelope-received', envelope); },
+  });
+  return groupChatService;
+}
+
+ipcMain.handle('union-bot:group-send-message', async (event, envelope) => {
+  if (!checkSenderAuthorized(event)) return { success: false, error: 'Unauthorized IPC sender' };
+  if (appStatus !== 'READY') return { success: false, error: 'Storage chưa sẵn sàng.' };
+  if (envelope?.sender?.kind !== 'user') return { success: false, error: 'Chỉ tin nhắn người dùng có thể bắt đầu lượt nhóm.' };
+  try {
+    const group = getGroupChatService();
+    const result = await orchestrator.dispatchEnvelope(envelope, { fromRenderer: true });
+    if (!result.success) return result;
+    if (!result.deduplicated) {
+      mainWindow.webContents.send('union-bot:envelope-received', envelope);
+      group.enqueue(envelope);
+    }
+    return { success: true, envelopeId: result.envelopeId, deduplicated: result.deduplicated };
+  } catch (error) { return { success: false, error: error.message }; }
+});
+
+ipcMain.handle('union-bot:group-bind-thread', async (event, { roomId, tabId } = {}) => {
+  if (!checkSenderAuthorized(event)) return { success: false, error: 'Unauthorized IPC sender' };
+  try {
+    if (typeof roomId !== 'string' || !roomId) throw new Error('Thiếu kênh nhóm.');
+    const context = browserService?.getTabContext(tabId);
+    if (!context?.conversationId || !['chatgpt', 'gemini', 'claude', 'deepseek'].includes(context.providerId)) throw new Error('Hãy mở một cuộc trò chuyện AI trước khi gắn vào nhóm.');
+    const url = new URL(context.url); url.search = ''; url.hash = '';
+    getGroupChatService().saveThread(roomId, context.providerId, { url: url.href, conversationId: context.conversationId });
+    return { success: true };
+  } catch (error) { return { success: false, error: error.message }; }
+});
+
+ipcMain.handle('union-bot:group-open-thread', async (event, { roomId, provider } = {}) => {
+  if (!checkSenderAuthorized(event)) return { success: false, error: 'Unauthorized IPC sender' };
+  try {
+    const reference = getGroupChatService().threads[`${roomId}:${provider}`];
+    if (!reference?.url) throw new Error('Thành viên này chưa có hội thoại web trong kênh.');
+    let tab = browserService.getState().tabs.find(t => t.providerId === provider && t.url.split(/[?#]/)[0] === reference.url);
+    if (!tab) {
+      const created = browserService.createTab(provider, reference.url);
+      if (!created.success) throw new Error(created.error);
+      tab = created.tab;
+    }
+    browserService.selectTab(tab.id);
+    return { success: true };
+  } catch (error) { return { success: false, error: error.message }; }
+});
+
 ipcMain.handle('union-bot:get-room-history', async (event, roomId) => {
   if (!checkSenderAuthorized(event)) {
     return [];
@@ -6330,10 +6388,15 @@ ipcMain.handle('union-bot:task-execute', async (event, payload) => {
       metadata: {
         ...(task.metadata || {}),
         startedAt: Date.now(),
+          error: null,
+          errorCode: null,
         statusMessage: `Executing task with ${assignedProvider} (${assignedRole})...`,
       }
     });
-    broadcastTaskUpdate(taskId, { status: 'running', progress: 10 });
+    broadcastTaskUpdate(taskId, {
+      status: 'running', progress: 10,
+      metadata: { error: null, errorCode: null, statusMessage: `Executing task with ${assignedProvider} (${assignedRole})...` },
+    });
 
     let verifyEvidence = null;
     let verifiedByCodex = false;
@@ -6389,7 +6452,11 @@ ipcMain.handle('union-bot:task-execute', async (event, payload) => {
           executionEntry.cancelRequested = true;
           if (antigravityService) antigravityService.cancelTurn();
         };
-        const turnRes = await antigravityService.executePrompt(task.title, { cwd: targetWorkspace, timeoutMs: 30000 });
+        const requestedTimeout = task.metadata?.timeoutMs;
+        const timeoutMs = Number.isFinite(requestedTimeout) && requestedTimeout > 0
+          ? Math.min(requestedTimeout, 300000)
+          : 120000;
+        const turnRes = await antigravityService.executePrompt(task.title, { cwd: targetWorkspace, timeoutMs });
         if (!turnRes || turnRes.success === false) {
           throw new Error(turnRes?.error || 'ERR_ANTIGRAVITY_EXECUTION_FAILED');
         }
@@ -6601,8 +6668,9 @@ ipcMain.handle('union-bot:task-execute', async (event, payload) => {
       };
     } catch (err) {
       const isCancel = isCancelled || cancelRequested || executionEntry.cancelRequested || executionEntry.isCancelled || err.message?.includes('ERR_TASK_CANCELLED') || err.message?.includes('CANCEL');
-      const finalStatus = isCancel ? 'cancelled' : 'failed';
-      const statusMessage = isCancel ? 'Execution cancelled by user' : `Execution failed: ${err.message}`;
+      const permissionRequired = err.message?.startsWith('ERR_ANTIGRAVITY_PERMISSION_REQUIRED:');
+      const finalStatus = isCancel ? 'cancelled' : permissionRequired ? 'blocked' : 'failed';
+      const statusMessage = isCancel ? 'Execution cancelled by user' : `${permissionRequired ? 'Execution blocked' : 'Execution failed'}: ${err.message}`;
       const errorCode = err.code || (err.message?.startsWith('ERR_') ? err.message.split(':')[0].trim() : 'ERR_EXECUTION_FAILED');
 
       await storage.updateTask(taskId, {
