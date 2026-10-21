@@ -1235,4 +1235,232 @@ describe('UB-V4-U08: GitHub Push Approval & ChatGPT Code Review Loop', () => {
       }
     }
   });
+
+  it('U08-R13-01, U08-R13-02, U08-R13-03: renderer IPC trust boundary, live extraction fail-closed without stale cache reuse, and anti-TOCTOU invariant validation', async () => {
+    // =========================================================================
+    // PART 1: U08-R13-01 — RENDERER IPC TRUST BOUNDARY
+    // =========================================================================
+    // 1.1 Verify main.js does NOT register 'union-bot:intake-trusted-review'
+    const mainJsPath = path.resolve(process.cwd(), 'apps/desktop/src/main.js');
+    const mainJsContent = fs.readFileSync(mainJsPath, 'utf-8');
+    assert.equal(
+      mainJsContent.includes("'union-bot:intake-trusted-review'"),
+      false,
+      'Renderer must not have access to union-bot:intake-trusted-review handler (U08-R13-01)'
+    );
+    assert.equal(
+      mainJsContent.includes('"union-bot:intake-trusted-review"'),
+      false,
+      'Renderer must not have access to union-bot:intake-trusted-review handler (U08-R13-01)'
+    );
+
+    // =========================================================================
+    // PART 2: U08-R13-02 — FAIL-CLOSED ON EXTRACTION FAILURE (NO STALE CACHE REUSE)
+    // =========================================================================
+    const commitSha = '5d91feb481f3ca99f5a9726bcdcc6e25887bb6d3';
+    const bridge = new BrowserUseBridge();
+    const lease = bridge.acquireControllerLease('tab_toctou_test', 'agent_chatgpt');
+
+    // Context contains a previously cached APPROVED message
+    const cachedApprovedMsg = {
+      role: 'assistant',
+      messageId: 'msg_stale_cached_approved',
+      conversationId: '6ad64b63-ad44-83ec-90ca-83cacbc26da5',
+      text: `OFFICIAL VERDICT: SOURCE_REVIEW_APPROVED\nTarget commit: ${commitSha}`,
+      capturedAt: Date.now(),
+    };
+
+    let extractionShouldThrow = false;
+    let extractionShouldReturnNull = true;
+
+    const mockManager = {
+      extractReviewMessageFromWebContents: async (tabId: string) => {
+        if (extractionShouldThrow) {
+          throw new Error('Simulated DOM access timeout or navigation crash');
+        }
+        if (extractionShouldReturnNull) {
+          return null;
+        }
+        return {
+          role: 'assistant',
+          messageId: 'msg_freshly_extracted',
+          conversationId: '6ad64b63-ad44-83ec-90ca-83cacbc26da5',
+          text: `OFFICIAL VERDICT: SOURCE_REVIEW_APPROVED\nTarget commit: ${commitSha}`,
+          capturedAt: Date.now(),
+        };
+      },
+      getTabContext: (tabId: string) => ({
+        tabId,
+        url: 'https://chatgpt.com/c/6ad64b63-ad44-83ec-90ca-83cacbc26da5',
+        title: 'Review Tab',
+        isSynthetic: false,
+        capturedAt: Date.now(),
+        structuredMessage: cachedApprovedMsg, // Cache holds an old approval!
+      }),
+    };
+
+    bridge.browserManager = mockManager;
+
+    // 2.1 Extraction returns null: inspectReviewContextAsync MUST NOT fall back to stale cached approval
+    const nullExtractionResult = await bridge.inspectReviewContextAsync('tab_toctou_test', lease.leaseToken, commitSha);
+    assert.equal(nullExtractionResult.success, false);
+    assert.equal(nullExtractionResult.code, 'ERR_UNVERIFIED_EVIDENCE');
+    assert.ok(nullExtractionResult.error.includes('Reusing stale cache is strictly prohibited'));
+
+    // 2.2 Extraction throws: inspectReviewContextAsync MUST fail closed immediately
+    extractionShouldThrow = true;
+    const throwExtractionResult = await bridge.inspectReviewContextAsync('tab_toctou_test', lease.leaseToken, commitSha);
+    assert.equal(throwExtractionResult.success, false);
+    assert.equal(throwExtractionResult.code, 'ERR_UNVERIFIED_EVIDENCE');
+    assert.ok(throwExtractionResult.error.includes('threw error'));
+
+    // 2.3 Extraction succeeds: fresh live snapshot accepted
+    extractionShouldThrow = false;
+    extractionShouldReturnNull = false;
+    const validExtractionResult = await bridge.inspectReviewContextAsync('tab_toctou_test', lease.leaseToken, commitSha);
+    assert.equal(validExtractionResult.success, true);
+    assert.equal(validExtractionResult.verifiedVerdict, 'APPROVED');
+    assert.equal(validExtractionResult.messageIdentity.messageId, 'msg_freshly_extracted');
+
+    bridge.browserManager = null;
+
+    // =========================================================================
+    // PART 3: U08-R13-03 — ANTI-TOCTOU ASYNCHRONOUS STATE CONSISTENCY INVARIANTS
+    // =========================================================================
+    // Shim electron module to allow BrowserService to be required in unit test environment
+    const Module = require('node:module');
+    const origResolve = Module._resolveFilename;
+    Module._resolveFilename = (req: string, ...rest: any[]) => {
+      if (req === 'electron') return 'electron';
+      return origResolve.call(Module, req, ...rest);
+    };
+    (require as any).cache['electron'] = {
+      id: 'electron',
+      filename: 'electron',
+      loaded: true,
+      exports: { WebContentsView: class {}, session: {}, shell: {} },
+    };
+
+    const { BrowserService } = require('../../../apps/desktop/src/browser-service.cjs');
+    const bs = new BrowserService();
+
+    // 3.1 Initial URL is not a trusted reviewer URL -> rejected immediately
+    const untrustedView = {
+      webContents: {
+        id: 101,
+        isDestroyed: () => false,
+        getURL: () => 'https://evil.com/phishing-review',
+        executeJavaScript: async () => ({ role: 'assistant', messageId: 'm1', text: 'APPROVED' }),
+      },
+    };
+    bs.views.set('tab_untrusted_url', untrustedView);
+    bs.stateManager.tabs.set('tab_untrusted_url', { id: 'tab_untrusted_url', navigationGeneration: 1 });
+    const untrustedRes = await bs.extractReviewMessageFromWebContents('tab_untrusted_url');
+    assert.equal(untrustedRes, null);
+
+    // 3.2 URL change during execution (TOCTOU race) -> rejected
+    let urlCallCount = 0;
+    const urlChangedView = {
+      webContents: {
+        id: 102,
+        isDestroyed: () => false,
+        getURL: () => {
+          urlCallCount++;
+          return urlCallCount === 1
+            ? 'https://chatgpt.com/c/6ad64b63-ad44-83ec-90ca-83cacbc26da5'
+            : 'https://chatgpt.com/c/different-conversation-id';
+        },
+        executeJavaScript: async () => ({ role: 'assistant', messageId: 'm1', text: 'APPROVED' }),
+      },
+    };
+    bs.views.set('tab_url_race', urlChangedView);
+    bs.stateManager.tabs.set('tab_url_race', { id: 'tab_url_race', navigationGeneration: 1 });
+    const urlRaceRes = await bs.extractReviewMessageFromWebContents('tab_url_race');
+    assert.equal(urlRaceRes, null);
+
+    // 3.3 NavigationGeneration change during execution (tab reloaded / navigated) -> rejected
+    const navTab = { id: 'tab_nav_race', navigationGeneration: 1 };
+    const navChangedView = {
+      webContents: {
+        id: 103,
+        isDestroyed: () => false,
+        getURL: () => 'https://chatgpt.com/c/6ad64b63-ad44-83ec-90ca-83cacbc26da5',
+        executeJavaScript: async () => {
+          navTab.navigationGeneration = 2; // Simulates navigation event firing while DOM script executes
+          return { role: 'assistant', messageId: 'm1', text: 'APPROVED' };
+        },
+      },
+    };
+    bs.views.set('tab_nav_race', navChangedView);
+    bs.stateManager.tabs.set('tab_nav_race', navTab);
+    const navRaceRes = await bs.extractReviewMessageFromWebContents('tab_nav_race');
+    assert.equal(navRaceRes, null);
+
+    // 3.4 WebContents recreated during execution (webContents.id changed) -> rejected
+    const wcTab = { id: 'tab_wc_race', navigationGeneration: 1 };
+    const wcChangedView: any = {
+      webContents: {
+        id: 104,
+        isDestroyed: () => false,
+        getURL: () => 'https://chatgpt.com/c/6ad64b63-ad44-83ec-90ca-83cacbc26da5',
+        executeJavaScript: async () => {
+          wcChangedView.webContents.id = 999; // Simulates view re-creation
+          return { role: 'assistant', messageId: 'm1', text: 'APPROVED' };
+        },
+      },
+    };
+    bs.views.set('tab_wc_race', wcChangedView);
+    bs.stateManager.tabs.set('tab_wc_race', wcTab);
+    const wcRaceRes = await bs.extractReviewMessageFromWebContents('tab_wc_race');
+    assert.equal(wcRaceRes, null);
+
+    // 3.5 WebContents destroyed during execution -> rejected
+    let destroyed = false;
+    const destroyedView = {
+      webContents: {
+        id: 105,
+        isDestroyed: () => destroyed,
+        getURL: () => 'https://chatgpt.com/c/6ad64b63-ad44-83ec-90ca-83cacbc26da5',
+        executeJavaScript: async () => {
+          destroyed = true;
+          return { role: 'assistant', messageId: 'm1', text: 'APPROVED' };
+        },
+      },
+    };
+    bs.views.set('tab_destroyed', destroyedView);
+    bs.stateManager.tabs.set('tab_destroyed', { id: 'tab_destroyed', navigationGeneration: 1 });
+    const destroyedRes = await bs.extractReviewMessageFromWebContents('tab_destroyed');
+    assert.equal(destroyedRes, null);
+
+    // 3.6 Invariant hold: Clean execution with all invariants matching -> successfully returns message
+    const cleanTab = { id: 'tab_clean', navigationGeneration: 1 };
+    const cleanView = {
+      webContents: {
+        id: 106,
+        isDestroyed: () => false,
+        getURL: () => 'https://chatgpt.com/c/6ad64b63-ad44-83ec-90ca-83cacbc26da5',
+        executeJavaScript: async () => ({
+          role: 'assistant',
+          messageId: 'msg_anti_toctou_verified',
+          text: `OFFICIAL VERDICT: SOURCE_REVIEW_APPROVED\nTarget commit: ${commitSha}`,
+        }),
+      },
+    };
+    bs.views.set('tab_clean', cleanView);
+    bs.stateManager.tabs.set('tab_clean', cleanTab);
+    const cleanRes = await bs.extractReviewMessageFromWebContents('tab_clean');
+    assert.ok(cleanRes);
+    assert.equal(cleanRes.role, 'assistant');
+    assert.equal(cleanRes.messageId, 'msg_anti_toctou_verified');
+    assert.equal(cleanRes.conversationId, '6ad64b63-ad44-83ec-90ca-83cacbc26da5');
+    assert.ok(cleanRes.capturedAt > 0);
+
+    // Verify tab state updated
+    const updatedTab = bs.stateManager.tabs.get('tab_clean');
+    assert.equal(updatedTab.structuredMessage.messageId, 'msg_anti_toctou_verified');
+
+    // Clean up module shim
+    Module._resolveFilename = origResolve;
+    delete (require as any).cache['electron'];
+  });
 });

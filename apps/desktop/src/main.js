@@ -5834,15 +5834,6 @@ ipcMain.handle('union-bot:parse-review-feedback', async (event, payload) => {
   }
 });
 
-ipcMain.handle('union-bot:intake-trusted-review', async (event, payload) => {
-  if (!checkSenderAuthorized(event)) return { success: false, error: 'Unauthorized IPC sender', code: 'ERR_UNAUTHORIZED_IPC' };
-  try {
-    return await gitReviewService.intakeTrustedReviewAsync(payload || {});
-  } catch (err) {
-    return { success: false, error: err.message, code: 'ERR_INTAKE_FAILED' };
-  }
-});
-
 ipcMain.handle('union-bot:get-review-findings', async (event, payload) => {
   if (!checkSenderAuthorized(event)) return [];
   try {

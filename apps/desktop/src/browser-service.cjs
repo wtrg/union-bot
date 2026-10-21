@@ -838,15 +838,27 @@ class BrowserService {
   }
 
   /**
-   * Phase P4 / UB-V4-U08: Extracts structured reviewer assistant message directly from WebContents DOM (U08-R11-01)
+   * Phase P4 / UB-V4-U08: Extracts structured reviewer assistant message directly from WebContents DOM (U08-R11-01, U08-R13-03)
+   * Enforces Anti-TOCTOU consistency checks on WebContents ID, URL, conversationId and navigation generation.
    */
   async extractReviewMessageFromWebContents(tabId) {
     const targetTabId = tabId || this.stateManager.getState().activeTabId;
     if (!targetTabId) return null;
     const view = this.views.get(targetTabId);
-    if (!view || view.webContents.isDestroyed()) return null;
-    const threadRef = this.captureThreadReference(targetTabId);
-    const convId = (threadRef && threadRef.threadId) || (view.webContents.getURL().includes('/c/') ? view.webContents.getURL().split('/c/')[1].split(/[?#]/)[0] : null);
+    const tab = this.stateManager.tabs.get(targetTabId);
+    if (!view || view.webContents.isDestroyed() || !tab) return null;
+
+    // 1. Capture pre-extraction invariants (U08-R13-03)
+    const preWebContentsId = view.webContents.id;
+    const preUrl = view.webContents.getURL();
+    const preNavGen = tab.navigationGeneration || 0;
+    const preThreadRef = this.captureThreadReference(targetTabId);
+    const preConvId = (preThreadRef && preThreadRef.threadId) || (preUrl.includes('/c/') ? preUrl.split('/c/')[1].split(/[?#]/)[0] : null);
+
+    // Initial URL must be a trusted reviewer URL
+    if (!preUrl.startsWith('https://chatgpt.com/c/')) {
+      return null;
+    }
 
     try {
       const extracted = await view.webContents.executeJavaScript(`
@@ -864,11 +876,23 @@ class BrowserService {
           };
         })()
       `);
-      if (extracted && extracted.role === 'assistant' && extracted.messageId && extracted.text && convId) {
+
+      // 2. Post-extraction invariants & Anti-TOCTOU consistency checks (U08-R13-03)
+      if (view.webContents.isDestroyed()) return null;
+      if (view.webContents.id !== preWebContentsId) return null; // WebContents changed
+      const postUrl = view.webContents.getURL();
+      if (postUrl !== preUrl) return null; // URL changed during async execution
+      const postNavGen = tab.navigationGeneration || 0;
+      if (postNavGen !== preNavGen) return null; // Navigation occurred during async execution
+      const postThreadRef = this.captureThreadReference(targetTabId);
+      const postConvId = (postThreadRef && postThreadRef.threadId) || (postUrl.includes('/c/') ? postUrl.split('/c/')[1].split(/[?#]/)[0] : null);
+      if (postConvId !== preConvId || !postConvId) return null; // Conversation changed
+
+      if (extracted && extracted.role === 'assistant' && extracted.messageId && extracted.text) {
         const fullMsg = {
           role: 'assistant',
           messageId: extracted.messageId,
-          conversationId: convId,
+          conversationId: postConvId,
           text: extracted.text,
           capturedAt: Date.now(),
         };
