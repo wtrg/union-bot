@@ -1,6 +1,7 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Sora3DIsland, Sora3DIslandRef, AGENTS, AGENT_IDS } from './components/Sora3DIsland.tsx';
 import { BrowserPanel } from './components/BrowserPanel.tsx';
+import { EnvelopeView } from './types.ts';
 
 export interface BotTask {
   id: string;
@@ -23,6 +24,7 @@ export interface ChatMessage {
   text: string;
   taskTag?: string;
   reactions?: Record<string, number>;
+  status?: string;
 }
 
 export interface RoomDef {
@@ -31,126 +33,24 @@ export interface RoomDef {
   unread: number;
 }
 
-const INITIAL_TASKS: BotTask[] = [
-  {
-    id: 'TASK-01',
-    title: 'Đồng bộ WebSocket 6 AI & tối ưu khung chat 70% Blue',
-    agent: 'Codex',
-    progress: 78,
-    status: 'RUNNING',
-  },
-  {
-    id: 'TASK-02',
-    title: 'Tách biệt Khung Đảo 3D & Bảng Tác Vụ không đè nhau',
-    agent: 'Antigravity',
-    progress: 94,
-    status: 'RUNNING',
-  },
-  {
-    id: 'TASK-03',
-    title: 'Kiểm thử phản biện chéo & cỡ chữ 12.5px sắc nét',
-    agent: 'Claude',
-    progress: 68,
-    status: 'RUNNING',
-  },
-  {
-    id: 'TASK-04',
-    title: 'Tối ưu hàng đợi sự kiện O(1) cho wtrg/union-bot',
-    agent: 'DeepSeek',
-    progress: 100,
-    status: 'DONE',
-  },
+const DEFAULT_ROOMS: RoomDef[] = [
+  { id: 'orchestration', label: '💙 #orchestration (Chung)', unread: 0 },
+  { id: 'agent-dev', label: '⚡ #agent-dev (Code)', unread: 0 },
+  { id: 'qa-audit', label: '🛡️ #qa-audit (Kiểm thử)', unread: 0 },
+  { id: 'review-briefing', label: '📋 #review-briefing (Review)', unread: 0 },
 ];
 
 const INITIAL_CHECKLIST: ChecklistItem[] = [
   { id: 'ck-1', text: 'Khung Chat Nhóm 70% màn hình chữ 12.5px gọn đẹp', done: true },
   { id: 'ck-2', text: 'Khung Đảo Hoa Lam 3D riêng biệt không bị che khuất', done: true },
   { id: 'ck-3', text: 'Bảng Tác Vụ & Checklist thu gọn mở rộng 100% 3D', done: true },
-  { id: 'ck-4', text: 'Xuất báo cáo benchmark JSON cho wtrg/union-bot', done: false },
+  { id: 'ck-4', text: 'Kết nối trực tiếp Hội Đồng 6 AI qua Electron IPC', done: true },
 ];
 
-const INITIAL_ROOMS: RoomDef[] = [
-  { id: '#wt-union-general', label: '💙 #wt-union-general', unread: 0 },
-  { id: '#code-warroom', label: '⚡ #code-warroom', unread: 1 },
-  { id: '#tech-critique', label: '🛡️ #tech-critique', unread: 0 },
-];
-
-const SAMPLE_CODE_1 = [
-  '```typescript',
-  '// Đồng bộ 6 AI & Khung Chat 70% Sora Blue (wtrg/union-bot)',
-  'export const soraBlueWorkspace = {',
-  '  leftColumn30: { top3dIsland: "52%", bottomTaskDock: "48% (Collapsible)" },',
-  '  rightChat70: { fontSize: "12.5px", codeFontSize: "11px", members: 6 }',
-  '};',
-  '```',
-].join('\n');
-
-const INITIAL_ROOM_MESSAGES: Record<string, ChatMessage[]> = {
-  '#wt-union-general': [
-    {
-      id: 'm-101',
-      sender: 'ChatGPT',
-      time: '01:20',
-      taskTag: 'TASK-01',
-      text: 'Chào **Commander**! 💙 Mình đã khắc phục hoàn toàn lỗi hiển thị và bố trí lại không gian `wtrg/union-bot` siêu gọn:\n• **Cột Trái (30%)**: Nửa trên là **Đảo Hoa Lam 3D riêng biệt** (không bao giờ bị bảng Task che khuất), nửa dưới là **Bảng Tác Vụ & Tiến Độ Bot**.\n• **Cột Phải (70%)**: Khung trò chuyện nhóm với cỡ chữ **`12.5px`** thanh thoát, hiển thị đầy đủ cả 6 thành viên AI!',
-      reactions: { '💙': 9, '⚡': 6, '🚀': 5 },
-    },
-    {
-      id: 'm-102',
-      sender: 'Codex',
-      time: '01:20',
-      taskTag: 'TASK-01',
-      text:
-        'Báo cáo **[TASK-01]** (78%): Mình đã kết nối trực tiếp Hàng Đợi Tác Vụ với khung chat 70% này! 🦊\n' +
-        SAMPLE_CODE_1 +
-        '\nKhi bạn bấm nút **`▾ Thu gọn`** ở bảng Tác Vụ bên trái, **Đảo Hoa Lam 3D** sẽ tự động phóng to chiếm trọn 100% cột trái!',
-      reactions: { '💙': 8, '✅': 7 },
-    },
-    {
-      id: 'm-103',
-      sender: 'Gemini',
-      time: '01:21',
-      taskTag: 'TASK-02',
-      text:
-        'Mình và @Antigravity đã căn chỉnh lại Camera 3D ngay chính giữa khung **Đảo Hoa Lam 3D** ✨. Bạn có thể bấm trực tiếp vào từng bé Mochi 3D hoặc thanh 6 AI phía trên để gọi tên và giao việc nhé!',
-      reactions: { '💙': 7, '🚀': 4 },
-    },
-    {
-      id: 'm-104',
-      sender: 'Claude',
-      time: '01:21',
-      taskTag: 'TASK-03',
-      text:
-        'Mình đã kiểm tra **[TASK-03]**: Phông chữ **`12.5px`** (kèm thanh trượt `11px – 15px` trên góc phải) giúp đọc được nhiều tin nhắn và khối code hơn 35% trên màn hình laptop mà vẫn cực kỳ dịu mắt. 🍊',
-      reactions: { '💙': 6, '✅': 5 },
-    },
-  ],
-  '#code-warroom': [
-    {
-      id: 'm-201',
-      sender: 'DeepSeek',
-      time: '01:18',
-      taskTag: 'TASK-04',
-      text:
-        'Đã hoàn tất **[TASK-04]** (100%)! 🐟 Toàn bộ hàng đợi WebSocket của `wtrg/union-bot` đạt độ trễ trung bình **18ms**.',
-      reactions: { '⚡': 6, '✅': 5 },
-    },
-  ],
-  '#tech-critique': [
-    {
-      id: 'm-301',
-      sender: 'Antigravity',
-      time: '01:19',
-      taskTag: 'TASK-02',
-      text:
-        'Khung WebGL 3D hiện sử dụng `ResizeObserver` tự động co giãn mượt mà mỗi khi bạn thu gọn hoặc mở rộng bảng Tác Vụ! 💠',
-      reactions: { '💙': 5, '🚀': 4 },
-    },
-  ],
-};
-
-function currentTimeShort(): string {
-  return new Date().toTimeString().slice(0, 5);
+function formatTime(timestamp?: number): string {
+  if (!timestamp) return new Date().toTimeString().slice(0, 5);
+  const d = new Date(timestamp);
+  return d.toTimeString().slice(0, 5);
 }
 
 function escapeHtml(str: string): string {
@@ -160,7 +60,52 @@ function escapeHtml(str: string): string {
     .replace(/>/g, '&gt;');
 }
 
+function mapSenderToAgentId(sender: any): string {
+  if (!sender) return 'ChatGPT';
+  if (sender.kind === 'user' || sender.id === 'user_lead' || sender.kind === 'human') {
+    return 'Commander';
+  }
+  const provider = (sender.provider || sender.id || '').toLowerCase();
+  if (provider.includes('chatgpt')) return 'ChatGPT';
+  if (provider.includes('gemini')) return 'Gemini';
+  if (provider.includes('antigravity')) return 'Antigravity';
+  if (provider.includes('codex')) return 'Codex';
+  if (provider.includes('claude')) return 'Claude';
+  if (provider.includes('deepseek')) return 'DeepSeek';
+  if (sender.kind === 'system' || sender.id === 'system_router') return 'ChatGPT';
+  return 'ChatGPT';
+}
+
+function envelopeToChatMessage(env: EnvelopeView): ChatMessage {
+  const senderId = mapSenderToAgentId(env.sender);
+  const parts = env.parts || [];
+  const text = parts
+    .map((p) => {
+      if (p.text) return p.text;
+      if (p.content) return p.content;
+      if (p.code) return '```' + (p.language || '') + '\n' + p.code + '\n```';
+      if (p.diff) return '```diff\n' + p.diff + '\n```';
+      return '';
+    })
+    .filter(Boolean)
+    .join('\n\n');
+
+  const taskMatch = text.match(/\[(TASK-\d+)\]/);
+  const envStatus = (env as any).status || env.delivery?.state;
+
+  return {
+    id: env.id,
+    sender: senderId,
+    time: formatTime(env.timestamp),
+    text: text || '(Tin nhắn trống)',
+    taskTag: taskMatch ? taskMatch[1] : undefined,
+    status: envStatus,
+    reactions: { '💙': 1 },
+  };
+}
+
 export const App: React.FC = () => {
+  const isDesktop = typeof window !== 'undefined' && Boolean(window.unionBotAPI);
   const islandRef = useRef<Sora3DIslandRef>(null);
   const chatBoxRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -187,10 +132,37 @@ export const App: React.FC = () => {
   });
 
   // Core Data States
-  const [rooms, setRooms] = useState<RoomDef[]>(INITIAL_ROOMS);
-  const [activeRoom, setActiveRoom] = useState<string>('#wt-union-general');
-  const [roomMessages, setRoomMessages] = useState<Record<string, ChatMessage[]>>(INITIAL_ROOM_MESSAGES);
-  const [botTasks, setBotTasks] = useState<BotTask[]>(INITIAL_TASKS);
+  const [rooms, setRooms] = useState<RoomDef[]>(DEFAULT_ROOMS);
+  const [activeRoom, setActiveRoom] = useState<string>('orchestration');
+  const [roomMessages, setRoomMessages] = useState<Record<string, ChatMessage[]>>({
+    orchestration: [
+      {
+        id: 'welcome-001',
+        sender: 'ChatGPT',
+        time: formatTime(Date.now()),
+        text: 'Chào **Commander**! 💙 Hệ thống **Union Bot** đã sẵn sàng.\n• Gửi tin nhắn bất kỳ để bắt đầu phối hợp.\n• Nhập `@ChatGPT`, `@Antigravity`, `@Codex`, `@Gemini`, `@Claude`, `@DeepSeek` để chỉ định AI.\n• Bấm nút **`🌐 Web AI`** trên thanh tiêu đề nếu bạn muốn đăng nhập trực tiếp tài khoản ChatGPT / Claude / Gemini Web.',
+        reactions: { '💙': 5, '⚡': 3 },
+      },
+    ],
+  });
+
+  const [botTasks, setBotTasks] = useState<BotTask[]>([
+    {
+      id: 'TASK-01',
+      title: 'Đồng bộ Hội Đồng 6 AI & Khung chat 70% Sora Blue',
+      agent: 'Codex',
+      progress: 85,
+      status: 'RUNNING',
+    },
+    {
+      id: 'TASK-02',
+      title: 'Tách biệt Khung Đảo 3D & Bảng Tác Vụ không đè nhau',
+      agent: 'Antigravity',
+      progress: 100,
+      status: 'DONE',
+    },
+  ]);
+
   const [checklist, setChecklist] = useState<ChecklistItem[]>(INITIAL_CHECKLIST);
   const [pinnedTaskId, setPinnedTaskId] = useState<string>('TASK-01');
 
@@ -199,6 +171,7 @@ export const App: React.FC = () => {
   const [newTaskTitle, setNewTaskTitle] = useState<string>('');
   const [newTaskAgent, setNewTaskAgent] = useState<string>('Codex');
   const [typingAgents, setTypingAgents] = useState<Set<string>>(new Set());
+  const [isSending, setIsSending] = useState<boolean>(false);
 
   // Toast Notification State
   const [toastText, setToastText] = useState<string | null>(null);
@@ -211,6 +184,95 @@ export const App: React.FC = () => {
       setToastText(null);
     }, 2800);
   };
+
+  // 1. Synchronize Room History and Listen to Real Envelopes via Electron IPC
+  useEffect(() => {
+    if (!isDesktop || !window.unionBotAPI) return;
+
+    // Load initial room history from SQLite
+    window.unionBotAPI
+      .getRoomHistory(activeRoom)
+      .then((history: EnvelopeView[]) => {
+        if (Array.isArray(history) && history.length > 0) {
+          const mapped = history.map(envelopeToChatMessage);
+          setRoomMessages((prev) => ({
+            ...prev,
+            [activeRoom]: mapped,
+          }));
+        }
+      })
+      .catch((err: any) => console.error('[App] getRoomHistory error:', err));
+
+    // Listen to real-time streamed or completed envelopes
+    const unsubscribe = window.unionBotAPI.onEnvelopeReceived((env: EnvelopeView) => {
+      if (!env || !env.roomId) return;
+      const targetRoom = env.roomId;
+      const newMsg = envelopeToChatMessage(env);
+
+      // Typing animation state for the sender
+      if (newMsg.sender !== 'Commander') {
+        const envStatus = (env as any).status || env.delivery?.state;
+        const isStreaming = envStatus === 'streaming' || envStatus === 'sending';
+        if (isStreaming) {
+          setTypingAgents((prev) => new Set(prev).add(newMsg.sender));
+        } else {
+          setTypingAgents((prev) => {
+            const next = new Set(prev);
+            next.delete(newMsg.sender);
+            return next;
+          });
+        }
+        // Trigger 3D Mochi bounce
+        islandRef.current?.triggerHappyBounce(newMsg.sender, isStreaming ? 'Đang trả lời... ⚡' : 'Đã phản hồi! 💙');
+      }
+
+      setRoomMessages((prev) => {
+        const list = prev[targetRoom] || [];
+        const existingIdx = list.findIndex((m) => m.id === newMsg.id);
+        if (existingIdx >= 0) {
+          const updated = [...list];
+          updated[existingIdx] = newMsg;
+          return { ...prev, [targetRoom]: updated };
+        }
+        return { ...prev, [targetRoom]: [...list, newMsg] };
+      });
+    });
+
+    return () => {
+      if (typeof unsubscribe === 'function') unsubscribe();
+    };
+  }, [activeRoom, isDesktop]);
+
+  // 2. Load Tasks from SQLite if available
+  const loadTasks = useCallback(async () => {
+    if (isDesktop && window.unionBotAPI?.listTasks) {
+      try {
+        const tasks = await window.unionBotAPI.listTasks();
+        if (Array.isArray(tasks) && tasks.length > 0) {
+          const mappedTasks: BotTask[] = tasks.map((t: any, idx: number) => ({
+            id: t.id || `TASK-${String(idx + 1).padStart(2, '0')}`,
+            title: t.title || t.name || 'Tác vụ Union Bot',
+            agent: t.metadata?.assignee || t.assignee || 'Codex',
+            progress: t.status === 'completed' || t.status === 'DONE' ? 100 : t.progress || 35,
+            status: t.status === 'completed' || t.status === 'DONE' ? 'DONE' : 'RUNNING',
+          }));
+          setBotTasks(mappedTasks);
+        }
+      } catch (err) {
+        console.error('[App] listTasks error:', err);
+      }
+    }
+  }, [isDesktop]);
+
+  useEffect(() => {
+    loadTasks();
+    if (isDesktop && window.unionBotAPI?.onTaskUpdated) {
+      const unsub = window.unionBotAPI.onTaskUpdated(() => {
+        loadTasks();
+      });
+      return unsub;
+    }
+  }, [loadTasks, isDesktop]);
 
   // Font size synchronization
   const handleFontSizeChange = (val: number) => {
@@ -275,7 +337,7 @@ export const App: React.FC = () => {
   };
 
   const insertCodeTemplate = () => {
-    setInputText((prev) => `${prev}\n\`\`\`json\n{"task": "${pinnedTaskId}", "chat_width": "70%", "font": "${chatFontSize}px"}\n\`\`\`\n`);
+    setInputText((prev) => `${prev}\n\`\`\`ts\n// Nhập code tại đây\n\`\`\`\n`);
     inputRef.current?.focus();
   };
 
@@ -318,7 +380,7 @@ export const App: React.FC = () => {
     showToast(`✅ Đã hoàn tất 100% [${taskId}]!`);
   };
 
-  const handleAddNewTask = (e: React.FormEvent) => {
+  const handleAddNewTask = async (e: React.FormEvent) => {
     e.preventDefault();
     const title = newTaskTitle.trim();
     if (!title) return;
@@ -341,18 +403,17 @@ export const App: React.FC = () => {
       islandRef.current.triggerHappyBounce(newTaskAgent, `Nhận ${newId}! 🚀`);
     }
 
-    pushMessage(
-      activeRoom,
-      {
-        id: `m-task-${Date.now()}`,
-        sender: newTaskAgent,
-        time: currentTimeShort(),
-        taskTag: newId,
-        text: `Đã nhận tác vụ mới **[${newId}]**: *"${title}"*! 💙 Mình đang khởi chạy tiến trình thực thi ngay bây giờ (20% -> 100%).`,
-        reactions: { '💙': 4, '🚀': 3 },
-      },
-      `Đang chạy ${newId}! ⚡`
-    );
+    if (isDesktop && window.unionBotAPI?.createTask) {
+      try {
+        await window.unionBotAPI.createTask({
+          title,
+          roomId: activeRoom,
+          metadata: { assignee: newTaskAgent },
+        });
+      } catch (err) {
+        console.error('[App] createTask error:', err);
+      }
+    }
   };
 
   const handleRunAllTasksBoost = () => {
@@ -376,8 +437,8 @@ export const App: React.FC = () => {
     const remaining = botTasks.filter((t) => t.status !== 'DONE');
     if (remaining.length === 0) {
       remaining.push({
-        id: 'TASK-05',
-        title: 'Giám sát định kỳ hệ thống wtrg/union-bot',
+        id: 'TASK-01',
+        title: 'Giám sát điều phối tác vụ Union Bot',
         agent: 'ChatGPT',
         progress: 50,
         status: 'RUNNING',
@@ -412,175 +473,100 @@ export const App: React.FC = () => {
     }
   };
 
-  // Message Sending
-  const pushMessage = (roomId: string, msg: ChatMessage, shortSpeech?: string) => {
-    setRoomMessages((prev) => {
-      const list = prev[roomId] || [];
-      return { ...prev, [roomId]: [...list, msg] };
-    });
-
-    if (msg.sender !== 'Commander' && islandRef.current) {
-      islandRef.current.triggerHappyBounce(msg.sender, shortSpeech || 'Đã báo cáo! 💙');
-    }
-
-    if (roomId !== activeRoom) {
-      setRooms((prev) =>
-        prev.map((r) => (r.id === roomId ? { ...r, unread: r.unread + 1 } : r))
-      );
-    }
-  };
-
-  const handleSendMessage = (e?: React.FormEvent) => {
+  // Send Message: REAL ELECTRON IPC DISPATCH
+  const handleSendMessage = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     const text = inputText.trim();
-    if (!text) return;
+    if (!text || isSending) return;
+
     setInputText('');
+    setIsSending(true);
 
-    pushMessage(activeRoom, {
-      id: `m-${Date.now()}`,
-      sender: 'Commander',
-      time: currentTimeShort(),
-      text,
-      reactions: { '💙': 3, '⚡': 2 },
-    });
-
-    // Determine responders
-    const mentioned = AGENT_IDS.filter((id) =>
-      text.toLowerCase().includes(`@${id.toLowerCase()}`)
-    );
-    const isAll = text.toLowerCase().includes('@tấtcả') || text.toLowerCase().includes('@all');
-
-    let chosen: string[] = [];
-    if (isAll) {
-      chosen = [...AGENT_IDS];
-    } else if (mentioned.length > 0) {
-      chosen = [...mentioned];
-      if (autoParty && chosen.length === 1) {
-        const others = AGENT_IDS.filter((k) => !chosen.includes(k));
-        chosen.push(others[Math.floor(Math.random() * others.length)]);
-      }
-    } else {
-      chosen = autoParty ? ['ChatGPT', 'Codex', 'Gemini'] : [AGENT_IDS[Math.floor(Math.random() * AGENT_IDS.length)]];
-    }
-
-    scheduleCohortReplies(text, Array.from(new Set(chosen)), activeRoom, pinnedTaskId);
-  };
-
-  const scheduleCohortReplies = (
-    prompt: string,
-    agents: string[],
-    room: string,
-    taskTag: string
-  ) => {
-    agents.forEach((id, idx) => {
-      setTimeout(() => {
-        setTypingAgents((prev) => new Set(prev).add(id));
-        islandRef.current?.triggerHappyBounce(id, 'Đang xử lý... ⚡');
-      }, idx * 380);
-
-      setTimeout(() => {
-        setTypingAgents((prev) => {
-          const next = new Set(prev);
-          next.delete(id);
-          return next;
-        });
-
-        const reply = buildAgentReply(id, prompt, idx, agents, taskTag);
-        pushMessage(
-          room,
-          {
-            id: `m-${Date.now()}-${idx}`,
-            sender: id,
-            time: currentTimeShort(),
-            taskTag: taskTag || 'TASK-01',
-            text: reply.text,
-            reactions: { '💙': 3 + Math.floor(Math.random() * 4), '✅': 2 },
-          },
-          reply.shortSpeech
-        );
-      }, 900 + idx * 1050);
-    });
-  };
-
-  const buildAgentReply = (
-    agentId: string,
-    prompt: string,
-    idx: number,
-    cohort: string[],
-    taskTag: string
-  ): { text: string; shortSpeech: string } => {
-    const clean = prompt.replace(/@\S+/g, '').trim() || 'điều phối tác vụ wtrg/union-bot';
-    const prev = idx > 0 ? cohort[idx - 1] : null;
-    const tag = taskTag || 'TASK-01';
-
-    const codeSnippet = [
-      '```typescript',
-      `export async function runUnionTask(id = "${tag}") {`,
-      '  return { id, status: "VERIFIED_60FPS", chatFont: "12.5px" };',
-      '}',
-      '```',
-    ].join('\n');
-
-    const replies: Record<string, { text: string; shortSpeech: string }> = {
-      ChatGPT: {
-        shortSpeech: `Điều phối ${tag}! 🍵`,
-        text: `Đã cập nhật vào **[${tag}]**! 💙 Về yêu cầu **"${clean}"**, mình đã phân bổ luồng cho @Codex thực thi mã nguồn và @Claude kiểm tra chéo.`,
-      },
-      Gemini: {
-        shortSpeech: 'Đồng bộ 60FPS! ✨',
-        text: `${prev ? `Đồng ý với @${prev}! ✨ ` : ''}Mình vừa đồng bộ dữ liệu thời gian thực cho **"${clean}"** thuộc **[${tag}]**. Khung 3D bên trái và Khung Chat 70% bên phải hiện chạy song song cực mượt!`,
-      },
-      Codex: {
-        shortSpeech: 'Code chạy mượt! 🦊',
-        text: `Shiba Tia Chớp báo cáo **[${tag}]**! 🦊 Mình đã cập nhật module xử lý cho **"${clean}"**:\n${codeSnippet}\nTiến độ task bên cột trái vừa được cộng thêm % tự động!`,
-      },
-      Antigravity: {
-        shortSpeech: 'Đảo Lam Ngọc 3D! 💠',
-        text: `Mỗi khi **[${tag}]** có cập nhật mới về **"${clean}"**, mình lại kích hoạt sóng năng lượng Xanh Dương từ 6 anh em Mochi bay lên **Cây Đào Pha Lê 3D**! 💠`,
-      },
-      Claude: {
-        shortSpeech: 'Đã duyệt an toàn! 🍊',
-        text: `${prev ? `Xác nhận bổ sung cho @${prev}: ` : ''}Đã kiểm duyệt bảo mật cho **"${clean}"** (**[${tag}]**) 🍊. Cỡ chữ \`12.5px\` và các bảng thu gọn hoạt động hoàn hảo.`,
-      },
-      DeepSeek: {
-        shortSpeech: 'Tối ưu O(1)! 🐟',
-        text: `Cá Koi Đại Dương báo cáo **[${tag}]**: Luồng xử lý **"${clean}"** đạt hiệu suất tối đa, độ trễ toàn mạng chỉ **18ms**! 🐟`,
-      },
+    const userMsgId = `env_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    const userEnvelope: EnvelopeView = {
+      id: userMsgId,
+      traceId: `trc_${Date.now()}`,
+      timestamp: Date.now(),
+      sender: { kind: 'user', id: 'user_lead', name: 'Commander', role: 'OPERATOR' },
+      recipient: { kind: 'room', id: activeRoom },
+      roomId: activeRoom,
+      fidelity: 'L1_FORMATTED_MARKDOWN',
+      parts: [{ kind: 'text', text }],
     };
 
-    return replies[agentId] || replies.ChatGPT;
-  };
+    // Render user message immediately
+    const userChatMsg = envelopeToChatMessage(userEnvelope);
+    setRoomMessages((prev) => {
+      const list = prev[activeRoom] || [];
+      return { ...prev, [activeRoom]: [...list, userChatMsg] };
+    });
 
-  const handleCouncilDebate = () => {
-    showToast('⚡ Kích hoạt phiên thảo luận & rà soát Tác Vụ giữa 4 AI!');
-    handleRunAllTasksBoost();
-    scheduleCohortReplies(
-      'Rà soát tiến độ Hàng Đợi Tác Vụ & tối ưu khung chat 70% Blue',
-      ['ChatGPT', 'Codex', 'Gemini', 'Claude'],
-      activeRoom,
-      pinnedTaskId
-    );
+    // Animate all mochis when commander issues command
+    AGENT_IDS.forEach((id) => islandRef.current?.triggerHappyBounce(id, 'Nhận lệnh! ⚡'));
+
+    if (isDesktop && window.unionBotAPI?.sendGroupMessage) {
+      try {
+        const res = await window.unionBotAPI.sendGroupMessage(userEnvelope);
+        if (!res || !res.success) {
+          const errText = res?.error || 'Lỗi IPC không xác định';
+          showToast(`⚠️ ${errText}`);
+          // Add system feedback note
+          setRoomMessages((prev) => ({
+            ...prev,
+            [activeRoom]: [
+              ...(prev[activeRoom] || []),
+              {
+                id: `sys-err-${Date.now()}`,
+                sender: 'ChatGPT',
+                time: formatTime(Date.now()),
+                text: `⚠️ **[THÔNG BÁO HỆ THỐNG]**: ${errText}\n\n*Gợi ý*: Bấm nút **\`🌐 Web AI\`** trên thanh tiêu đề để kiểm tra hoặc đăng nhập ChatGPT Web / Claude Web, hoặc gõ \`@Antigravity\` để dùng AI local miễn phí.`,
+              },
+            ],
+          }));
+        }
+      } catch (err: any) {
+        console.error('[App] sendGroupMessage exception:', err);
+        showToast('⚠️ Lỗi kết nối IPC Main Process');
+      } finally {
+        setIsSending(false);
+      }
+    } else {
+      // Standalone web preview warning
+      setTimeout(() => {
+        setRoomMessages((prev) => ({
+          ...prev,
+          [activeRoom]: [
+            ...(prev[activeRoom] || []),
+            {
+              id: `demo-resp-${Date.now()}`,
+              sender: 'ChatGPT',
+              time: formatTime(Date.now()),
+              text: `💡 **[CHẾ ĐỘ XEM TRƯỚC TRÊN TRÌNH DUYỆT]**\nBạn đang mở giao diện web độc lập (chưa qua Electron). Để kích hoạt AI thật trả lời tự động, hãy chạy lệnh **\`union-bot\`** trong Terminal để khởi động ứng dụng Desktop!`,
+            },
+          ],
+        }));
+        setIsSending(false);
+      }, 500);
+    }
   };
 
   const handleRollCall = () => {
     showToast('🍡 Cả 6 bé AI đang nhảy điểm danh & đồng bộ Tác Vụ!');
     islandRef.current?.triggerRollCall();
 
-    setTimeout(() => {
-      pushMessage(
-        activeRoom,
-        {
-          id: `m-roll-${Date.now()}`,
-          sender: 'ChatGPT',
-          time: currentTimeShort(),
-          taskTag: pinnedTaskId,
-          text:
-            '**🍡 ĐIỂM DANH ĐỘI HÌNH 6 AI & TRẠNG THÁI TÁC VỤ (`wtrg/union-bot`)**:\n• 🍵 **ChatGPT** — Điều phối chung & Checklist Sprint\n• ✨ **Gemini** — Đồng bộ WebSocket & Telemetry\n• 🦊 **Codex** — Thực thi **[TASK-01]** (Khung chat 70% Blue)\n• 💠 **Antigravity** — Đồ họa Đảo Lam Ngọc 3D (**[TASK-02]**)\n• 🍊 **Claude** — Phản biện & Kiểm thử (**[TASK-03]**)\n• 🐟 **DeepSeek** — Tối ưu hàng đợi O(1) (**[TASK-04]** Hoàn tất)',
-          reactions: { '💙': 11, '⚡': 8, '✅': 7 },
-        },
-        'Đủ 6 thành viên! 💙'
-      );
-    }, 800);
+    if (isDesktop && window.unionBotAPI?.sendGroupMessage) {
+      const rollEnvelope: EnvelopeView = {
+        id: `env_roll_${Date.now()}`,
+        traceId: `trc_${Date.now()}`,
+        timestamp: Date.now(),
+        sender: { kind: 'user', id: 'user_lead', name: 'Commander', role: 'OPERATOR' },
+        recipient: { kind: 'room', id: activeRoom },
+        roomId: activeRoom,
+        fidelity: 'L1_FORMATTED_MARKDOWN',
+        parts: [{ kind: 'text', text: '@all Điểm danh đội hình và báo cáo trạng thái sẵn sàng!' }],
+      };
+      window.unionBotAPI.sendGroupMessage(rollEnvelope);
+    }
   };
 
   const handleClearChat = () => {
@@ -590,9 +576,8 @@ export const App: React.FC = () => {
         {
           id: `m-clean-${Date.now()}`,
           sender: 'ChatGPT',
-          time: currentTimeShort(),
-          taskTag: pinnedTaskId,
-          text: `💙 Đã làm mới phòng **${activeRoom}**! Khung chat 70% cỡ chữ \`12.5px\` đã sẵn sàng.`,
+          time: formatTime(Date.now()),
+          text: `💙 Đã làm mới giao diện phòng **${activeRoom}**! Khung chat 70% cỡ chữ \`${chatFontSize}px\` đã sẵn sàng.`,
           reactions: { '💙': 4, '✅': 3 },
         },
       ],
@@ -612,14 +597,14 @@ export const App: React.FC = () => {
     const timer = setInterval(() => {
       const randomId = AGENT_IDS[Math.floor(Math.random() * AGENT_IDS.length)];
       const phrases = [
-        'Task chạy mượt! ⚡',
+        'Sẵn sàng nhận lệnh! ⚡',
         'Chat 70% chữ 12.5px! 💙',
         'wtrg/union-bot 60FPS! 💎',
         'Bấm mình để giao việc! 📋',
       ];
       const pick = phrases[Math.floor(Math.random() * phrases.length)];
       islandRef.current?.triggerHappyBounce(randomId, pick);
-    }, 6200);
+    }, 7500);
 
     return () => clearInterval(timer);
   }, []);
@@ -647,10 +632,8 @@ export const App: React.FC = () => {
     text = text.replace(/\*\*([^*]+)\*\*/g, '<strong class="font-extrabold text-sky-300">$1</strong>');
     text = text.replace(/`([^`]+)`/g, '<code class="px-1.5 py-0.5 rounded bg-sky-500/15 border border-sky-400/30 font-mono text-[11px] text-sky-300 font-semibold">$1</code>');
     text = text.replace(/\[(TASK-\d+)\]/g, `<span class="cursor-pointer px-1.5 py-0.5 rounded bg-blue-600/30 border border-sky-400/50 font-mono text-[9.5px] font-bold text-sky-200 hover:bg-blue-600/50">$1</span>`);
-    text = text.replace(/@(TấtCả|ChatGPT|Gemini|Codex|Antigravity|Claude|DeepSeek)/g, (_, name) => {
-      const ag = AGENTS[name];
-      const col = ag ? ag.colorCss : '#38BDF8';
-      return `<span class="cursor-pointer px-1.5 py-0.2 rounded-md font-display font-bold text-[10.5px]" style="background:${col}22; color:${col}; border:1px solid ${col}66">@${name}</span>`;
+    text = text.replace(/@(TấtCả|ChatGPT|Gemini|Codex|Antigravity|Claude|DeepSeek|all|team)/gi, (m) => {
+      return `<span class="cursor-pointer px-1.5 py-0.2 rounded-md font-display font-bold text-[10.5px] bg-sky-500/20 text-sky-300 border border-sky-400/30">${m}</span>`;
     });
 
     text = text.replace(/\n/g, '<br/>');
@@ -1252,7 +1235,7 @@ export const App: React.FC = () => {
                           {ag.name}
                         </div>
                         <div className="text-[9px] text-theme-muted truncate leading-tight">
-                          {isTyping ? 'đang gõ...' : ag.role}
+                          {isTyping ? 'đang trả lời...' : ag.role}
                         </div>
                       </div>
                     </button>
@@ -1285,14 +1268,10 @@ export const App: React.FC = () => {
               <div className="flex items-center gap-1 shrink-0">
                 <button
                   type="button"
-                  onClick={() =>
-                    scheduleCohortReplies(
-                      `Báo cáo tiến độ [${pinnedTask.id}] ${pinnedTask.title} (${pinnedTask.progress}%)`,
-                      [pinnedTask.agent, 'ChatGPT', 'Claude'],
-                      activeRoom,
-                      pinnedTask.id
-                    )
-                  }
+                  onClick={() => {
+                    setInputText(`@${pinnedTask.agent} Hãy báo cáo chi tiết tiến độ thực thi [${pinnedTask.id}] "${pinnedTask.title}" (${pinnedTask.progress}%)`);
+                    inputRef.current?.focus();
+                  }}
                   className="btn-pop px-2 py-0.5 rounded-md bg-sky-500/25 hover:bg-sky-500/40 text-sky-200 border border-sky-400/40 text-[10px] font-display font-bold"
                 >
                   📢 Báo cáo vào Chat
@@ -1317,7 +1296,7 @@ export const App: React.FC = () => {
             {currentMessages.map((msg) => {
               const ag = AGENTS[msg.sender] || AGENTS.ChatGPT;
               const isUser = msg.sender === 'Commander';
-              const reactions = msg.reactions || { '💙': 2, '⚡': 1 };
+              const reactions = msg.reactions || { '💙': 1 };
 
               if (isUser) {
                 return (
@@ -1389,6 +1368,11 @@ export const App: React.FC = () => {
                             📌 {msg.taskTag}
                           </span>
                         )}
+                        {msg.status === 'streaming' && (
+                          <span className="px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 text-[9px] font-bold animate-pulse">
+                            đang trả lời...
+                          </span>
+                        )}
                       </div>
                       <span className="text-[9.5px] font-mono text-theme-muted">{msg.time}</span>
                     </div>
@@ -1423,7 +1407,7 @@ export const App: React.FC = () => {
                             if (collapsed.taskHub) toggleSection('taskHub');
                             if (collapsed.activeTasks) toggleSection('activeTasks');
                             setNewTaskAgent(ag.id);
-                            setNewTaskTitle(`Tối ưu module union-bot cùng @${ag.id}`);
+                            setNewTaskTitle(`Giao nhiệm vụ cho @${ag.id}`);
                             showToast(`📋 Nhập tên Task ở cột trái để giao cho @${ag.id}!`);
                           }}
                           className="px-1.5 py-0.2 rounded blue-card text-[9.5px] font-display font-bold text-emerald-300 hover:border-emerald-400 transition"
@@ -1459,7 +1443,7 @@ export const App: React.FC = () => {
                   {Array.from(typingAgents)
                     .map((id) => `${AGENTS[id]?.emoji} ${AGENTS[id]?.name}`)
                     .join(', ')}{' '}
-                  đang xử lý tác vụ & gõ phản hồi...
+                  đang xử lý tác vụ & trả lời...
                 </span>
               </div>
               <span className="text-[9.5px] font-mono text-theme-muted">⚡ Đồng bộ 3D</span>
@@ -1474,7 +1458,10 @@ export const App: React.FC = () => {
                 <div className="flex items-center gap-1 overflow-x-auto">
                   <button
                     type="button"
-                    onClick={handleCouncilDebate}
+                    onClick={() => {
+                      setInputText('@ChatGPT @Codex Hãy phân tích các công việc cần làm tiếp theo');
+                      inputRef.current?.focus();
+                    }}
                     className="btn-pop px-2 py-0.5 rounded-lg bg-gradient-to-r from-blue-600/40 to-sky-500/40 hover:from-blue-600/60 hover:to-sky-500/60 text-sky-100 border border-sky-400/40 text-[10px] font-display font-bold whitespace-nowrap"
                   >
                     ⚡ Thảo Luận Tác Vụ
@@ -1490,10 +1477,10 @@ export const App: React.FC = () => {
 
                   <button
                     type="button"
-                    onClick={() => insertMention('@TấtCả')}
+                    onClick={() => insertMention('@all')}
                     className="btn-pop px-2 py-0.5 rounded-lg blue-card text-[10px] font-bold text-sky-300 hover:border-sky-400 whitespace-nowrap"
                   >
-                    @TấtCả
+                    @all
                   </button>
 
                   <button
@@ -1556,7 +1543,7 @@ export const App: React.FC = () => {
                       handleSendMessage();
                     }
                   }}
-                  placeholder="Nhập tin nhắn hoặc giao task cho 6 AI (@Codex, @Gemini, @ChatGPT...) — Enter để gửi"
+                  placeholder="Nhập tin nhắn hoặc giao việc cho AI (@ChatGPT, @Antigravity, @Codex...) — Enter để gửi"
                   className="w-full bg-transparent text-[12.5px] text-theme-main placeholder-sky-300/45 focus:outline-none resize-none font-sans leading-snug py-0.5"
                 />
 
@@ -1564,6 +1551,7 @@ export const App: React.FC = () => {
                   type="button"
                   onClick={insertCodeTemplate}
                   className="px-2 py-0.5 rounded-lg blue-card text-[10px] font-mono text-sky-300 hover:border-sky-400 shrink-0"
+                  title="Chèn khối code"
                 >
                   {'{ }'} Code
                 </button>
@@ -1571,9 +1559,10 @@ export const App: React.FC = () => {
 
               <button
                 type="submit"
-                className="btn-pop px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-blue-600 to-sky-500 hover:from-blue-500 hover:to-sky-400 text-white font-display font-bold text-xs shadow-[0_4px_14px_rgba(14,165,233,0.45)] flex items-center gap-1 shrink-0"
+                disabled={isSending}
+                className="btn-pop px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-blue-600 to-sky-500 hover:from-blue-500 hover:to-sky-400 disabled:opacity-50 text-white font-display font-bold text-xs shadow-[0_4px_14px_rgba(14,165,233,0.45)] flex items-center gap-1 shrink-0"
               >
-                <span>Gửi</span>
+                <span>{isSending ? 'Đang gửi...' : 'Gửi'}</span>
                 <span>💙</span>
               </button>
             </form>
@@ -1593,7 +1582,7 @@ export const App: React.FC = () => {
                     Kết Nối WT Union-Bot Bridge (wtrg/union-bot)
                   </h2>
                   <p className="text-[10.5px] text-theme-sub">
-                    Đồng bộ WebSocket thời gian thực với 6 AI & Hàng Đợi Tác Vụ
+                    Trạng thái kết nối IPC Desktop và phiên làm việc Hội Đồng 6 AI
                   </p>
                 </div>
               </div>
@@ -1607,26 +1596,35 @@ export const App: React.FC = () => {
             </div>
 
             <div className="space-y-2 text-xs">
-              <div>
-                <label className="block font-display font-bold text-theme-sub mb-1 text-[11px]">
-                  WebSocket Group Chat & Task Endpoint
-                </label>
-                <input
-                  type="text"
-                  defaultValue="ws://localhost:8080/union-chat"
-                  className="w-full bg-theme-input border border-sky-400/30 rounded-xl px-3 py-1.5 font-mono text-[11px] text-theme-main focus:outline-none focus:border-sky-400"
-                />
+              <div className="p-2.5 rounded-xl bg-black/30 border border-sky-400/25 space-y-1">
+                <div className="flex items-center justify-between">
+                  <span className="text-theme-sub font-bold">Môi trường:</span>
+                  <span className="font-mono text-emerald-400 font-bold">
+                    {isDesktop ? 'Electron Desktop (Đã kết nối IPC)' : 'Web Preview (Standalone)'}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-theme-sub font-bold">Leader AI mặc định:</span>
+                  <span className="text-sky-300 font-bold">ChatGPT Web (Leader / Architect)</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-theme-sub font-bold">Implementer AI:</span>
+                  <span className="text-sky-300 font-bold">Antigravity (Local 0đ)</span>
+                </div>
               </div>
+
               <div>
                 <label className="block font-display font-bold text-theme-sub mb-1 text-[11px]">
-                  Cấu hình JSON Hội Đồng 6 AI
+                  Danh sách thành viên AI kích hoạt:
                 </label>
-                <textarea
-                  rows={4}
-                  spellCheck="false"
-                  defaultValue={`{\n  "repo": "wtrg/union-bot",\n  "theme": "sora-blue-70-chat",\n  "chat_font_size": "12.5px",\n  "members": ["ChatGPT", "Gemini", "Codex", "Antigravity", "Claude", "DeepSeek"]\n}`}
-                  className="w-full bg-theme-input border border-sky-400/30 rounded-xl p-2.5 font-mono text-[11px] text-sky-300 focus:outline-none select-text"
-                />
+                <div className="grid grid-cols-2 gap-1 font-mono text-[10.5px] text-sky-200">
+                  <div className="p-1 rounded bg-black/20 border border-sky-400/20">🍵 @ChatGPT (Leader)</div>
+                  <div className="p-1 rounded bg-black/20 border border-sky-400/20">💠 @Antigravity (Implementer)</div>
+                  <div className="p-1 rounded bg-black/20 border border-sky-400/20">🦊 @Codex (QA / Security)</div>
+                  <div className="p-1 rounded bg-black/20 border border-sky-400/20">✨ @Gemini (Research)</div>
+                  <div className="p-1 rounded bg-black/20 border border-sky-400/20">🍊 @Claude (Reviewer)</div>
+                  <div className="p-1 rounded bg-black/20 border border-sky-400/20">🐟 @DeepSeek (Algorithm)</div>
+                </div>
               </div>
             </div>
 
@@ -1636,18 +1634,18 @@ export const App: React.FC = () => {
                 onClick={() => setIsBridgeModalOpen(false)}
                 className="px-3 py-1 rounded-xl blue-card text-xs font-bold text-theme-sub"
               >
-                Hủy
+                Đóng
               </button>
               <button
                 type="button"
                 onClick={() => {
                   setIsBridgeModalOpen(false);
-                  islandRef.current?.triggerAzureGust();
-                  showToast('💙 Đã lưu cấu hình kết nối WT Union-Bot Bridge!');
+                  setIsBrowserOpen(true);
+                  showToast('🌐 Đã mở Browser panel để quản lý tài khoản AI!');
                 }}
                 className="btn-pop px-3.5 py-1 rounded-xl bg-gradient-to-r from-blue-600 to-sky-500 text-white text-xs font-display font-bold"
               >
-                Lưu & Đồng Bộ 💙
+                Mở Trình Duyệt Web AI 🌐
               </button>
             </div>
           </div>
