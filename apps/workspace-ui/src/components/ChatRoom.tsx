@@ -626,82 +626,47 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ roomName, envelopes, onSendM
     <div
       className="chat-room"
       data-testid="chat-room"
-      style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
       {/* Search & Filter Header with Keyword Highlighting (UB-P3-R01-007) */}
-      <div
-        style={{
-          padding: '8px 16px',
-          background: 'var(--bg-secondary)',
-          borderBottom: '1px solid var(--border-color)',
-          display: 'flex',
-          alignItems: 'center',
-          gap: 10,
-        }}
-      >
+      <div className="chat-filter-bar">
         <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>🔍</span>
         <input
           type="text"
+          className="chat-search-input"
           data-testid="chat-search-input"
-          placeholder="Filter messages or artifacts in this room (highlight matches)..."
+          placeholder="Lọc tin nhắn hoặc tệp đính kèm trong phòng này..."
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
-          style={{
-            flex: 1,
-            background: 'transparent',
-            border: 'none',
-            color: 'var(--text-primary)',
-            fontSize: 13,
-            outline: 'none',
-          }}
         />
         {searchQuery && (
           <button
             onClick={() => setSearchQuery('')}
             style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 12 }}
           >
-            Clear
+            Xóa
           </button>
         )}
         <button
           onClick={handleExportBundle}
+          className="header-action-btn"
           data-testid="export-transcript-bundle-btn"
-          style={{
-            padding: '3px 8px',
-            borderRadius: 4,
-            border: '1px solid var(--border-color)',
-            background: 'var(--bg-tertiary)',
-            color: 'var(--text-secondary)',
-            cursor: 'pointer',
-            fontSize: 12,
-            whiteSpace: 'nowrap',
-          }}
-          title="Export complete room transcript and CAS manifest bundle (P5-011)"
+          title="Xuất bản ghi và tệp lưu trữ CAS thành tệp zip/thư mục"
         >
-          📦 Export Bundle
+          📦 Xuất Dữ Liệu
         </button>
         <button
           onClick={handleImportBundle}
+          className="header-action-btn"
           data-testid="import-transcript-bundle-btn"
-          style={{
-            padding: '3px 8px',
-            borderRadius: 4,
-            border: '1px solid var(--border-color)',
-            background: 'var(--bg-tertiary)',
-            color: 'var(--text-secondary)',
-            cursor: 'pointer',
-            fontSize: 12,
-            whiteSpace: 'nowrap',
-          }}
-          title="Import and restore a transcript backup bundle (UAT-021)"
+          title="Nhập và khôi phục bản ghi từ thư mục sao lưu"
         >
-          📥 Import Bundle
+          📥 Nhập Dữ Liệu
         </button>
         {exportStatus && (
-          <span style={{ fontSize: 11, color: '#4ade80', whiteSpace: 'nowrap' }}>{exportStatus}</span>
+          <span style={{ fontSize: 11, color: 'var(--accent-emerald)', whiteSpace: 'nowrap' }}>{exportStatus}</span>
         )}
       </div>
 
@@ -723,26 +688,27 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ roomName, envelopes, onSendM
             {/* First-Run Onboarding Banner (UB-P3-R01-007) */}
             <div
               style={{
-                background: 'var(--bg-secondary)',
+                background: 'var(--bg-surface)',
                 border: '1px solid var(--border-color)',
-                borderRadius: 12,
+                borderRadius: 'var(--radius-lg)',
                 padding: '24px 32px',
                 maxWidth: 480,
                 textAlign: 'center',
+                boxShadow: 'var(--shadow-md)',
               }}
             >
               <div style={{ fontSize: 36, marginBottom: 10 }}>👋</div>
-              <div style={{ fontWeight: 700, fontSize: 18, color: 'var(--text-primary)', marginBottom: 8 }}>
-                Welcome to #{roomName || 'Room'}
+              <div style={{ fontWeight: 700, fontSize: 17, color: 'var(--text-primary)', marginBottom: 8 }}>
+                Chào mừng bạn đến với #{roomName || 'Phòng'}
               </div>
               <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.5, margin: 0 }}>
-                Zero-Cost 0đ Desktop AI Workspace is active. All interactions and attachments are stored locally in SQLite WAL and Content Addressable Storage (CAS).
+                Không gian làm việc AI tự động 0đ hoàn toàn miễn phí. Mọi trao đổi và dữ liệu tệp được lưu trữ bền vững trên máy tính của bạn (SQLite WAL & CAS).
               </p>
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 16, textAlign: 'left', fontSize: 12, color: 'var(--text-muted)' }}>
-                <div>💬 <strong>Coordinate:</strong> Send directives and collaboration messages.</div>
-                <div>📎 <strong>Attachments:</strong> Drag & drop PNG diagrams or PDF documents into this room.</div>
-                <div>🛡️ <strong>Governance:</strong> Sensitive actions trigger Approval Inbox review.</div>
+                <div>💬 <strong>Điều phối:</strong> Nhập chỉ đạo hoặc trao đổi cùng các AI Agents.</div>
+                <div>📋 <strong>Đặc tả yêu cầu:</strong> Mở panel bên phải hoặc gõ <code>/chat</code> để chốt bài toán.</div>
+                <div>📎 <strong>Tệp đính kèm:</strong> Kéo thả tài liệu, ảnh chụp, file code vào đây.</div>
               </div>
             </div>
           </div>
@@ -927,14 +893,6 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ roomName, envelopes, onSendM
       <form
         className="chat-input-bar"
         onSubmit={handleSubmit}
-        style={{
-          display: 'flex',
-          alignItems: 'flex-end',
-          gap: 8,
-          padding: '10px 14px',
-          background: 'var(--bg-secondary)',
-          borderTop: '1px solid var(--border-color)',
-        }}
       >
         <input
           type="file"
@@ -950,18 +908,19 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ roomName, envelopes, onSendM
           type="button"
           data-testid="chat-composer-attach-btn"
           onClick={handleAttachClick}
-          title="Attach file (PNG, PDF, etc.)"
+          title="Đính kèm tệp (PNG, PDF, JSON, v.v.)"
           style={{
-            background: 'transparent',
+            background: 'var(--bg-primary)',
             border: '1px solid var(--border-color)',
-            color: 'var(--text-primary)',
-            borderRadius: 4,
-            padding: '8px 10px',
+            color: 'var(--text-secondary)',
+            borderRadius: 'var(--radius-sm)',
+            padding: '8px 12px',
             cursor: 'pointer',
-            fontSize: 14,
+            fontSize: 15,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
+            height: 38,
           }}
         >
           📎
@@ -970,23 +929,11 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ roomName, envelopes, onSendM
         <textarea
           className="chat-input"
           data-testid="chat-composer-textarea"
-          placeholder="Type message (Shift+Enter for newline, Enter to send)..."
+          placeholder="Nhập tin nhắn hoặc chỉ thị (Enter để gửi, Shift+Enter xuống dòng)..."
           value={inputText}
           onChange={(e) => setInputText(e.target.value)}
           onKeyDown={handleKeyDown}
           rows={2}
-          style={{
-            flex: 1,
-            resize: 'none',
-            padding: '8px 12px',
-            borderRadius: 4,
-            border: '1px solid var(--border-color)',
-            background: 'var(--bg-tertiary)',
-            color: 'var(--text-primary)',
-            fontSize: 13,
-            lineHeight: 1.4,
-            outline: 'none',
-          }}
         />
 
         <button
@@ -994,18 +941,8 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ roomName, envelopes, onSendM
           className="send-button"
           data-testid="chat-composer-send-btn"
           disabled={isSubmitting || (!inputText.trim() && pendingAttachments.length === 0)}
-          style={{
-            padding: '8px 16px',
-            borderRadius: 4,
-            border: 'none',
-            background: 'var(--accent-blue)',
-            color: '#fff',
-            fontWeight: 600,
-            cursor: 'pointer',
-            height: 38,
-          }}
         >
-          {isSubmitting ? '...' : 'Send'}
+          {isSubmitting ? '...' : 'Gửi ➔'}
         </button>
       </form>
     </div>

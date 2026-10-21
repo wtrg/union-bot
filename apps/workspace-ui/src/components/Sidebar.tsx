@@ -57,19 +57,20 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <div className="brand-logo">UB</div>
           <div>
             <div className="brand-title">Union Bot</div>
-            <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>0đ Desktop AI Workspace</div>
+            <div className="brand-subtitle">v4.0 Autonomous (0đ)</div>
           </div>
         </div>
+
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           {onToggleTheme && (
             <button
               onClick={onToggleTheme}
-              title={`Switch to ${theme === 'dark' ? 'Light' : 'Dark'} mode`}
+              title={`Chuyển sang chế độ ${theme === 'dark' ? 'Sáng' : 'Tối'}`}
               style={{
                 background: 'transparent',
                 border: '1px solid var(--border-color)',
-                borderRadius: 4,
-                padding: '2px 6px',
+                borderRadius: 'var(--radius-sm)',
+                padding: '3px 6px',
                 cursor: 'pointer',
                 fontSize: 12,
                 color: 'var(--text-primary)',
@@ -78,30 +79,30 @@ export const Sidebar: React.FC<SidebarProps> = ({
               {theme === 'dark' ? '☀️' : '🌙'}
             </button>
           )}
-          <span className="zero-cost-pill">0đ ZERO COST</span>
+          <span className="zero-cost-pill">0đ Free</span>
         </div>
       </div>
 
-      {/* Project Switcher Bar (UB-P3-R01-002) */}
+      {/* Project Switcher Bar */}
       <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--border-color)', position: 'relative' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-          <span className="section-label" style={{ padding: 0, fontSize: 10 }}>PROJECT SCOPE</span>
+          <span className="section-label" style={{ padding: 0 }}>DỰ ÁN HIỆN TẠI</span>
           {onOpenCreateProject && (
             <button
               onClick={onOpenCreateProject}
               data-testid="open-create-project-btn"
-              title="Create New Project (UB-P3-R01-002)"
+              title="Tạo dự án mới"
               style={{
                 background: 'transparent',
                 border: '1px solid var(--border-color)',
-                color: 'var(--text-primary)',
-                borderRadius: 3,
+                color: 'var(--text-secondary)',
+                borderRadius: 'var(--radius-sm)',
                 padding: '1px 6px',
                 fontSize: 11,
                 cursor: 'pointer',
               }}
             >
-              + New
+              + Mới
             </button>
           )}
         </div>
@@ -113,23 +114,24 @@ export const Sidebar: React.FC<SidebarProps> = ({
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
-            padding: '6px 10px',
-            background: 'var(--bg-tertiary)',
+            padding: '7px 10px',
+            background: 'var(--bg-surface-elevated)',
             border: '1px solid var(--border-color)',
-            borderRadius: 6,
+            borderRadius: 'var(--radius-sm)',
             cursor: 'pointer',
             fontSize: 13,
             fontWeight: 600,
             color: 'var(--text-primary)',
+            transition: 'border-color 0.15s ease',
           }}
         >
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, overflow: 'hidden' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 7, overflow: 'hidden' }}>
             <span>📁</span>
             <span style={{ textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>
               {currentProject.name}
             </span>
           </div>
-          <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{isProjectDropdownOpen ? '▲' : '▼'}</span>
+          <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>{isProjectDropdownOpen ? '▲' : '▼'}</span>
         </div>
 
         {/* Project Dropdown Menu */}
@@ -142,8 +144,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
               right: 12,
               background: 'var(--bg-secondary)',
               border: '1px solid var(--border-color)',
-              borderRadius: 6,
-              boxShadow: '0 8px 16px rgba(0,0,0,0.4)',
+              borderRadius: 'var(--radius-sm)',
+              boxShadow: 'var(--shadow-lg)',
               zIndex: 100,
               maxHeight: 220,
               overflowY: 'auto',
@@ -158,8 +160,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   alignItems: 'center',
                   justifyContent: 'space-between',
                   padding: '6px 8px',
-                  borderRadius: 4,
-                  background: proj.id === selectedProjectId ? 'var(--bg-tertiary)' : 'transparent',
+                  borderRadius: 'var(--radius-sm)',
+                  background: proj.id === selectedProjectId ? 'var(--bg-surface-elevated)' : 'transparent',
                   cursor: 'pointer',
                   fontSize: 12,
                   color: 'var(--text-primary)',
@@ -177,7 +179,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 <div style={{ display: 'flex', gap: 4 }}>
                   {onOpenEditProject && proj.id !== 'default' && (
                     <button
-                      title="Rename Project"
+                      title="Đổi tên dự án"
                       onClick={(e) => {
                         e.stopPropagation();
                         onOpenEditProject(proj);
@@ -190,10 +192,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   )}
                   {onArchiveProject && proj.id !== 'default' && (
                     <button
-                      title="Archive Project"
+                      title="Lưu trữ dự án"
                       onClick={(e) => {
                         e.stopPropagation();
-                        if (confirm(`Archive project "${proj.name}"?`)) {
+                        if (confirm(`Bạn có chắc muốn lưu trữ dự án "${proj.name}"?`)) {
                           onArchiveProject(proj.id);
                           setIsProjectDropdownOpen(false);
                         }
@@ -210,100 +212,75 @@ export const Sidebar: React.FC<SidebarProps> = ({
         )}
       </div>
 
-      {/* Navigation Sections (P3-006, P3-007) */}
+      {/* Main Navigation Sections */}
       <div style={{ padding: '8px 12px', display: 'flex', flexDirection: 'column', gap: 4, borderBottom: '1px solid var(--border-color)' }}>
         <button
+          className={`sidebar-nav-btn ${activeView === 'chat' ? 'active' : ''}`}
           data-testid="nav-chat-btn"
           onClick={() => onSelectView('chat')}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8,
-            padding: '7px 10px',
-            borderRadius: 4,
-            border: 'none',
-            background: activeView === 'chat' ? 'var(--bg-tertiary)' : 'transparent',
-            color: activeView === 'chat' ? 'var(--text-primary)' : 'var(--text-muted)',
-            fontWeight: activeView === 'chat' ? 600 : 400,
-            cursor: 'pointer',
-            textAlign: 'left',
-            fontSize: 13,
-          }}
         >
-          <span>💬 Collaboration Rooms</span>
+          <span>💬</span>
+          <span>Kênh Thảo Luận</span>
         </button>
 
         <button
+          className={`sidebar-nav-btn ${activeView === 'approvals' ? 'active' : ''}`}
           data-testid="nav-approvals-btn"
           onClick={() => onSelectView('approvals')}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            padding: '7px 10px',
-            borderRadius: 4,
-            border: 'none',
-            background: activeView === 'approvals' ? 'var(--bg-tertiary)' : 'transparent',
-            color: activeView === 'approvals' ? 'var(--text-primary)' : 'var(--text-muted)',
-            fontWeight: activeView === 'approvals' ? 600 : 400,
-            cursor: 'pointer',
-            textAlign: 'left',
-            fontSize: 13,
-          }}
+          style={{ justifyContent: 'space-between' }}
         >
-          <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span>🛡️ Approval Inbox</span>
-          </span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <span>🛡️</span>
+            <span>Phê Duyệt Bảo Mật</span>
+          </div>
           {pendingApprovalsCount > 0 && (
-            <span style={{ background: 'var(--accent-amber)', color: '#000', fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 10 }}>
+            <span
+              style={{
+                background: 'var(--accent-amber)',
+                color: '#000000',
+                fontSize: 10,
+                fontWeight: 700,
+                padding: '1px 6px',
+                borderRadius: 'var(--radius-full)',
+              }}
+            >
               {pendingApprovalsCount}
             </span>
           )}
         </button>
 
         <button
+          className={`sidebar-nav-btn ${activeView === 'tasks' ? 'active' : ''}`}
           data-testid="nav-tasks-btn"
           onClick={() => onSelectView('tasks')}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8,
-            padding: '7px 10px',
-            borderRadius: 4,
-            border: 'none',
-            background: activeView === 'tasks' ? 'var(--bg-tertiary)' : 'transparent',
-            color: activeView === 'tasks' ? 'var(--text-primary)' : 'var(--text-muted)',
-            fontWeight: activeView === 'tasks' ? 600 : 400,
-            cursor: 'pointer',
-            textAlign: 'left',
-            fontSize: 13,
-          }}
         >
-          <span>📋 Tasks & Execution</span>
+          <span>📋</span>
+          <span>Nhiệm Vụ & Tiến Độ</span>
         </button>
       </div>
 
-      {/* Room list with "+ Add Room" (P3-003) */}
-      <div className="rooms-list" style={{ flex: 1, overflowY: 'auto' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 12px 4px 12px' }}>
-          <span className="section-label" style={{ padding: 0 }}>Rooms</span>
+      {/* Room list with "+ Add Room" */}
+      <div className="rooms-list">
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 8px 4px 8px' }}>
+          <span className="section-label" style={{ padding: 0 }}>CÁC KÊNH PHÒNG HỌP</span>
           <button
             onClick={onOpenCreateRoom}
             data-testid="add-room-btn"
-            title="Create Room (P3-003)"
+            title="Tạo phòng họp mới"
             style={{
               background: 'transparent',
               border: '1px solid var(--border-color)',
-              color: 'var(--text-primary)',
-              borderRadius: 3,
+              color: 'var(--text-secondary)',
+              borderRadius: 'var(--radius-sm)',
               padding: '1px 6px',
-              fontSize: 12,
+              fontSize: 11,
               cursor: 'pointer',
             }}
           >
-            + Add
+            + Thêm
           </button>
         </div>
+
         {rooms.map((room) => (
           <div
             key={room.id}
@@ -314,37 +291,48 @@ export const Sidebar: React.FC<SidebarProps> = ({
               onSelectView('chat');
             }}
           >
-            <span>#</span>
+            <span className="hash">#</span>
             <span>{room.name}</span>
           </div>
         ))}
       </div>
 
-      {/* Providers Status */}
+      {/* AI Team Members List */}
       <div className="provider-list">
-        <div className="section-label" style={{ padding: '4px 0 8px 0' }}>
-          Local Team & Standby
+        <div className="section-label" style={{ padding: '0 0 6px 0' }}>
+          ĐỘI NGŨ AI (LOCAL & WEB)
         </div>
         {agents.map((agent) => {
-          const badgeText = agent.badge || agent.status.toUpperCase();
-          let statusClass = 'status-auth';
-          if (agent.status === 'active') statusClass = 'status-active';
-          else if (agent.status === 'ready' || agent.status === 'ready_automated') statusClass = 'status-ready';
-          else if (agent.status === 'free_local') statusClass = 'status-free-local';
-          else if (agent.status === 'ready_manual') statusClass = 'status-ready-manual';
-          else if (agent.status === 'unavailable_in_session' || agent.status === 'unavailable') statusClass = 'status-unavailable';
-          else if (agent.status === 'challenge_required') statusClass = 'status-challenge';
+          let dotColor = '#94a3b8'; // gray
+          let statusLabel = 'Standby';
+
+          if (agent.status === 'active') {
+            dotColor = '#10b981'; // emerald
+            statusLabel = 'Active';
+          } else if (agent.status === 'ready' || agent.status === 'ready_automated' || agent.status === 'ready_manual' || agent.status === 'free_local') {
+            dotColor = '#34d399'; // green
+            statusLabel = 'Ready';
+          } else if (agent.status === 'challenge_required' || agent.status === 'auth_required') {
+            dotColor = '#f59e0b'; // amber
+            statusLabel = 'Login Needed';
+          }
 
           return (
-            <div key={agent.id} className="provider-item" title={agent.details || agent.role}>
-              <div>
-                <span style={{ fontWeight: 600 }}>{agent.name}</span>
-                <span style={{ color: 'var(--text-muted)', marginLeft: 6, fontSize: 10 }}>
+            <div key={agent.id} className="provider-item" title={`${agent.name} (${agent.role}) - ${agent.details || agent.status}`}>
+              <div style={{ display: 'flex', alignItems: 'center', overflow: 'hidden' }}>
+                <span
+                  className="provider-status-dot"
+                  style={{ backgroundColor: dotColor, boxShadow: `0 0 5px ${dotColor}` }}
+                />
+                <span style={{ fontWeight: 600, color: 'var(--text-primary)', whiteSpace: 'nowrap' }}>
+                  {agent.name}
+                </span>
+                <span style={{ color: 'var(--text-muted)', marginLeft: 6, fontSize: 11, whiteSpace: 'nowrap' }}>
                   {agent.role}
                 </span>
               </div>
-              <span className={`provider-status ${statusClass}`}>
-                {badgeText}
+              <span style={{ fontSize: 10, color: dotColor, fontWeight: 500 }}>
+                {statusLabel}
               </span>
             </div>
           );
@@ -352,23 +340,25 @@ export const Sidebar: React.FC<SidebarProps> = ({
       </div>
 
       {/* Settings / Preferences Footer */}
-      <div style={{ padding: '10px 12px', borderTop: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      <div style={{ padding: '10px 14px', borderTop: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <button
           onClick={onOpenPreferences}
           data-testid="open-preferences-btn"
           style={{
             background: 'transparent',
             border: 'none',
-            color: 'var(--text-muted)',
+            color: 'var(--text-secondary)',
             fontSize: 12,
             cursor: 'pointer',
             display: 'flex',
             alignItems: 'center',
             gap: 6,
-            padding: 4,
+            padding: '4px 0',
+            fontWeight: 500,
           }}
         >
-          <span>⚙️ Settings & Diagnostics</span>
+          <span>⚙️</span>
+          <span>Cài Đặt & Chẩn Đoán</span>
         </button>
       </div>
     </aside>

@@ -530,16 +530,16 @@ export const ApprovalInbox: React.FC<ApprovalInboxProps> = ({ onTokenStatusChang
     <div className="inbox-container" style={{ display: 'flex', flexDirection: 'column', flex: 1, padding: 24, overflowY: 'auto' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
         <div>
-          <h2 style={{ margin: 0, fontSize: 20, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 10 }}>
-            <span>🛡️ Approval Inbox</span>
+          <h2 style={{ margin: 0, fontSize: 18, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 10 }}>
+            <span>🛡️ Phê Duyệt Bảo Mật (Approval Inbox)</span>
             {pendingCount > 0 && (
               <span style={{ background: 'var(--accent-amber)', color: '#000', fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 12 }}>
-                {pendingCount} PENDING
+                {pendingCount} CHỜ DUYỆT
               </span>
             )}
           </h2>
           <p style={{ margin: '4px 0 0 0', fontSize: 13, color: 'var(--text-muted)' }}>
-            Human-in-the-loop governance: Real-time Web Crypto SHA-256 verification and structured parameter inspection before authorization.
+            Quản trị con người kiểm soát (Human-in-the-loop): Xác thực chữ ký số SHA-256 Web Crypto trước khi cho phép AI thực thi hành động nhạy cảm.
           </p>
         </div>
 
@@ -547,29 +547,26 @@ export const ApprovalInbox: React.FC<ApprovalInboxProps> = ({ onTokenStatusChang
           <button
             className={`filter-btn ${filter === 'ALL' ? 'active' : ''}`}
             onClick={() => setFilter('ALL')}
-            style={{ padding: '6px 12px', borderRadius: 4, border: '1px solid var(--border-color)', background: filter === 'ALL' ? 'var(--bg-secondary)' : 'transparent', color: 'var(--text-primary)', cursor: 'pointer' }}
           >
-            All ({tokens.length})
+            Tất cả ({tokens.length})
           </button>
           <button
             className={`filter-btn ${filter === 'PENDING' ? 'active' : ''}`}
             onClick={() => setFilter('PENDING')}
-            style={{ padding: '6px 12px', borderRadius: 4, border: '1px solid var(--border-color)', background: filter === 'PENDING' ? 'var(--bg-secondary)' : 'transparent', color: 'var(--text-primary)', cursor: 'pointer' }}
           >
-            Pending ({pendingCount})
+            Chờ duyệt ({pendingCount})
           </button>
           <button
             className={`filter-btn ${filter === 'RESOLVED' ? 'active' : ''}`}
             onClick={() => setFilter('RESOLVED')}
-            style={{ padding: '6px 12px', borderRadius: 4, border: '1px solid var(--border-color)', background: filter === 'RESOLVED' ? 'var(--bg-secondary)' : 'transparent', color: 'var(--text-primary)', cursor: 'pointer' }}
           >
-            Resolved ({tokens.length - pendingCount})
+            Đã xử lý ({tokens.length - pendingCount})
           </button>
           <button
             onClick={fetchApprovals}
-            style={{ padding: '6px 12px', borderRadius: 4, border: '1px solid var(--border-color)', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer' }}
+            className="filter-btn"
           >
-            🔄 Refresh
+            🔄 Làm mới
           </button>
         </div>
       </div>

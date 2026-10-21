@@ -185,11 +185,11 @@ export const TasksInbox: React.FC<TasksInboxProps> = ({ activeProject, activeRoo
     <div className="inbox-container" style={{ display: 'flex', flexDirection: 'column', flex: 1, padding: 24, overflowY: 'auto' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
         <div>
-          <h2 style={{ margin: 0, fontSize: 20, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 10 }}>
-            <span>📋 Tasks & Execution Inbox</span>
+          <h2 style={{ margin: 0, fontSize: 18, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 10 }}>
+            <span>📋 Quản Lý Nhiệm Vụ (Tasks Inbox)</span>
           </h2>
           <p style={{ margin: '4px 0 0 0', fontSize: 13, color: 'var(--text-muted)' }}>
-            Durably stored in SQLite WAL. Track background offline tasks, execution progress, and agent roles (UB-P3-R01-003).
+            Lưu trữ bền vững trong SQLite WAL. Theo dõi tiến trình nhiệm vụ tự động và vai trò thực thi của các AI Agents.
           </p>
         </div>
 
@@ -198,37 +198,34 @@ export const TasksInbox: React.FC<TasksInboxProps> = ({ activeProject, activeRoo
             onClick={() => setIsCreating(!isCreating)}
             style={{
               padding: '6px 14px',
-              borderRadius: 4,
+              borderRadius: 'var(--radius-sm)',
               border: 'none',
-              background: 'var(--accent-blue)',
+              background: 'var(--accent-indigo)',
               color: '#fff',
               fontSize: 12,
               fontWeight: 600,
               cursor: 'pointer',
             }}
           >
-            {isCreating ? 'Cancel' : '+ New Task'}
+            {isCreating ? 'Đóng' : '+ Tạo Nhiệm Vụ'}
           </button>
           <button
             className={`filter-btn ${filter === 'ALL' ? 'active' : ''}`}
             onClick={() => setFilter('ALL')}
-            style={{ padding: '6px 12px', borderRadius: 4, border: '1px solid var(--border-color)', background: filter === 'ALL' ? 'var(--bg-secondary)' : 'transparent', color: 'var(--text-primary)', cursor: 'pointer' }}
           >
-            All ({tasks.length})
+            Tất cả ({tasks.length})
           </button>
           <button
             className={`filter-btn ${filter === 'ACTIVE' ? 'active' : ''}`}
             onClick={() => setFilter('ACTIVE')}
-            style={{ padding: '6px 12px', borderRadius: 4, border: '1px solid var(--border-color)', background: filter === 'ACTIVE' ? 'var(--bg-secondary)' : 'transparent', color: 'var(--text-primary)', cursor: 'pointer' }}
           >
-            Active ({tasks.filter((t) => t.status === 'running' || t.status === 'pending').length})
+            Đang thực hiện ({tasks.filter((t) => t.status === 'running' || t.status === 'pending').length})
           </button>
           <button
             className={`filter-btn ${filter === 'COMPLETED' ? 'active' : ''}`}
             onClick={() => setFilter('COMPLETED')}
-            style={{ padding: '6px 12px', borderRadius: 4, border: '1px solid var(--border-color)', background: filter === 'COMPLETED' ? 'var(--bg-secondary)' : 'transparent', color: 'var(--text-primary)', cursor: 'pointer' }}
           >
-            Completed ({tasks.filter((t) => t.status === 'completed').length})
+            Đã hoàn tất ({tasks.filter((t) => t.status === 'completed').length})
           </button>
           <button
             onClick={fetchTasks}
