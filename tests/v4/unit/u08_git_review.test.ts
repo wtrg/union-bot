@@ -933,6 +933,53 @@ describe('UB-V4-U08: GitHub Push Approval & ChatGPT Code Review Loop', () => {
       });
       assert.equal(userRoleIntake.success, false);
       assert.equal(userRoleIntake.code, 'ERR_UNVERIFIED_EVIDENCE');
+
+      // U08-R11-01: Runtime returning metadata only (missing structured review message) -> fail closed
+      const mockMetadataOnlyRuntime = {
+        getTabContext: (tId: string) => ({
+          tabId: tId,
+          url: 'https://chatgpt.com/c/6ad64b63-ad44-83ec-90ca-83cacbc26da5',
+          title: 'Metadata Only Tab',
+          providerId: 'chatgpt',
+          conversationId: '6ad64b63-ad44-83ec-90ca-83cacbc26da5',
+          isSynthetic: false,
+          capturedAt: Date.now(),
+          structuredMessage: null,
+        }),
+      };
+      browserBridge.browserManager = mockMetadataOnlyRuntime;
+      const metadataOnlyIntake = prodService.intakeTrustedReview({
+        source: 'BROWSER_BRIDGE',
+        commitSha,
+        evidence: { tabId: 'tab_meta_only', leaseToken: browserBridge.acquireControllerLease('tab_meta_only', 'agent_chatgpt').leaseToken },
+      });
+      assert.equal(metadataOnlyIntake.success, false);
+      assert.equal(metadataOnlyIntake.code, 'ERR_UNVERIFIED_EVIDENCE');
+
+      // U08-R11-02: Structured message missing mandatory identity fields (messageId, conversationId, capturedAt) -> strictly rejected
+      const mockMissingIdentityRuntime = {
+        getTabContext: (tId: string) => ({
+          tabId: tId,
+          url: 'https://chatgpt.com/c/6ad64b63-ad44-83ec-90ca-83cacbc26da5',
+          title: 'Missing Identity Tab',
+          isSynthetic: false,
+          capturedAt: Date.now(),
+          structuredMessage: {
+            role: 'assistant',
+            // messageId missing!
+            conversationId: '', // conversationId empty!
+            text: `OFFICIAL VERDICT: SOURCE_REVIEW_APPROVED\nTarget commit: ${commitSha}`,
+          },
+        }),
+      };
+      browserBridge.browserManager = mockMissingIdentityRuntime;
+      const missingIdentityIntake = prodService.intakeTrustedReview({
+        source: 'BROWSER_BRIDGE',
+        commitSha,
+        evidence: { tabId: 'tab_missing_id', leaseToken: browserBridge.acquireControllerLease('tab_missing_id', 'agent_chatgpt').leaseToken },
+      });
+      assert.equal(missingIdentityIntake.success, false);
+      assert.equal(missingIdentityIntake.code, 'ERR_UNVERIFIED_EVIDENCE');
       browserBridge.browserManager = null;
 
       // =========================================================================

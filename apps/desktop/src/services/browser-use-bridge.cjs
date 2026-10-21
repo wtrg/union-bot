@@ -132,32 +132,23 @@ class BrowserUseBridge {
    */
   registerTabContext(tabId, context = {}) {
     if (!tabId) return false;
-    let structured = context.structuredMessage || null;
-    const msgText = context.latestAssistantMessage || context.text || '';
-    if (!structured && msgText && context.role !== 'user') {
+    let structured = null;
+    if (context.structuredMessage !== undefined) {
+      structured = context.structuredMessage;
+    } else if (context.latestAssistantMessage || context.text) {
       structured = {
         role: context.role || 'assistant',
         messageId: context.messageId || `msg_syn_${Date.now()}`,
         conversationId: context.conversationId || (context.url && context.url.includes('/c/') ? context.url.split('/c/')[1].split(/[?#]/)[0] : 'conv_syn'),
         capturedAt: context.capturedAt || Date.now(),
-        text: msgText,
-      };
-    } else if (context.role === 'user') {
-      structured = {
-        role: 'user',
-        messageId: context.messageId || `msg_user_${Date.now()}`,
-        conversationId: context.conversationId || 'conv_syn',
-        capturedAt: context.capturedAt || Date.now(),
-        text: msgText,
+        text: context.latestAssistantMessage || context.text,
       };
     }
 
     this.tabContexts.set(tabId, {
       url: context.url || '',
       title: context.title || '',
-      text: context.text || '',
       structuredMessage: structured,
-      latestAssistantMessage: structured ? structured.text : '',
       isSynthetic: true,
       capturedAt: Date.now(),
     });
@@ -165,7 +156,7 @@ class BrowserUseBridge {
   }
 
   /**
-   * Authoritatively inspects active tab for reviewer decision and provenance (U08-R07-01, U08-R08-02, U08-R10-01, U08-R10-02).
+   * Authoritatively inspects active tab for reviewer decision and provenance (U08-R07-01, U08-R08-02, U08-R10-01, U08-R10-02, U08-R11-01, U08-R11-02).
    * Verifies lease ownership, validates trusted ChatGPT domain/path, binds target commit SHA,
    * strictly verifies structured assistant message identity, and isolates the latest reviewer decision.
    */
@@ -219,37 +210,35 @@ class BrowserUseBridge {
       };
     }
 
-    // 3. Extract and validate structured reviewer message (U08-R10-02)
-    // Structured review message must possess proven reviewer identity: role === 'assistant', messageId, conversationId
-    let msgObj = ctx.structuredMessage || null;
-    if (!msgObj && ctx.latestAssistantMessage) {
-      if (typeof ctx.latestAssistantMessage === 'object' && ctx.latestAssistantMessage !== null) {
-        msgObj = ctx.latestAssistantMessage;
-      } else if (typeof ctx.latestAssistantMessage === 'string' && ctx.latestAssistantMessage.trim()) {
-        msgObj = {
-          role: ctx.role || 'assistant',
-          messageId: ctx.messageId || `msg_auto_${Date.now()}`,
-          conversationId: ctx.conversationId || (tabUrl.split('/c/')[1] ? tabUrl.split('/c/')[1].split(/[?#]/)[0] : 'conv_default'),
-          capturedAt: ctx.capturedAt || Date.now(),
-          text: ctx.latestAssistantMessage.trim(),
-        };
-      }
-    }
-
-    // Fail closed: Prohibit free-form transcript text splitting across entire transcript (U08-R10-02)
-    if (!msgObj || !msgObj.text || typeof msgObj.text !== 'string' || !msgObj.text.trim()) {
+    // 3. Validate structured reviewer message identity strictly (U08-R10-02, U08-R11-02)
+    // Free-form text splitting and synthetic identity fallback are strictly prohibited.
+    // Structured review message must possess proven reviewer identity:
+    // role === 'assistant', non-empty messageId, non-empty conversationId, capturedAt, text
+    const msgObj = ctx.structuredMessage;
+    if (
+      !msgObj ||
+      typeof msgObj !== 'object' ||
+      !msgObj.text ||
+      typeof msgObj.text !== 'string' ||
+      !msgObj.text.trim() ||
+      !msgObj.messageId ||
+      typeof msgObj.messageId !== 'string' ||
+      !msgObj.conversationId ||
+      typeof msgObj.conversationId !== 'string' ||
+      typeof msgObj.capturedAt !== 'number'
+    ) {
       return {
         success: false,
-        error: `No structured reviewer assistant message found in tab '${tabId}'. Free-form transcript text splitting is strictly prohibited (U08-R10-02).`,
+        error: `Tab '${tabId}' lacks a valid structured reviewer message. Mandatory identity fields (role: 'assistant', messageId, conversationId, capturedAt, text) must be provided by trusted runtime (U08-R11-01, U08-R11-02).`,
         code: 'ERR_UNVERIFIED_EVIDENCE',
       };
     }
 
     // Role must strictly be 'assistant' (reject user prompts, system echoes)
-    if (msgObj.role && msgObj.role !== 'assistant') {
+    if (msgObj.role !== 'assistant') {
       return {
         success: false,
-        error: `Invalid message role '${msgObj.role}' in tab '${tabId}'. Only assistant reviewer messages can issue review verdicts (U08-R10-02).`,
+        error: `Invalid message role '${msgObj.role}' in tab '${tabId}'. Only assistant reviewer messages can issue review verdicts (U08-R10-02, U08-R11-02).`,
         code: 'ERR_UNVERIFIED_EVIDENCE',
       };
     }
@@ -301,10 +290,10 @@ class BrowserUseBridge {
       hasBlockingFindings: hasChangesRequested,
       sourceVerified: true,
       messageIdentity: {
-        role: msgObj.role || 'assistant',
-        messageId: msgObj.messageId || null,
-        conversationId: msgObj.conversationId || (tabUrl.split('/c/')[1] ? tabUrl.split('/c/')[1].split(/[?#]/)[0] : null),
-        capturedAt: msgObj.capturedAt || ctx.capturedAt || Date.now(),
+        role: msgObj.role,
+        messageId: msgObj.messageId,
+        conversationId: msgObj.conversationId,
+        capturedAt: msgObj.capturedAt,
       },
       reviewMessageSnippet: reviewMessage.slice(0, 500),
       capturedAt: ctx.capturedAt || Date.now(),

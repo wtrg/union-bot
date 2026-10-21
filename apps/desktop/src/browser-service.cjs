@@ -803,7 +803,7 @@ class BrowserService {
   }
 
   /**
-   * Phase P4 / UB-V4-U08: Returns authoritative runtime tab context for review inspection (U08-R10-01)
+   * Phase P4 / UB-V4-U08: Returns authoritative runtime tab context for review inspection (U08-R10-01, U08-R11-01)
    */
   getTabContext(tabId) {
     const targetTabId = tabId || this.stateManager.getState().activeTabId;
@@ -814,15 +814,66 @@ class BrowserService {
     const currentUrl = view && !view.webContents.isDestroyed() ? view.webContents.getURL() : (tab ? tab.url : '');
     const currentTitle = view && !view.webContents.isDestroyed() ? view.webContents.getTitle() : (tab ? tab.title : '');
     const threadRef = this.captureThreadReference(targetTabId);
+    const conversationId = (threadRef && threadRef.threadId) || (currentUrl && currentUrl.includes('/c/') ? currentUrl.split('/c/')[1].split(/[?#]/)[0] : null);
+
+    // Proven structured assistant message captured from WebContents (U08-R11-01)
+    const structuredMessage = (tab && tab.structuredMessage) || (view && view.__latestStructuredMessage) || null;
+
     return {
       tabId: targetTabId,
       url: currentUrl,
       title: currentTitle,
       providerId: tab ? tab.providerId : 'custom',
-      conversationId: threadRef ? threadRef.threadId : null,
+      conversationId,
+      structuredMessage,
       isSynthetic: false,
       capturedAt: Date.now(),
     };
+  }
+
+  /**
+   * Phase P4 / UB-V4-U08: Extracts structured reviewer assistant message directly from WebContents DOM (U08-R11-01)
+   */
+  async extractReviewMessageFromWebContents(tabId) {
+    const targetTabId = tabId || this.stateManager.getState().activeTabId;
+    if (!targetTabId) return null;
+    const view = this.views.get(targetTabId);
+    if (!view || view.webContents.isDestroyed()) return null;
+    const threadRef = this.captureThreadReference(targetTabId);
+    const convId = (threadRef && threadRef.threadId) || (view.webContents.getURL().includes('/c/') ? view.webContents.getURL().split('/c/')[1].split(/[?#]/)[0] : null);
+
+    try {
+      const extracted = await view.webContents.executeJavaScript(`
+        (() => {
+          const articles = Array.from(document.querySelectorAll('[data-message-author-role="assistant"]'));
+          if (articles.length === 0) return null;
+          const latest = articles[articles.length - 1];
+          const rawId = latest.getAttribute('data-message-id') || latest.id;
+          const text = latest.innerText || '';
+          if (!text) return null;
+          return {
+            role: 'assistant',
+            messageId: rawId,
+            text: text
+          };
+        })()
+      `);
+      if (extracted && extracted.role === 'assistant' && extracted.messageId && extracted.text && convId) {
+        const fullMsg = {
+          role: 'assistant',
+          messageId: extracted.messageId,
+          conversationId: convId,
+          text: extracted.text,
+          capturedAt: Date.now(),
+        };
+        view.__latestStructuredMessage = fullMsg;
+        this.stateManager.updateTab(targetTabId, { structuredMessage: fullMsg });
+        return fullMsg;
+      }
+      return null;
+    } catch {
+      return null;
+    }
   }
 
   /**
