@@ -318,21 +318,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
           }
 
           return (
-            <div key={agent.id} className="provider-item" title={`${agent.name} (${agent.role}) - ${agent.details || agent.status}`}>
-              <div style={{ display: 'flex', alignItems: 'center', overflow: 'hidden' }}>
+            <div key={agent.id} className="provider-item" title={`${agent.name} • ${agent.role} [${statusLabel}] (${agent.details || agent.status})`}>
+              <div style={{ display: 'flex', alignItems: 'center', overflow: 'hidden', gap: 6 }}>
                 <span
                   className="provider-status-dot"
                   style={{ backgroundColor: dotColor, boxShadow: `0 0 5px ${dotColor}` }}
                 />
-                <span style={{ fontWeight: 600, color: 'var(--text-primary)', whiteSpace: 'nowrap' }}>
+                <span style={{ fontWeight: 600, color: 'var(--text-primary)', whiteSpace: 'nowrap', fontSize: 12 }}>
                   {agent.name}
                 </span>
-                <span style={{ color: 'var(--text-muted)', marginLeft: 6, fontSize: 11, whiteSpace: 'nowrap' }}>
-                  {agent.role}
-                </span>
               </div>
-              <span style={{ fontSize: 10, color: dotColor, fontWeight: 500 }}>
-                {statusLabel}
+              <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 500 }}>
+                {agent.role.split('/')[0].trim()}
               </span>
             </div>
           );

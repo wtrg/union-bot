@@ -83,7 +83,7 @@ export const App: React.FC = () => {
   const [storageError, setStorageError] = useState<string | null>(null);
   const [theme, setTheme] = useState<'dark' | 'light' | 'high-contrast'>('dark');
   const [workspaceMode, setWorkspaceMode] = useState<'discovery' | 'work'>('discovery');
-  const [isDiscoveryOpen, setIsDiscoveryOpen] = useState<boolean>(true);
+  const [isDiscoveryOpen, setIsDiscoveryOpen] = useState<boolean>(false);
   const [discoveryFacts, setDiscoveryFacts] = useState<RequirementFactInfo[]>([]);
   const [discoveryQuestions, setDiscoveryQuestions] = useState<OpenQuestionInfo[]>([]);
   const [isActivityOpen, setIsActivityOpen] = useState<boolean>(false);
@@ -757,6 +757,7 @@ export const App: React.FC = () => {
             onConfirmFact={handleConfirmFact}
             onResolveQuestion={handleResolveQuestion}
             onSwitchToWork={handleSwitchToWork}
+            onClose={() => setIsDiscoveryOpen(false)}
           />
         )}
 

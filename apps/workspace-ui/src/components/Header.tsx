@@ -32,38 +32,43 @@ export const Header: React.FC<HeaderProps> = ({
 }) => {
   return (
     <header className="room-header">
-      {/* Left Group: Room Info & Live Status */}
+      {/* Left: Room Title & Status (Never Truncated) */}
       <div className="room-title-group">
-        <h1 className="room-name">#{room?.name || 'room'}</h1>
+        <h1 className="room-name" style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <span style={{ color: 'var(--accent-indigo)', fontWeight: 800 }}>#</span>
+          <span>{room?.name || 'room'}</span>
+        </h1>
+
         {room?.description && (
           <span className="room-description" title={room.description}>
             {room.description}
           </span>
         )}
+
         {isDemoMode ? (
           <span className="demo-badge">
-            PREVIEW OFFLINE
+            PREVIEW
           </span>
         ) : (
-          <span className="live-badge">
+          <span className="live-badge" title="Orchestrator SQLite WAL Active">
             <span className="pulse-dot" />
             <span>0đ Sẵn sàng</span>
           </span>
         )}
       </div>
 
-      {/* Right Group: Action Controls */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      {/* Right: Clean, Modern Action Buttons */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
         {onToggleDiscovery && (
           <button
             className={`header-action-btn ${isDiscoveryOpen ? 'active' : ''}`}
             data-testid="toggle-discovery-btn"
             onClick={onToggleDiscovery}
-            title="Bật/Tắt Đặc tả Yêu cầu & Khám phá (/chat)"
+            title="Bật/Tắt Drawer Đặc tả yêu cầu dự án"
           >
             <span>📋</span>
-            <span>{workspaceMode === 'discovery' ? 'Yêu cầu (/chat)' : 'Thực thi (/work)'}</span>
-            <span style={{ fontSize: 9, opacity: 0.7 }}>{isDiscoveryOpen ? '◀' : '▶'}</span>
+            <span>{workspaceMode === 'discovery' ? 'Yêu cầu' : 'Thực thi'}</span>
+            <span style={{ fontSize: 9, opacity: 0.7 }}>{isDiscoveryOpen ? '✕' : '▶'}</span>
           </button>
         )}
 
@@ -76,7 +81,6 @@ export const Header: React.FC<HeaderProps> = ({
           >
             <span>🌐</span>
             <span>AI Browser</span>
-            <span style={{ fontSize: 9, opacity: 0.7 }}>{isBrowserOpen ? '◀' : '▶'}</span>
           </button>
         )}
 
@@ -89,7 +93,6 @@ export const Header: React.FC<HeaderProps> = ({
           >
             <span>⚡</span>
             <span>Hoạt động{activeLeasesCount > 0 ? ` (${activeLeasesCount})` : ''}</span>
-            <span style={{ fontSize: 9, opacity: 0.7 }}>{isActivityOpen ? '◀' : '▶'}</span>
           </button>
         )}
 
@@ -97,15 +100,15 @@ export const Header: React.FC<HeaderProps> = ({
           <button
             className="header-action-btn btn-command-palette"
             onClick={onOpenCommandPalette}
-            title="Mở bảng lệnh nhanh (Ctrl+K)"
+            title="Bảng lệnh nhanh (Ctrl+K)"
+            style={{ padding: '4px 8px' }}
           >
-            <span>⌘</span>
-            <kbd style={{ fontSize: 10, color: 'var(--text-muted)' }}>Ctrl+K</kbd>
+            <kbd style={{ fontSize: 11, color: 'var(--text-secondary)', fontFamily: 'inherit' }}>⌘K</kbd>
           </button>
         )}
 
-        <span className="cost-guard-badge" title="CostGuard Active: Đảm bảo 0 VNĐ chi phí API">
-          0đ STRICT
+        <span className="cost-guard-badge" title="CostGuard Active: 0 VNĐ phát sinh">
+          0đ Free
         </span>
       </div>
     </header>

@@ -8,6 +8,7 @@ interface DiscoveryPanelProps {
   onConfirmFact: (key: string, value: string) => Promise<void>;
   onResolveQuestion: (id: string, resolution: string) => Promise<void>;
   onSwitchToWork: () => void;
+  onClose?: () => void;
 }
 
 export const DiscoveryPanel: React.FC<DiscoveryPanelProps> = ({
@@ -17,6 +18,7 @@ export const DiscoveryPanel: React.FC<DiscoveryPanelProps> = ({
   onConfirmFact,
   onResolveQuestion,
   onSwitchToWork,
+  onClose,
 }) => {
   const [newKey, setNewKey] = useState('');
   const [newValue, setNewValue] = useState('');
@@ -61,16 +63,27 @@ export const DiscoveryPanel: React.FC<DiscoveryPanelProps> = ({
       {/* Discovery Header */}
       <div className="discovery-header">
         <div>
-          <div className="discovery-title">📋 Discovery Ledger</div>
+          <div className="discovery-title">📋 Đặc tả Yêu cầu</div>
           <div className="discovery-project-id">Dự án: {projectId}</div>
         </div>
-        <span
-          className={`discovery-status-badge ${
-            isReadyForWork ? 'ready' : 'discovery'
-          }`}
-        >
-          {isReadyForWork ? 'Sẵn sàng /work' : 'Làm rõ yêu cầu'}
-        </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span
+            className={`discovery-status-badge ${
+              isReadyForWork ? 'ready' : 'discovery'
+            }`}
+          >
+            {isReadyForWork ? 'Sẵn sàng /work' : 'Đang làm rõ'}
+          </span>
+          {onClose && (
+            <button
+              onClick={onClose}
+              className="discovery-close-btn"
+              title="Đóng bảng đặc tả"
+            >
+              ✕
+            </button>
+          )}
+        </div>
       </div>
 
       {/* DiscoveryReadyGate Banner */}
@@ -87,7 +100,7 @@ export const DiscoveryPanel: React.FC<DiscoveryPanelProps> = ({
               data-testid="switch-to-work-btn"
             >
               <span>🚀</span>
-              <span>Chuyển sang Chế độ Thực thi (/work)</span>
+              <span>Bắt đầu Thực thi (/work)</span>
             </button>
           </div>
         ) : (
@@ -111,7 +124,7 @@ export const DiscoveryPanel: React.FC<DiscoveryPanelProps> = ({
         </div>
 
         {openQuestions.length === 0 ? (
-          <div style={{ color: 'var(--text-muted)', fontSize: 12, fontStyle: 'italic', padding: '6px 0' }}>
+          <div style={{ color: 'var(--text-muted)', fontSize: 11.5, fontStyle: 'italic', padding: '4px 0' }}>
             Không có câu hỏi mở nào.
           </div>
         ) : (
@@ -169,7 +182,7 @@ export const DiscoveryPanel: React.FC<DiscoveryPanelProps> = ({
         </div>
 
         {facts.length === 0 ? (
-          <div style={{ color: 'var(--text-muted)', fontSize: 12, fontStyle: 'italic', padding: '6px 0' }}>
+          <div style={{ color: 'var(--text-muted)', fontSize: 11.5, fontStyle: 'italic', padding: '4px 0' }}>
             Chưa có yêu cầu nào được chốt.
           </div>
         ) : (

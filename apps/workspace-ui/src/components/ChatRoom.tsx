@@ -671,117 +671,169 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ roomName, envelopes, onSendM
       </div>
 
       {/* Chat Messages Feed */}
-      <div className="chat-feed" style={{ flex: 1, overflowY: 'auto', padding: 16 }}>
+      <div className="chat-feed">
         {filteredEnvelopes.length === 0 ? (
-          <div
-            style={{
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              justifyContent: 'center',
-              height: '100%',
-              color: 'var(--text-muted)',
-              textAlign: 'center',
-              padding: 40,
-            }}
-          >
-            {/* First-Run Onboarding Banner (UB-P3-R01-007) */}
-            <div
-              style={{
-                background: 'var(--bg-surface)',
-                border: '1px solid var(--border-color)',
-                borderRadius: 'var(--radius-lg)',
-                padding: '24px 32px',
-                maxWidth: 480,
-                textAlign: 'center',
-                boxShadow: 'var(--shadow-md)',
-              }}
-            >
-              <div style={{ fontSize: 36, marginBottom: 10 }}>👋</div>
-              <div style={{ fontWeight: 700, fontSize: 17, color: 'var(--text-primary)', marginBottom: 8 }}>
-                Chào mừng bạn đến với #{roomName || 'Phòng'}
+          <div className="hero-onboarding">
+            <div className="hero-icon">UB</div>
+            <h2 className="hero-title">Union Bot v4 — Autonomous AI Team</h2>
+            <p className="hero-subtitle">
+              Không gian làm việc cộng tác đa tác nhân AI tự động. 100% lưu trữ cục bộ SQLite WAL & CAS, chi phí 0đ tuyệt đối.
+            </p>
+            <div className="hero-cards-grid">
+              <div
+                className="hero-prompt-card"
+                onClick={() => setInputText('/chat ')}
+              >
+                <div className="hero-prompt-title">
+                  <span>💡</span>
+                  <span>Đặc tả & Làm rõ yêu cầu</span>
+                </div>
+                <div className="hero-prompt-desc">
+                  Thảo luận cùng Business Analyst (ChatGPT) để chốt yêu cầu bài toán.
+                </div>
               </div>
-              <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.5, margin: 0 }}>
-                Không gian làm việc AI tự động 0đ hoàn toàn miễn phí. Mọi trao đổi và dữ liệu tệp được lưu trữ bền vững trên máy tính của bạn (SQLite WAL & CAS).
-              </p>
 
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 16, textAlign: 'left', fontSize: 12, color: 'var(--text-muted)' }}>
-                <div>💬 <strong>Điều phối:</strong> Nhập chỉ đạo hoặc trao đổi cùng các AI Agents.</div>
-                <div>📋 <strong>Đặc tả yêu cầu:</strong> Mở panel bên phải hoặc gõ <code>/chat</code> để chốt bài toán.</div>
-                <div>📎 <strong>Tệp đính kèm:</strong> Kéo thả tài liệu, ảnh chụp, file code vào đây.</div>
+              <div
+                className="hero-prompt-card"
+                onClick={() => setInputText('/work ')}
+              >
+                <div className="hero-prompt-title">
+                  <span>🚀</span>
+                  <span>Thực thi kế hoạch</span>
+                </div>
+                <div className="hero-prompt-desc">
+                  Khởi động Antigravity & Codex lập trình và kiểm thử tự động.
+                </div>
+              </div>
+
+              <div
+                className="hero-prompt-card"
+                onClick={() => setInputText('/status')}
+              >
+                <div className="hero-prompt-title">
+                  <span>📊</span>
+                  <span>Kiểm tra trạng thái</span>
+                </div>
+                <div className="hero-prompt-desc">
+                  Xem tóm tắt tiến độ, facts đã xác nhận và chi phí CostGuard (0đ).
+                </div>
+              </div>
+
+              <div
+                className="hero-prompt-card"
+                onClick={() => {
+                  window.dispatchEvent(new CustomEvent('union-bot:toggle-browser', { detail: true }));
+                }}
+              >
+                <div className="hero-prompt-title">
+                  <span>🌐</span>
+                  <span>Mở AI Web Browser</span>
+                </div>
+                <div className="hero-prompt-desc">
+                  Tương tác trực tiếp trên giao diện web của ChatGPT, Gemini, Claude.
+                </div>
               </div>
             </div>
           </div>
         ) : (
-          filteredEnvelopes.map((env) => (
-            <div key={env.id} className="envelope-card" data-testid="envelope-card">
-              <div className="envelope-meta">
-                <div className="sender-tag">
-                  <span className="sender-name">
-                    <HighlightedText text={env.sender.name} query={searchQuery} />
-                  </span>
-                  {env.sender.role && (
-                    <span className="sender-role">
-                      <HighlightedText text={env.sender.role} query={searchQuery} />
-                    </span>
-                  )}
-                  {env.isDemo && (
-                    <span
-                      style={{
-                        fontSize: 9,
-                        color: 'var(--accent-amber)',
-                        border: '1px solid var(--accent-amber)',
-                        padding: '1px 4px',
-                        borderRadius: 2,
-                      }}
-                    >
-                      MOCK PREVIEW
-                    </span>
-                  )}
-                </div>
-                <span>
-                  {new Date(env.timestamp).toLocaleTimeString([], {
-                    hour: '2-digit',
-                    minute: '2-digit',
-                    second: '2-digit',
-                  })}
-                </span>
-              </div>
+          filteredEnvelopes.map((env) => {
+            const isUser = env.sender?.kind === 'user';
+            const senderId = (env.sender?.id || '').toLowerCase();
 
-              {env.parts.map((part: MessagePart, idx: number) => {
-                switch (part.kind) {
-                  case 'text':
-                    return (
-                      <div key={idx} className="part-text" data-testid="message-text" style={{ whiteSpace: 'pre-wrap' }}>
-                        <HighlightedText text={part.text} query={searchQuery} />
-                      </div>
-                    );
-                  case 'code':
-                    return (
-                      <div key={idx} className="part-code">
-                        {part.filename && (
-                          <div style={{ color: 'var(--text-muted)', marginBottom: 4 }}>
-                            // File: <HighlightedText text={part.filename} query={searchQuery} />
-                          </div>
-                        )}
-                        <code>
-                          <HighlightedText text={part.content || part.code} query={searchQuery} />
-                        </code>
-                      </div>
-                    );
-                  case 'artifact':
-                  case 'attachment':
-                    return <ArtifactPreviewCard key={idx} part={part} searchQuery={searchQuery} />;
-                  case 'test_result':
-                    return <ArtifactPreviewCard key={idx} part={part} searchQuery={searchQuery} />;
-                  case 'action':
-                    return <ActionToolCard key={idx} part={part} searchQuery={searchQuery} />;
-                  default:
-                    return null;
-                }
-              })}
-            </div>
-          ))
+            let avatarNode = <span className="message-avatar agent-default">✨</span>;
+            if (isUser) {
+              avatarNode = <span className="message-avatar user-avatar">👤</span>;
+            } else if (senderId.includes('chatgpt')) {
+              avatarNode = <span className="message-avatar agent-chatgpt">🤖</span>;
+            } else if (senderId.includes('antigravity')) {
+              avatarNode = <span className="message-avatar agent-antigravity">⚡</span>;
+            } else if (senderId.includes('codex')) {
+              avatarNode = <span className="message-avatar agent-codex">🛡️</span>;
+            }
+
+            return (
+              <div
+                key={env.id}
+                className={`message-row ${isUser ? 'user' : 'agent'}`}
+                data-testid="envelope-card"
+              >
+                {avatarNode}
+                <div className={`message-bubble ${isUser ? 'user' : 'agent'}`}>
+                  <div className="message-header">
+                    <span className="message-author">
+                      <HighlightedText
+                        text={isUser ? 'Bạn (User)' : env.sender?.name || 'Agent'}
+                        query={searchQuery}
+                      />
+                    </span>
+                    {env.sender?.role && (
+                      <span className="message-role-chip">
+                        <HighlightedText text={env.sender.role} query={searchQuery} />
+                      </span>
+                    )}
+                    {env.isDemo && (
+                      <span
+                        style={{
+                          fontSize: 9,
+                          color: 'var(--accent-amber)',
+                          border: '1px solid var(--accent-amber)',
+                          padding: '1px 4px',
+                          borderRadius: 2,
+                        }}
+                      >
+                        MOCK PREVIEW
+                      </span>
+                    )}
+                    <span>
+                      {new Date(env.timestamp).toLocaleTimeString([], {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })}
+                    </span>
+                  </div>
+
+                  <div className="message-body">
+                    {env.parts.map((part: MessagePart, idx: number) => {
+                      switch (part.kind) {
+                        case 'text':
+                          return (
+                            <div
+                              key={idx}
+                              className="part-text"
+                              data-testid="message-text"
+                            >
+                              <HighlightedText text={part.text} query={searchQuery} />
+                            </div>
+                          );
+                        case 'code':
+                          return (
+                            <div key={idx} className="part-code">
+                              {part.filename && (
+                                <div style={{ color: 'var(--text-muted)', marginBottom: 4 }}>
+                                  // File: <HighlightedText text={part.filename} query={searchQuery} />
+                                </div>
+                              )}
+                              <code>
+                                <HighlightedText text={part.content || part.code} query={searchQuery} />
+                              </code>
+                            </div>
+                          );
+                        case 'artifact':
+                        case 'attachment':
+                          return <ArtifactPreviewCard key={idx} part={part} searchQuery={searchQuery} />;
+                        case 'test_result':
+                          return <ArtifactPreviewCard key={idx} part={part} searchQuery={searchQuery} />;
+                        case 'action':
+                          return <ActionToolCard key={idx} part={part} searchQuery={searchQuery} />;
+                        default:
+                          return null;
+                      }
+                    })}
+                  </div>
+                </div>
+              </div>
+            );
+          })
         )}
       </div>
 
@@ -889,62 +941,88 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ roomName, envelopes, onSendM
         </div>
       )}
 
-      {/* Multi-line Composer with Attachment Button (P3-004) */}
-      <form
-        className="chat-input-bar"
-        onSubmit={handleSubmit}
-      >
-        <input
-          type="file"
-          ref={fileInputRef}
-          data-testid="chat-file-input"
-          onChange={handleFileInputChange}
-          multiple
-          accept=".png,.jpg,.jpeg,.gif,.webp,.pdf,.txt,.json,.md"
-          style={{ display: 'none' }}
-        />
-
-        <button
-          type="button"
-          data-testid="chat-composer-attach-btn"
-          onClick={handleAttachClick}
-          title="Đính kèm tệp (PNG, PDF, JSON, v.v.)"
-          style={{
-            background: 'var(--bg-primary)',
-            border: '1px solid var(--border-color)',
-            color: 'var(--text-secondary)',
-            borderRadius: 'var(--radius-sm)',
-            padding: '8px 12px',
-            cursor: 'pointer',
-            fontSize: 15,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            height: 38,
-          }}
+      {/* Modern Floating Capsule Composer (P3-004) */}
+      <div className="composer-wrapper">
+        <form
+          className="composer-capsule"
+          onSubmit={handleSubmit}
         >
-          📎
-        </button>
+          <input
+            type="file"
+            ref={fileInputRef}
+            data-testid="chat-file-input"
+            onChange={handleFileInputChange}
+            multiple
+            accept=".png,.jpg,.jpeg,.gif,.webp,.pdf,.txt,.json,.md"
+            style={{ display: 'none' }}
+          />
 
-        <textarea
-          className="chat-input"
-          data-testid="chat-composer-textarea"
-          placeholder="Nhập tin nhắn hoặc chỉ thị (Enter để gửi, Shift+Enter xuống dòng)..."
-          value={inputText}
-          onChange={(e) => setInputText(e.target.value)}
-          onKeyDown={handleKeyDown}
-          rows={2}
-        />
+          <textarea
+            className="composer-textarea chat-input"
+            data-testid="chat-composer-textarea"
+            placeholder="Nhập tin nhắn hoặc chỉ thị (Enter để gửi, Shift+Enter xuống dòng)..."
+            value={inputText}
+            onChange={(e) => setInputText(e.target.value)}
+            onKeyDown={handleKeyDown}
+            rows={2}
+          />
 
-        <button
-          type="submit"
-          className="send-button"
-          data-testid="chat-composer-send-btn"
-          disabled={isSubmitting || (!inputText.trim() && pendingAttachments.length === 0)}
-        >
-          {isSubmitting ? '...' : 'Gửi ➔'}
-        </button>
-      </form>
+          <div className="composer-actions-row">
+            <div className="composer-left-actions">
+              <button
+                type="button"
+                data-testid="chat-composer-attach-btn"
+                onClick={handleAttachClick}
+                className="composer-action-pill"
+                title="Đính kèm tệp tin (PNG, PDF, JSON, v.v.)"
+              >
+                <span>📎</span>
+                <span>Đính kèm</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setInputText((prev) => (prev ? `${prev} /chat` : '/chat '))}
+                className="composer-action-pill"
+                title="Bật chế độ thảo luận và làm rõ yêu cầu (/chat)"
+              >
+                <span>💡 /chat</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setInputText((prev) => (prev ? `${prev} /work` : '/work '))}
+                className="composer-action-pill"
+                title="Bật chế độ thực thi (/work)"
+              >
+                <span>🚀 /work</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setInputText((prev) => (prev ? `${prev} /status` : '/status'))}
+                className="composer-action-pill"
+                title="Xem trạng thái hệ thống (/status)"
+              >
+                <span>📊 /status</span>
+              </button>
+            </div>
+
+            <button
+              type="submit"
+              className="composer-send-btn send-button"
+              data-testid="chat-composer-send-btn"
+              disabled={isSubmitting || (!inputText.trim() && pendingAttachments.length === 0)}
+              title="Gửi tin nhắn (Enter)"
+            >
+              {isSubmitting ? '...' : '↑'}
+            </button>
+          </div>
+        </form>
+        <div className="composer-hint">
+          Nhấn Enter để gửi, Shift + Enter xuống dòng • Hoạt động 100% Cục bộ & 0đ Miễn phí
+        </div>
+      </div>
     </div>
   );
 };
