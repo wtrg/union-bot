@@ -1232,7 +1232,7 @@ class StorageServiceClient extends EventEmitter {
     return this.sendRequest('testTamperApprovalPayload', { tokenId, tamperedPayload });
   }
 
-  // --- Phase V4 Review Findings Persistence (UB-V4-U08) ---
+  // --- Phase V4 Review Findings Persistence & Worker Parity (UB-V4-U08, U08-R07-03) ---
   saveReviewFinding(finding) {
     if (this.isNative && this.nativeDb) {
       this.nativeDb.prepare(`
@@ -1244,7 +1244,7 @@ class StorageServiceClient extends EventEmitter {
         finding.changeSetId,
         finding.reviewer,
         finding.file,
-        finding.line !== undefined ? finding.line : null,
+        finding.line !== undefined && finding.line !== null ? Number(finding.line) : null,
         finding.severity,
         finding.description,
         finding.reproduction || null,
@@ -1253,8 +1253,19 @@ class StorageServiceClient extends EventEmitter {
       );
       return;
     }
-    if (!this.fallbackReviewFindings) this.fallbackReviewFindings = new Map();
-    this.fallbackReviewFindings.set(finding.id, { ...finding });
+    if (this.allowNonDurableDemo) {
+      if (!this.fallbackReviewFindings) this.fallbackReviewFindings = new Map();
+      this.fallbackReviewFindings.set(finding.id, { ...finding });
+      return;
+    }
+    throw new Error('ERR_STORAGE_UNAVAILABLE: Review findings require durable SQLite storage. In-memory Map fallback is strictly prohibited (U08-R07-03).');
+  }
+
+  async saveReviewFindingAsync(finding) {
+    if (this.isNative && this.nativeDb) {
+      return this.saveReviewFinding(finding);
+    }
+    return this.sendRequest('saveReviewFinding', { finding });
   }
 
   getReviewFindings(changeSetId, state) {
@@ -1269,7 +1280,7 @@ class StorageServiceClient extends EventEmitter {
         query += ' AND state = ?';
         params.push(state);
       }
-      query += ' ORDER BY created_at ASC';
+      query += ' ORDER BY created_at ASC, id ASC';
       const rows = this.nativeDb.prepare(query).all(...params);
       return rows.map((r) => ({
         id: r.id,
@@ -1284,11 +1295,21 @@ class StorageServiceClient extends EventEmitter {
         createdAt: new Date(r.created_at).getTime(),
       }));
     }
-    if (!this.fallbackReviewFindings) this.fallbackReviewFindings = new Map();
-    let findings = Array.from(this.fallbackReviewFindings.values());
-    if (changeSetId) findings = findings.filter((f) => f.changeSetId === changeSetId);
-    if (state) findings = findings.filter((f) => f.state === state);
-    return findings;
+    if (this.allowNonDurableDemo) {
+      if (!this.fallbackReviewFindings) this.fallbackReviewFindings = new Map();
+      let findings = Array.from(this.fallbackReviewFindings.values());
+      if (changeSetId) findings = findings.filter((f) => f.changeSetId === changeSetId);
+      if (state) findings = findings.filter((f) => f.state === state);
+      return findings;
+    }
+    throw new Error('ERR_STORAGE_UNAVAILABLE: Review findings require durable SQLite storage. In-memory Map fallback is strictly prohibited (U08-R07-03).');
+  }
+
+  async getReviewFindingsAsync(changeSetId, state) {
+    if (this.isNative && this.nativeDb) {
+      return this.getReviewFindings(changeSetId, state);
+    }
+    return this.sendRequest('getReviewFindings', { changeSetId, state });
   }
 
   updateReviewFindingState(id, state) {
@@ -1296,51 +1317,133 @@ class StorageServiceClient extends EventEmitter {
       const res = this.nativeDb.prepare('UPDATE review_findings SET state = ? WHERE id = ?').run(state, id);
       return res.changes > 0;
     }
-    if (!this.fallbackReviewFindings) return false;
-    const existing = this.fallbackReviewFindings.get(id);
-    if (!existing) return false;
-    existing.state = state;
-    return true;
+    if (this.allowNonDurableDemo) {
+      if (!this.fallbackReviewFindings) return false;
+      const existing = this.fallbackReviewFindings.get(id);
+      if (!existing) return false;
+      existing.state = state;
+      return true;
+    }
+    throw new Error('ERR_STORAGE_UNAVAILABLE: Review findings require durable SQLite storage. In-memory Map fallback is strictly prohibited (U08-R07-03).');
+  }
+
+  async updateReviewFindingStateAsync(id, state) {
+    if (this.isNative && this.nativeDb) {
+      return this.updateReviewFindingState(id, state);
+    }
+    return this.sendRequest('updateReviewFindingState', { id, state });
   }
 
   ingestReviewFindingsBatch(changeSetId, reviewer, rawFindings) {
-    const existing = this.getReviewFindings(changeSetId);
-    const existingKeySet = new Set(
-      existing.map((f) => `${f.file || ''}#${f.line || ''}#${f.severity}#${(f.description || '').trim()}`)
-    );
+    if (this.isNative && this.nativeDb) {
+      this.nativeDb.exec('BEGIN IMMEDIATE TRANSACTION;');
+      try {
+        const existingRows = this.nativeDb
+          .prepare('SELECT file, line, severity, description FROM review_findings WHERE change_set_id = ?')
+          .all(changeSetId);
+        const existingKeySet = new Set(
+          existingRows.map((r) => `${r.file || ''}#${r.line || ''}#${r.severity}#${(r.description || '').trim()}`)
+        );
 
-    let inserted = 0;
-    let duplicates = 0;
-    const insertedFindings = [];
+        let inserted = 0;
+        let duplicates = 0;
+        const insertedFindings = [];
+        const insertStmt = this.nativeDb.prepare(`
+          INSERT INTO review_findings (id, change_set_id, reviewer, file, line, severity, description, reproduction, state, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `);
 
-    for (const raw of rawFindings) {
-      const key = `${raw.file || ''}#${raw.line || ''}#${raw.severity}#${(raw.description || '').trim()}`;
-      if (existingKeySet.has(key)) {
-        duplicates++;
-        continue;
+        for (const raw of rawFindings) {
+          const key = `${raw.file || ''}#${raw.line || ''}#${raw.severity}#${(raw.description || '').trim()}`;
+          if (existingKeySet.has(key)) {
+            duplicates++;
+            continue;
+          }
+
+          const findingId = `rf_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+          const nowIso = new Date().toISOString();
+          insertStmt.run(
+            findingId,
+            changeSetId,
+            reviewer,
+            raw.file || '',
+            raw.line !== undefined && raw.line !== null ? Number(raw.line) : null,
+            raw.severity || 'SEV2',
+            raw.description || '',
+            raw.reproduction || null,
+            'OPEN',
+            nowIso
+          );
+          existingKeySet.add(key);
+          insertedFindings.push({
+            id: findingId,
+            changeSetId,
+            reviewer,
+            file: raw.file,
+            line: raw.line,
+            severity: raw.severity,
+            description: raw.description,
+            reproduction: raw.reproduction,
+            state: 'OPEN',
+            createdAt: new Date(nowIso).getTime(),
+          });
+          inserted++;
+        }
+
+        this.nativeDb.exec('COMMIT;');
+        return { inserted, duplicates, findings: insertedFindings };
+      } catch (err) {
+        try { this.nativeDb.exec('ROLLBACK;'); } catch {}
+        throw err;
+      }
+    }
+    if (this.allowNonDurableDemo) {
+      const existing = this.getReviewFindings(changeSetId);
+      const existingKeySet = new Set(
+        existing.map((f) => `${f.file || ''}#${f.line || ''}#${f.severity}#${(f.description || '').trim()}`)
+      );
+
+      let inserted = 0;
+      let duplicates = 0;
+      const insertedFindings = [];
+
+      for (const raw of rawFindings) {
+        const key = `${raw.file || ''}#${raw.line || ''}#${raw.severity}#${(raw.description || '').trim()}`;
+        if (existingKeySet.has(key)) {
+          duplicates++;
+          continue;
+        }
+
+        const findingId = `rf_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+        const finding = {
+          id: findingId,
+          changeSetId,
+          reviewer,
+          file: raw.file,
+          line: raw.line,
+          severity: raw.severity,
+          description: raw.description,
+          reproduction: raw.reproduction,
+          state: 'OPEN',
+          createdAt: Date.now(),
+        };
+
+        this.saveReviewFinding(finding);
+        existingKeySet.add(key);
+        insertedFindings.push(finding);
+        inserted++;
       }
 
-      const findingId = `rf_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-      const finding = {
-        id: findingId,
-        changeSetId,
-        reviewer,
-        file: raw.file,
-        line: raw.line,
-        severity: raw.severity,
-        description: raw.description,
-        reproduction: raw.reproduction,
-        state: 'OPEN',
-        createdAt: Date.now(),
-      };
-
-      this.saveReviewFinding(finding);
-      existingKeySet.add(key);
-      insertedFindings.push(finding);
-      inserted++;
+      return { inserted, duplicates, findings: insertedFindings };
     }
+    throw new Error('ERR_STORAGE_UNAVAILABLE: Review findings require durable SQLite storage. In-memory Map fallback is strictly prohibited (U08-R07-03).');
+  }
 
-    return { inserted, duplicates, findings: insertedFindings };
+  async ingestReviewFindingsBatchAsync(changeSetId, reviewer, rawFindings) {
+    if (this.isNative && this.nativeDb) {
+      return this.ingestReviewFindingsBatch(changeSetId, reviewer, rawFindings);
+    }
+    return this.sendRequest('ingestReviewFindingsBatch', { changeSetId, reviewer, rawFindings });
   }
 
   async closeAsync() {

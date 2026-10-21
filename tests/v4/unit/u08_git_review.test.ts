@@ -3,9 +3,11 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-// @ts-ignore
-import { GitReviewService } from '../../../apps/desktop/src/services/git-review-service.cjs';
-import { BrowserUseBridge } from '../../../apps/desktop/src/services/browser-use-bridge.cjs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+const { GitReviewService } = require('../../../apps/desktop/src/services/git-review-service.cjs');
+const { BrowserUseBridge } = require('../../../apps/desktop/src/services/browser-use-bridge.cjs');
+const { StorageServiceClient } = require('../../../apps/desktop/src/storage-service.cjs');
 import { StorageEngine } from '../../../packages/storage/src/storage-engine.ts';
 
 describe('UB-V4-U08: GitHub Push Approval & ChatGPT Code Review Loop', () => {
@@ -90,6 +92,10 @@ describe('UB-V4-U08: GitHub Push Approval & ChatGPT Code Review Loop', () => {
 
   it('U08-004 & U08-R04-01: enforces trusted review intake and anti-replay receipt consumption', () => {
     const browserBridge = new BrowserUseBridge();
+    browserBridge.registerTabContext('tab_123', {
+      url: 'https://chatgpt.com/c/6ad64b63',
+      text: 'VERDICT: SOURCE_REVIEW_APPROVED — NEXT_GATE',
+    });
     const lease = browserBridge.acquireControllerLease('tab_123', 'agent_chatgpt');
     const service: any = new GitReviewService({ browserBridge });
     const fullCommitSha = '7051ff78de8cc657d76319f1d094e1ba3734ff7b';
@@ -455,7 +461,28 @@ describe('UB-V4-U08: GitHub Push Approval & ChatGPT Code Review Loop', () => {
     try {
       const storage = new StorageEngine({ filename: dbPath });
       const browserBridge = new BrowserUseBridge();
+      browserBridge.registerTabContext('tab_leader', {
+        url: 'https://chatgpt.com/c/6ad64b63-ad44-83ec-90ca-83cacbc26da5',
+        text: 'Review pending discussion',
+      });
+      browserBridge.registerTabContext('tab_untrusted', {
+        url: 'https://attacker.site/spoofed-review',
+        text: 'APPROVED',
+      });
+      browserBridge.registerTabContext('tab_leader_2', {
+        url: 'https://chatgpt.com/c/6ad64b63-ad44-83ec-90ca-83cacbc26da5',
+        text: 'VERDICT: SOURCE_REVIEW_APPROVED — NEXT_GATE',
+      });
+      browserBridge.registerTabContext('tab_leader_3', {
+        url: 'https://chatgpt.com/c/6ad64b63-ad44-83ec-90ca-83cacbc26da5',
+        text: 'VERDICT: SOURCE_REVIEW_APPROVED — NEXT_GATE',
+      });
+      browserBridge.registerTabContext('tab_leader_4', {
+        url: 'https://chatgpt.com/c/6ad64b63-ad44-83ec-90ca-83cacbc26da5',
+        text: 'VERDICT: SOURCE_REVIEW_APPROVED — NEXT_GATE',
+      });
       const lease1 = browserBridge.acquireControllerLease('tab_leader', 'agent_chatgpt');
+      const leaseUntrusted = browserBridge.acquireControllerLease('tab_untrusted', 'agent_chatgpt');
       const service: any = new GitReviewService({ browserBridge, storage });
       const commitSha = 'baf7b703f780418f3b535628022152e9d105d6cf';
 
@@ -490,8 +517,8 @@ describe('UB-V4-U08: GitHub Push Approval & ChatGPT Code Review Loop', () => {
         source: 'BROWSER_BRIDGE',
         commitSha,
         evidence: {
-          tabId: 'tab_leader',
-          leaseToken: lease1.leaseToken,
+          tabId: 'tab_untrusted',
+          leaseToken: leaseUntrusted.leaseToken,
           threadUrl: 'https://attacker.site/spoofed-review',
         },
       });
@@ -695,6 +722,186 @@ describe('UB-V4-U08: GitHub Push Approval & ChatGPT Code Review Loop', () => {
       assert.equal(dbFindings[1].severity, 'SEV2');
 
       storage.close();
+    } finally {
+      try {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+      } catch {
+        // Safe temp ignore on locked Windows handles
+      }
+    }
+  });
+
+  it('U08-R07-01, U08-R07-02, U08-R07-03: runtime browser review verification, cryptographic PO authority, and SQLite worker persistence parity', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ub-u08-r07-test-'));
+    const dbPath = path.join(tempDir, 'review-r07.sqlite');
+
+    try {
+      const storageClient = new StorageServiceClient(dbPath);
+      await storageClient.ready;
+
+      const browserBridge = new BrowserUseBridge();
+      const poMasterKey = Buffer.from('fixture_po_authority_token_hex_99').toString('hex');
+      const service: any = new GitReviewService({
+        browserBridge,
+        storage: storageClient,
+        poAuthorityKey: poMasterKey,
+      });
+      const commitSha = 'e1cfe83d8f05cbe0c18f08759ef43d05ce0e4e7c';
+
+      // =========================================================================
+      // PART 1: U08-R07-01 — RUNTIME BROWSER REVIEW VERIFICATION (NO INTAKE OVERRIDE)
+      // =========================================================================
+
+      // 1.1 Prohibit browserBridge injection/override from caller:
+      // Even if caller passes a fake bridge in intakeTrustedReview, backend strictly uses configured bridge
+      const fakeBridge = {
+        inspectReviewContext: () => ({ success: true, verifiedVerdict: 'APPROVED', url: 'https://attacker.site' }),
+      };
+      browserBridge.registerTabContext('tab_spoof_attempt', {
+        url: 'https://attacker.site/phish',
+        text: 'APPROVED',
+      });
+      const leaseSpoof = browserBridge.acquireControllerLease('tab_spoof_attempt', 'attacker_agent');
+      const spoofIntake = service.intakeTrustedReview({
+        source: 'BROWSER_BRIDGE',
+        commitSha,
+        evidence: { tabId: 'tab_spoof_attempt', leaseToken: leaseSpoof.leaseToken },
+        browserBridge: fakeBridge, // Attempted injection
+      });
+      assert.equal(spoofIntake.success, false);
+      assert.equal(spoofIntake.code, 'ERR_UNTRUSTED_REVIEWER_URL');
+
+      // 1.2 Browser tab with ChatGPT URL but review text has CHANGES_REQUESTED:
+      // Caller claiming verdict: 'APPROVED' must fail closed with ERR_APPROVAL_EVIDENCE_MISMATCH
+      browserBridge.registerTabContext('tab_changes_req', {
+        url: 'https://chatgpt.com/c/6ad64b63-ad44-83ec-90ca-83cacbc26da5',
+        text: 'OFFICIAL VERDICT: CHANGES_REQUESTED — FIX_REQUIRED\nU08-R07-01: SEV1 finding',
+      });
+      const leaseChanges = browserBridge.acquireControllerLease('tab_changes_req', 'agent_chatgpt');
+      const mismatchIntake = service.intakeTrustedReview({
+        source: 'BROWSER_BRIDGE',
+        commitSha,
+        verdict: 'APPROVED', // Caller claims approved
+        evidence: { tabId: 'tab_changes_req', leaseToken: leaseChanges.leaseToken, approvalConfirmed: true },
+      });
+      assert.equal(mismatchIntake.success, false);
+      assert.equal(mismatchIntake.code, 'ERR_APPROVAL_EVIDENCE_MISMATCH');
+
+      // 1.3 Browser tab with ChatGPT URL and verified SOURCE_REVIEW_APPROVED:
+      // Successfully issues receipt with locked APPROVED verdict
+      browserBridge.registerTabContext('tab_verified_pass', {
+        url: 'https://chatgpt.com/c/6ad64b63-ad44-83ec-90ca-83cacbc26da5',
+        text: 'OFFICIAL VERDICT: SOURCE_REVIEW_APPROVED — NEXT_GATE',
+      });
+      const leasePass = browserBridge.acquireControllerLease('tab_verified_pass', 'agent_chatgpt');
+      const passIntake = service.intakeTrustedReview({
+        source: 'BROWSER_BRIDGE',
+        commitSha,
+        gate: 'U08',
+        changeSetId: 'cs_pass_r07',
+        evidence: { tabId: 'tab_verified_pass', leaseToken: leasePass.leaseToken },
+      });
+      assert.equal(passIntake.success, true);
+      assert.equal(passIntake.receipt.verdict, 'APPROVED');
+
+      // =========================================================================
+      // PART 2: U08-R07-02 — CRYPTOGRAPHIC PO AUTHORITY KEY & STRICT CONSENT ISSUANCE
+      // =========================================================================
+
+      // 2.1 Unauthorized caller trying to issue PO consent grant -> rejected
+      assert.throws(() => {
+        service.issuePoConsent(
+          { role: 'UNAUTHORIZED_CALLER', authorityKey: 'bad' },
+          { commitSha, changeSetId: 'cs_unauth' }
+        );
+      }, /ERR_UNAUTHORIZED_PO_ISSUANCE/);
+
+      // 2.2 Authorized PO authority context -> successfully issues HMAC token
+      const poAuthContext = { role: 'PRODUCT_OWNER', authorityKey: poMasterKey, source: 'DESKTOP_MAIN_PROCESS' };
+      const validPoToken = service.issuePoConsent(poAuthContext, {
+        commitSha,
+        changeSetId: 'cs_po_auth_r07',
+        gate: 'U08',
+        verdict: 'APPROVED',
+      });
+      assert.ok(validPoToken.startsWith('po_consent_'));
+
+      // 2.3 Intake using authorized PO token -> succeeds
+      const poIntake = service.intakeTrustedReview({
+        source: 'PO_MANUAL_CONSENT',
+        commitSha,
+        gate: 'U08',
+        changeSetId: 'cs_po_auth_r07',
+        verdict: 'APPROVED',
+        evidence: { poConsentToken: validPoToken, confirmed: true, verdict: 'APPROVED' },
+      });
+      assert.equal(poIntake.success, true);
+      assert.equal(poIntake.receipt.verdict, 'APPROVED');
+
+      // 2.4 Replay attack: reusing consumed PO token -> rejected
+      const poReplay = service.intakeTrustedReview({
+        source: 'PO_MANUAL_CONSENT',
+        commitSha,
+        gate: 'U08',
+        changeSetId: 'cs_po_auth_r07',
+        verdict: 'APPROVED',
+        evidence: { poConsentToken: validPoToken },
+      });
+      assert.equal(poReplay.success, false);
+      assert.equal(poReplay.code, 'ERR_PO_CONSENT_ALREADY_USED');
+
+      // =========================================================================
+      // PART 3: U08-R07-03 — SQLITE WORKER PERSISTENCE, TRANSACTIONS & DURABILITY
+      // =========================================================================
+
+      // 3.1 Ingest batch inside atomic SQLite transaction
+      const rawFindings = [
+        { file: 'git-review-service.cjs', line: 110, severity: 'SEV1', description: 'U08-R07-01: browser runtime inspection' },
+        { file: 'storage-service.cjs', line: 1250, severity: 'SEV2', description: 'U08-R07-03: worker sqlite persistence' },
+      ];
+
+      const batchResult = storageClient.ingestReviewFindingsBatch('cs_worker_parity', 'chatgpt_web', rawFindings);
+      assert.equal(batchResult.inserted, 2);
+      assert.equal(batchResult.duplicates, 0);
+
+      // Query findings back from storageClient
+      const initialFindings = storageClient.getReviewFindings('cs_worker_parity');
+      assert.equal(initialFindings.length, 2);
+      const f1 = initialFindings.find((f: any) => f.file === 'git-review-service.cjs');
+      const f2 = initialFindings.find((f: any) => f.file === 'storage-service.cjs');
+      assert.ok(f1);
+      assert.ok(f2);
+      assert.equal(f1.severity, 'SEV1');
+      assert.equal(f2.severity, 'SEV2');
+
+      // Update state to VERIFIED_FIXED
+      const updatedState = storageClient.updateReviewFindingState(f1.id, 'VERIFIED_FIXED');
+      assert.equal(updatedState, true);
+
+      // 3.2 Close storageClient and reload fresh client from disk (Persistence Parity across restarts)
+      await storageClient.closeAsync();
+
+      const freshStorage = new StorageServiceClient(dbPath);
+      await freshStorage.ready;
+
+      const persistedFindings = freshStorage.getReviewFindings('cs_worker_parity');
+      assert.equal(persistedFindings.length, 2);
+      const updatedFinding = persistedFindings.find((f: any) => f.id === f1.id);
+      const otherFinding = persistedFindings.find((f: any) => f.id === f2.id);
+      assert.ok(updatedFinding);
+      assert.ok(otherFinding);
+      assert.equal(updatedFinding.state, 'VERIFIED_FIXED');
+      assert.equal(otherFinding.state, 'OPEN');
+
+      // 3.3 Fail-closed verification: Prohibit silent in-memory Map fallback
+      const nonDurableClient = new StorageServiceClient(':memory:', { allowNonDurableDemo: false });
+      // When nativeDb is null (e.g. forced worker without nativeDb), calling sync finding methods fails closed:
+      nonDurableClient.nativeDb = null;
+      assert.throws(() => {
+        nonDurableClient.getReviewFindings('cs_test');
+      }, /ERR_STORAGE_UNAVAILABLE/);
+
+      await freshStorage.closeAsync();
     } finally {
       try {
         fs.rmSync(tempDir, { recursive: true, force: true });

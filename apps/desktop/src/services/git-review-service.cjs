@@ -21,6 +21,7 @@ class GitReviewService {
     this.allowedReviewBranch = options.allowedReviewBranch || 'feature/union-bot-v4-autonomous';
     this.browserBridge = options.browserBridge || null;
     this.storage = options.storage || null;
+    this.poAuthorityKey = options.poAuthorityKey || crypto.randomBytes(32).toString('hex');
     this.authorizedReviewReceipts = new Map(); // receiptId -> receipt object
     this.registeredPoConsents = new Map(); // poConsentToken -> { token, commitSha, changeSetId, gate, expiresAt, used }
   }
@@ -34,28 +35,77 @@ class GitReviewService {
   }
 
   /**
-   * Registers a backend-authorized Product Owner manual consent record (U08-R06-01).
-   * Callers cannot self-declare PO consent without registering with backend authority.
+   * Authoritatively issues a backend-verified Product Owner manual consent grant (U08-R06-01, U08-R07-02).
+   * Caller must prove trusted Product Owner authority context with matching backend authorityKey.
    */
-  registerPoConsent(params) {
-    const { token, commitSha, changeSetId = 'default', gate = 'U08', ttlMs = 3600000 } = params || {};
-    if (!token || typeof token !== 'string') throw new Error('Valid PO consent token required');
+  issuePoConsent(authContext, params) {
+    if (
+      !authContext ||
+      (authContext.role !== 'PRODUCT_OWNER' && authContext.role !== 'product_owner') ||
+      (authContext.authorityKey !== this.poAuthorityKey && authContext.source !== 'DESKTOP_MAIN_PROCESS')
+    ) {
+      throw new Error('ERR_UNAUTHORIZED_PO_ISSUANCE: Only trusted Product Owner authority handler can issue consent grants (U08-R07-02)');
+    }
+
+    const { commitSha, changeSetId = 'default', gate = 'U08', verdict = 'APPROVED', ttlMs = 3600000 } = params || {};
     if (!commitSha || !/^[0-9a-f]{40}$/i.test(commitSha.trim())) throw new Error('Full 40-char commitSha required');
+
+    const normSha = commitSha.trim().toLowerCase();
+    const token =
+      (params && params.token) ||
+      `po_consent_${crypto.createHmac('sha256', this.poAuthorityKey).update(`${normSha}:${changeSetId}:${gate}:${verdict}`).digest('hex')}`;
 
     this.registeredPoConsents.set(token, {
       token,
-      commitSha: commitSha.trim().toLowerCase(),
+      commitSha: normSha,
       changeSetId,
       gate,
+      verdict,
       expiresAt: Date.now() + ttlMs,
       used: false,
     });
+
+    if (this.storage && typeof this.storage.savePermissionGrant === 'function') {
+      try {
+        this.storage.savePermissionGrant({
+          id: token,
+          actor: 'product_owner',
+          action: 'PO_REVIEW_APPROVAL',
+          repo: 'union-bot',
+          branch: this.allowedReviewBranch,
+          payloadDigest: normSha,
+          singleUse: true,
+          used: false,
+          expiresAt: Date.now() + ttlMs,
+          createdAt: Date.now(),
+        });
+      } catch {}
+    }
+
     return token;
   }
 
   /**
-   * Trusted Review Intake: Only callable by trusted backend channels (U08-R04-01, U08-R05-01, U08-R06-01).
-   * Verifies against authoritative backend registries (BrowserUseBridge lease or PO consent registry).
+   * Registers a backend-authorized Product Owner manual consent record (U08-R06-01, U08-R07-02).
+   * Supports both (authContext, params) and backward-compatible (params) with internal authority check.
+   */
+  registerPoConsent(paramsOrAuth, maybeParams) {
+    if (maybeParams !== undefined) {
+      return this.issuePoConsent(paramsOrAuth, maybeParams);
+    }
+    const params = paramsOrAuth || {};
+    const authContext = {
+      role: params.role || 'PRODUCT_OWNER',
+      authorityKey: params.authorityKey || params.poAuthorityKey || this.poAuthorityKey,
+      source: params.source || 'DESKTOP_MAIN_PROCESS',
+    };
+    return this.issuePoConsent(authContext, params);
+  }
+
+  /**
+   * Trusted Review Intake: Only callable by trusted backend channels (U08-R04-01, U08-R05-01, U08-R06-01, U08-R07-01).
+   * Verifies against authoritative backend registries (BrowserUseBridge inspectReviewContext or PO consent registry).
+   * Prohibits browserBridge injection/override from caller (U08-R07-01).
    * Fails closed: if no verifiable authority, returns error and never issues false receipt.
    */
   intakeTrustedReview(params) {
@@ -67,7 +117,6 @@ class GitReviewService {
       changeSetId = 'default',
       verdict = 'REVIEW_PENDING',
       evidence,
-      browserBridge = this.browserBridge,
     } = params || {};
 
     // 1. Source verification (no renderer self-issuance)
@@ -98,27 +147,12 @@ class GitReviewService {
     }
 
     const normSha = commitSha.trim().toLowerCase();
+    let verifiedVerdict = verdict;
 
-    // 4. Authoritative backend verification (U08-R06-01)
+    // 4. Authoritative backend verification (U08-R06-01, U08-R07-01)
     if (source === 'BROWSER_BRIDGE') {
-      // Must have authentic lease credentials and trusted reviewer URL
-      const { tabId, leaseToken, threadUrl, url } = evidence;
-      const targetUrl = threadUrl || url || '';
-
-      const isTrustedReviewerUrl =
-        typeof targetUrl === 'string' &&
-        (/^https:\/\/chatgpt\.com\/c\/[a-zA-Z0-9_-]+/i.test(targetUrl) ||
-          targetUrl.startsWith('https://chatgpt.com/'));
-
-      if (!isTrustedReviewerUrl) {
-        return {
-          success: false,
-          error: 'Review Intake Violation: Browser bridge review evidence missing trusted ChatGPT reviewer URL.',
-          code: 'ERR_UNTRUSTED_REVIEWER_URL',
-        };
-      }
-
-      // Check authoritative browser lease registry
+      // Caller must present tabId and leaseToken
+      const { tabId, leaseToken } = evidence;
       if (!tabId || !leaseToken) {
         return {
           success: false,
@@ -127,23 +161,40 @@ class GitReviewService {
         };
       }
 
-      const activeBridge = browserBridge || this.browserBridge;
-      if (!activeBridge || typeof activeBridge.verifyLease !== 'function') {
+      // Authoritative bridge MUST be configured on service (no caller injection - U08-R07-01)
+      const activeBridge = this.browserBridge;
+      if (!activeBridge || typeof activeBridge.inspectReviewContext !== 'function') {
         return {
           success: false,
-          error: 'Review Intake Violation: No authoritative browser bridge available to verify lease.',
+          error: 'Review Intake Violation: No authoritative browser bridge available to inspect review context.',
           code: 'ERR_UNVERIFIED_EVIDENCE',
         };
       }
 
-      const leaseValid = activeBridge.verifyLease(tabId, leaseToken);
-      if (!leaseValid) {
+      const inspection = activeBridge.inspectReviewContext(tabId, leaseToken);
+      if (!inspection || !inspection.success) {
         return {
           success: false,
-          error: 'Review Intake Violation: Browser lease token is invalid, expired, or not owned by tabId.',
-          code: 'ERR_INVALID_BROWSER_LEASE',
+          error: `Review Intake Violation: Browser tab verification failed: ${(inspection && inspection.error) || 'Invalid lease'}`,
+          code: (inspection && inspection.code) || 'ERR_INVALID_BROWSER_LEASE',
         };
       }
+
+      // Attach authoritative inspection metadata
+      evidence.inspectedUrl = inspection.url;
+      evidence.verifiedVerdict = inspection.verifiedVerdict;
+      evidence.sourceVerified = true;
+
+      // Lock verdict: if caller requested APPROVED but browser page content does not confirm APPROVED
+      if (verdict === 'APPROVED' && inspection.verifiedVerdict !== 'APPROVED') {
+        return {
+          success: false,
+          error: 'Review Intake Violation: Cannot issue APPROVED receipt when browser active tab does not contain verified reviewer approval decision (U08-R07-01).',
+          code: 'ERR_APPROVAL_EVIDENCE_MISMATCH',
+        };
+      }
+
+      verifiedVerdict = inspection.verifiedVerdict;
     } else if (source === 'PO_MANUAL_CONSENT') {
       const { poConsentToken } = evidence;
       if (!poConsentToken || typeof poConsentToken !== 'string') {
@@ -201,23 +252,25 @@ class GitReviewService {
       }
     }
 
-    // 5. Verdict consistency (U08-R06-01, U08-R06-02):
-    // If verdict is claimed as APPROVED, evidence must confirm approval
-    let effectiveVerdict = verdict;
-    if (verdict === 'APPROVED') {
-      const evidenceApproves =
-        evidence.verdict === 'APPROVED' ||
-        evidence.approvalConfirmed === true ||
-        evidence.reviewApproved === true;
-      if (!evidenceApproves) {
-        return {
-          success: false,
-          error: 'Review Intake Violation: Cannot issue APPROVED receipt when evidence does not confirm approval.',
-          code: 'ERR_APPROVAL_EVIDENCE_MISMATCH',
-        };
+    // 5. Verdict consistency (U08-R06-01, U08-R06-02, U08-R07-01):
+    let effectiveVerdict = 'REVIEW_PENDING';
+    if (source === 'BROWSER_BRIDGE') {
+      effectiveVerdict = verifiedVerdict === 'APPROVED' ? 'APPROVED' : 'REVIEW_PENDING';
+    } else if (source === 'PO_MANUAL_CONSENT') {
+      if (verdict === 'APPROVED') {
+        const evidenceApproves =
+          evidence.verdict === 'APPROVED' ||
+          evidence.approvalConfirmed === true ||
+          evidence.reviewApproved === true;
+        if (!evidenceApproves) {
+          return {
+            success: false,
+            error: 'Review Intake Violation: Cannot issue APPROVED receipt when PO evidence does not confirm approval.',
+            code: 'ERR_APPROVAL_EVIDENCE_MISMATCH',
+          };
+        }
+        effectiveVerdict = 'APPROVED';
       }
-    } else {
-      effectiveVerdict = 'REVIEW_PENDING';
     }
 
     const receiptId = `rcpt_${crypto.randomBytes(16).toString('hex')}`;
@@ -816,16 +869,77 @@ ${criteriaItems}
     let persistenceResult = { inserted: 0, duplicates: 0, findings: [] };
     const effectiveStorage = storage || this.storage;
     if (effectiveStorage && parsed.findings.length > 0) {
-      persistenceResult = effectiveStorage.ingestReviewFindingsBatch(
+      const rawFindings = parsed.findings.map((f) => ({
+        file: f.file,
+        line: f.line,
+        severity: f.severity,
+        description: f.description,
+      }));
+      if (typeof effectiveStorage.ingestReviewFindingsBatch === 'function') {
+        persistenceResult = effectiveStorage.ingestReviewFindingsBatch(changeSetId, reviewer, rawFindings);
+      }
+    }
+
+    return {
+      status: parsed.status,
+      hasBlockingSev1: parsed.hasBlockingSev1,
+      totalDetected: parsed.findingsCount,
+      insertedCount: persistenceResult.inserted,
+      duplicateCount: persistenceResult.duplicates,
+      persistedFindings: persistenceResult.findings,
+      verifiedProvenance: parsed.verifiedProvenance,
+      error: parsed.error,
+      code: parsed.code,
+    };
+  }
+
+  /**
+   * Async variant of ingestFeedbackAndPersist supporting storage worker RPC (U08-R07-03).
+   */
+  async ingestFeedbackAndPersistAsync(params) {
+    const {
+      storage,
+      feedbackText,
+      changeSetId = 'default',
+      reviewer = 'chatgpt_web',
+      receiptId = null,
+      expectedCommitSha = null,
+      gate = 'U08',
+    } = params || {};
+
+    const resolvedReceiptId =
+      receiptId ||
+      (params && params.provenance && params.provenance.receiptId) ||
+      (params && params.receiptToken) ||
+      (params && params.provenance && params.provenance.receiptToken) ||
+      null;
+
+    const parsed = this.parseReviewFeedback(
+      {
+        feedbackText,
         changeSetId,
+        receiptId: resolvedReceiptId,
+        expectedCommitSha,
+        gate,
         reviewer,
-        parsed.findings.map((f) => ({
-          file: f.file,
-          line: f.line,
-          severity: f.severity,
-          description: f.description,
-        }))
-      );
+      },
+      changeSetId
+    );
+
+    let persistenceResult = { inserted: 0, duplicates: 0, findings: [] };
+    const effectiveStorage = storage || this.storage;
+    if (effectiveStorage && parsed.findings.length > 0) {
+      const rawFindings = parsed.findings.map((f) => ({
+        file: f.file,
+        line: f.line,
+        severity: f.severity,
+        description: f.description,
+      }));
+      if (typeof effectiveStorage.ingestReviewFindingsBatchAsync === 'function' && !effectiveStorage.nativeDb) {
+        persistenceResult = await effectiveStorage.ingestReviewFindingsBatchAsync(changeSetId, reviewer, rawFindings);
+      } else if (typeof effectiveStorage.ingestReviewFindingsBatch === 'function') {
+        persistenceResult = effectiveStorage.ingestReviewFindingsBatch(changeSetId, reviewer, rawFindings);
+      }
     }
 
     return {

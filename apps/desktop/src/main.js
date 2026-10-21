@@ -5820,7 +5820,7 @@ ipcMain.handle('union-bot:validate-push-execution', async (event, payload) => {
 ipcMain.handle('union-bot:parse-review-feedback', async (event, payload) => {
   if (!checkSenderAuthorized(event)) return { status: 'REVIEW_PENDING', findings: [] };
   try {
-    return gitReviewService.ingestFeedbackAndPersist({
+    return await gitReviewService.ingestFeedbackAndPersistAsync({
       storage,
       feedbackText: payload && payload.feedbackText,
       changeSetId: payload && payload.changeSetId,

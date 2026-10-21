@@ -36,6 +36,8 @@ class BrowserUseBridge {
 
     // Active controller leases by tabId: tabId -> { leaseToken, controllerId, expiresAt }
     this.controllerLeases = new Map();
+    // Authoritative runtime tab contexts: tabId -> { url, title, text, capturedAt }
+    this.tabContexts = new Map();
   }
 
   /**
@@ -122,6 +124,94 @@ class BrowserUseBridge {
       return false;
     }
     return existing.leaseToken === leaseToken;
+  }
+
+  /**
+   * Registers runtime tab context (URL, DOM content, title) captured by backend/browserManager (U08-R07-01).
+   */
+  registerTabContext(tabId, context = {}) {
+    if (!tabId) return false;
+    this.tabContexts.set(tabId, {
+      url: context.url || '',
+      title: context.title || '',
+      text: context.text || context.domText || '',
+      capturedAt: Date.now(),
+    });
+    return true;
+  }
+
+  /**
+   * Authoritatively inspects active tab for reviewer decision and provenance (U08-R07-01).
+   * Verifies lease ownership, validates trusted ChatGPT domain/path, and scans actual text for verdict.
+   */
+  inspectReviewContext(tabId, leaseToken) {
+    if (!this.verifyLease(tabId, leaseToken)) {
+      return {
+        success: false,
+        error: 'Invalid, expired, or unowned browser controller lease token.',
+        code: 'ERR_INVALID_BROWSER_LEASE',
+      };
+    }
+
+    // Retrieve active context from registered tab state or browserManager
+    let ctx = this.tabContexts.get(tabId);
+    if (!ctx && this.browserManager && typeof this.browserManager.getTabContext === 'function') {
+      ctx = this.browserManager.getTabContext(tabId);
+    }
+
+    if (!ctx) {
+      return {
+        success: false,
+        error: `No authoritative browser context found for tab '${tabId}'.`,
+        code: 'ERR_UNVERIFIED_EVIDENCE',
+      };
+    }
+
+    const tabUrl = String(ctx.url || '');
+    const isTrustedReviewerUrl =
+      (/^https:\/\/chatgpt\.com\/c\/[a-zA-Z0-9_-]+/i.test(tabUrl) ||
+        tabUrl.startsWith('https://chatgpt.com/'));
+
+    if (!isTrustedReviewerUrl) {
+      return {
+        success: false,
+        error: `Active tab URL '${tabUrl}' is not a trusted ChatGPT reviewer URL.`,
+        code: 'ERR_UNTRUSTED_REVIEWER_URL',
+      };
+    }
+
+    // Scan actual runtime page content for reviewer decision
+    const text = String(ctx.text || '');
+    const upperText = text.toUpperCase();
+
+    const hasChangesRequested =
+      upperText.includes('CHANGES_REQUESTED') ||
+      upperText.includes('FIX_REQUIRED') ||
+      upperText.includes('SEV1') ||
+      upperText.includes('NOT APPROVED');
+
+    const hasApproval =
+      upperText.includes('SOURCE_REVIEW_APPROVED') ||
+      upperText.includes('APPROVED — NEXT_GATE') ||
+      upperText.includes('OFFICIAL VERDICT: APPROVED') ||
+      upperText.includes('VERDICT: APPROVED');
+
+    let verifiedVerdict = 'REVIEW_PENDING';
+    if (hasChangesRequested) {
+      verifiedVerdict = 'CHANGES_REQUESTED';
+    } else if (hasApproval) {
+      verifiedVerdict = 'APPROVED';
+    }
+
+    return {
+      success: true,
+      tabId,
+      url: tabUrl,
+      verifiedVerdict,
+      hasBlockingFindings: hasChangesRequested,
+      sourceVerified: true,
+      capturedAt: ctx.capturedAt || Date.now(),
+    };
   }
 
   /**

@@ -701,6 +701,126 @@ function handleRequest(msg) {
         process.send({ id, result: { success: true } });
         break;
       }
+      // Phase V4 U08: Review Findings SQLite Persistence (UB-V4-U08, U08-R07-03)
+      case 'saveReviewFinding': {
+        const f = args.finding;
+        const nowIso = new Date(f.createdAt || Date.now()).toISOString();
+        db.prepare(`
+          INSERT OR REPLACE INTO review_findings (
+            id, change_set_id, reviewer, file, line, severity, description, reproduction, state, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(
+          f.id,
+          f.changeSetId,
+          f.reviewer,
+          f.file || '',
+          f.line || null,
+          f.severity || 'SEV2',
+          f.description || '',
+          f.reproduction || null,
+          f.state || 'OPEN',
+          nowIso
+        );
+        process.send({ id, result: { success: true, id: f.id } });
+        break;
+      }
+      case 'getReviewFindings': {
+        const { changeSetId, state } = args || {};
+        let query = 'SELECT * FROM review_findings WHERE 1=1';
+        const params = [];
+        if (changeSetId) {
+          query += ' AND change_set_id = ?';
+          params.push(changeSetId);
+        }
+        if (state) {
+          query += ' AND state = ?';
+          params.push(state);
+        }
+        query += ' ORDER BY created_at ASC, id ASC';
+        const rows = db.prepare(query).all(...params);
+        const mapped = rows.map((r) => ({
+          id: r.id,
+          changeSetId: r.change_set_id,
+          reviewer: r.reviewer,
+          file: r.file,
+          line: r.line,
+          severity: r.severity,
+          description: r.description,
+          reproduction: r.reproduction || undefined,
+          state: r.state,
+          createdAt: new Date(r.created_at).getTime(),
+        }));
+        process.send({ id, result: mapped });
+        break;
+      }
+      case 'updateReviewFindingState': {
+        const { id: findingId, state: newState } = args || {};
+        const res = db.prepare('UPDATE review_findings SET state = ? WHERE id = ?').run(newState, findingId);
+        process.send({ id, result: res.changes > 0 });
+        break;
+      }
+      case 'ingestReviewFindingsBatch': {
+        const { changeSetId, reviewer, rawFindings = [] } = args || {};
+        db.exec('BEGIN IMMEDIATE TRANSACTION;');
+        try {
+          const existingRows = db.prepare('SELECT file, line, severity, description FROM review_findings WHERE change_set_id = ?').all(changeSetId);
+          const existingKeySet = new Set(
+            existingRows.map((r) => `${r.file || ''}#${r.line || ''}#${r.severity}#${(r.description || '').trim()}`)
+          );
+
+          let inserted = 0;
+          let duplicates = 0;
+          const insertedFindings = [];
+          const insertStmt = db.prepare(`
+            INSERT INTO review_findings (id, change_set_id, reviewer, file, line, severity, description, reproduction, state, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `);
+
+          for (const raw of rawFindings) {
+            const key = `${raw.file || ''}#${raw.line || ''}#${raw.severity}#${(raw.description || '').trim()}`;
+            if (existingKeySet.has(key)) {
+              duplicates++;
+              continue;
+            }
+
+            const findingId = `rf_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+            const nowIso = new Date().toISOString();
+            insertStmt.run(
+              findingId,
+              changeSetId,
+              reviewer,
+              raw.file || '',
+              raw.line || null,
+              raw.severity || 'SEV2',
+              raw.description || '',
+              raw.reproduction || null,
+              'OPEN',
+              nowIso
+            );
+            existingKeySet.add(key);
+            insertedFindings.push({
+              id: findingId,
+              changeSetId,
+              reviewer,
+              file: raw.file || '',
+              line: raw.line || null,
+              severity: raw.severity || 'SEV2',
+              description: raw.description || '',
+              reproduction: raw.reproduction || null,
+              state: 'OPEN',
+              createdAt: new Date(nowIso).getTime(),
+            });
+            inserted++;
+          }
+
+          db.exec('COMMIT;');
+          process.send({ id, result: { inserted, duplicates, findings: insertedFindings } });
+        } catch (txErr) {
+          try { db.exec('ROLLBACK;'); } catch {}
+          throw txErr;
+        }
+        break;
+      }
       case 'close': {
         if (db) {
           try { db.close(); } catch {}
