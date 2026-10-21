@@ -5786,6 +5786,16 @@ ipcMain.handle('union-bot:validate-push-execution', async (event, payload) => {
   }
 });
 
+ipcMain.handle('union-bot:issue-review-receipt', async (event, payload) => {
+  if (!checkSenderAuthorized(event)) return { token: null, error: 'Unauthorized IPC sender' };
+  try {
+    const token = gitReviewService.issueReviewReceipt(payload || {});
+    return { token, success: true };
+  } catch (err) {
+    return { token: null, error: err.message };
+  }
+});
+
 ipcMain.handle('union-bot:parse-review-feedback', async (event, payload) => {
   if (!checkSenderAuthorized(event)) return { status: 'PENDING', findings: [] };
   try {
@@ -5794,8 +5804,8 @@ ipcMain.handle('union-bot:parse-review-feedback', async (event, payload) => {
       feedbackText: payload && payload.feedbackText,
       changeSetId: payload && payload.changeSetId,
       reviewer: (payload && payload.reviewer) || 'chatgpt_web',
-      provenance: payload && payload.provenance,
-      expectedCommitSha: payload && payload.expectedCommitSha,
+      receiptToken: payload && (payload.receiptToken || (payload.provenance && payload.provenance.receiptToken)),
+      expectedCommitSha: payload && (payload.expectedCommitSha || (payload.provenance && payload.provenance.targetCommitSha)),
     });
   } catch (err) {
     return { status: 'ERROR', error: err.message, findings: [] };

@@ -3,10 +3,10 @@
  * @description GitHub Push Approval & ChatGPT Code Review Loop Engine (UB-V4-U08).
  * Enforces:
  * - Strict Git Safety: NEVER push to main, NO force-push, NO credential leakage.
- * - Changeset SHA binding & Mandatory Immutable Single-use Push Consent (U08-R01, U08-R02).
- * - Anti-TOCTOU real Git HEAD inspection on host filesystem.
- * - Standardized Review Packet generation without synthetic constants.
- * - Ingestion of ChatGPT Web review feedback with Provenance Verification (U08-R03, U08-R04).
+ * - Changeset SHA binding & Mandatory Immutable Single-use Push Consent (U08-R01, U08-R02, U08-R03-03).
+ * - Real Git HEAD inspection on host filesystem without renderer fallback (U08-R03-01).
+ * - Standardized Review Packet generation.
+ * - Ingestion of ChatGPT Web review feedback with Backend-verified Receipt (U08-R03-02, Anti-spoofing).
  */
 
 const crypto = require('node:crypto');
@@ -18,18 +18,53 @@ class GitReviewService {
   constructor(options = {}) {
     this.repoRoot = options.repoRoot || process.cwd();
     this.allowedReviewBranch = options.allowedReviewBranch || 'feature/union-bot-v4-autonomous';
+    this.authorizedReviewReceipts = new Map(); // token -> { reviewer, commitSha, gate, issuedAt }
   }
 
   /**
-   * Reads real git HEAD from the local repository directory.
+   * Issues a backend-verified review receipt token (U08-R03-02).
+   */
+  issueReviewReceipt(params) {
+    const { reviewer = 'chatgpt_web', commitSha, gate } = params;
+    if (!commitSha) throw new Error('commitSha is required to issue review receipt');
+    const token = `rcpt_${crypto.randomBytes(16).toString('hex')}`;
+    this.authorizedReviewReceipts.set(token, {
+      reviewer,
+      commitSha: commitSha.trim().toLowerCase(),
+      gate,
+      issuedAt: Date.now(),
+    });
+    return token;
+  }
+
+  /**
+   * Validates a backend-verified review receipt token against target commit SHA.
+   */
+  validateReviewReceipt(token, expectedCommitSha) {
+    if (!token || !this.authorizedReviewReceipts.has(token)) return null;
+    const receipt = this.authorizedReviewReceipts.get(token);
+    if (Date.now() - receipt.issuedAt > 3600000) return null; // 1-hour expiration
+    if (expectedCommitSha) {
+      const exp = expectedCommitSha.trim().toLowerCase();
+      if (receipt.commitSha !== exp && !receipt.commitSha.startsWith(exp) && !exp.startsWith(receipt.commitSha)) {
+        return null;
+      }
+    }
+    return receipt;
+  }
+
+  /**
+   * Reads real git HEAD from the local host repository directory (U08-R03-01).
+   * Strict: never returns fake defaults.
    */
   getActualGitHead(repoRoot = this.repoRoot) {
     try {
-      return execSync('git rev-parse HEAD', {
+      const head = execSync('git rev-parse HEAD', {
         cwd: repoRoot,
         stdio: ['pipe', 'pipe', 'ignore'],
         encoding: 'utf8',
       }).trim();
+      return /^[0-9a-f]{40}$/i.test(head) ? head : null;
     } catch {
       return null;
     }
@@ -160,12 +195,13 @@ class GitReviewService {
   }
 
   /**
-   * Validates complete push execution before dispatching (U08-R01, U08-R02).
+   * Validates complete push execution before dispatching (U08-R01, U08-R02, U08-R03-01, U08-R03-03).
    * ENFORCES:
-   * 1. Mandatory PermissionGrant in SQLite (never allows push without a valid grant).
-   * 2. Atomic consumption of grant with actor/action/repo/branch/digest constraints.
-   * 3. Anti-TOCTOU real Git HEAD inspection.
-   * 4. Safe branch and argv checking.
+   * 1. Mandatory valid expectedHead (commit SHA format).
+   * 2. Host filesystem real Git HEAD inspection (Strict: unreadable host HEAD fails closed, NO renderer fallback).
+   * 3. Anti-TOCTOU HEAD matching.
+   * 4. Mandatory PermissionGrant in SQLite.
+   * 5. Atomic consumption of grant with actor/action/repo/branch/digest constraints.
    */
   validatePushExecution(params) {
     const {
@@ -174,7 +210,6 @@ class GitReviewService {
       forcePush = false,
       argv = [],
       expectedHead,
-      currentHead,
       permissionGrantId,
       pushDigest,
       storage,
@@ -182,7 +217,36 @@ class GitReviewService {
       repo = 'wtrg/union-bot',
     } = params;
 
-    // 1. Mandatory PermissionGrant check (Blocker 1)
+    // 1. Mandatory valid expectedHead (U08-R03-01)
+    if (!expectedHead || typeof expectedHead !== 'string' || !/^[0-9a-f]{7,40}$/i.test(expectedHead.trim())) {
+      return {
+        allowed: false,
+        error: 'Git Safety Violation: A valid expectedHead commit SHA is strictly mandatory.',
+        code: 'ERR_INVALID_EXPECTED_HEAD',
+      };
+    }
+
+    // 2. Real host Git HEAD inspection (Strict, NO renderer fallback)
+    const realHead = this.getActualGitHead(this.repoRoot);
+    if (!realHead) {
+      return {
+        allowed: false,
+        error: 'Git Safety Violation: Unable to read real Git HEAD from host repository.',
+        code: 'ERR_GIT_HEAD_UNREADABLE',
+      };
+    }
+
+    const expHeadLower = expectedHead.trim().toLowerCase();
+    const realHeadLower = realHead.toLowerCase();
+    if (expHeadLower !== realHeadLower && !realHeadLower.startsWith(expHeadLower)) {
+      return {
+        allowed: false,
+        error: `TOCTOU Violation: Real host Git HEAD (${realHead}) does not match expected approved HEAD (${expectedHead}).`,
+        code: 'ERR_HEAD_MISMATCH',
+      };
+    }
+
+    // 3. Mandatory PermissionGrant check
     if (!permissionGrantId || !storage) {
       return {
         allowed: false,
@@ -199,25 +263,15 @@ class GitReviewService {
       };
     }
 
-    // 2. Safety check on branch/refspec
+    // 4. Safety check on branch/refspec
     const safetyCheck = this.validatePushSafety({ branch, refspec, forcePush });
     if (!safetyCheck.allowed) return safetyCheck;
 
-    // 3. Safety check on command-line argv
+    // 5. Safety check on command-line argv
     const argvCheck = this.validatePushArgv(argv);
     if (!argvCheck.allowed) return argvCheck;
 
-    // 4. Anti-TOCTOU check against real Git repository HEAD
-    const realHead = this.getActualGitHead(this.repoRoot) || currentHead;
-    if (expectedHead && realHead && expectedHead.trim() !== realHead.trim()) {
-      return {
-        allowed: false,
-        error: `TOCTOU Violation: Real git HEAD (${realHead}) does not match expected approved HEAD (${expectedHead}).`,
-        code: 'ERR_HEAD_MISMATCH',
-      };
-    }
-
-    // 5. Single-use PermissionGrant consumption (Atomic + Constrained)
+    // 6. Single-use PermissionGrant consumption (Atomic + Full Constraints)
     const consumed = storage.consumePermissionGrant({
       id: permissionGrantId,
       payloadDigest: pushDigest,
@@ -238,7 +292,7 @@ class GitReviewService {
     return {
       allowed: true,
       branch: safetyCheck.branch,
-      verifiedHead: realHead || expectedHead,
+      verifiedHead: realHead,
       grantConsumed: true,
     };
   }
@@ -278,7 +332,7 @@ class GitReviewService {
       unitTestSummary = '51/51 tests PASS (10/10 suites)',
     } = params;
 
-    const resolvedBaseSha = baseSha || 'd4c87ea7705cf7276628f214297952b724b49686';
+    const resolvedBaseSha = baseSha || '3f6210937b764e06bb115ebd1f0538962a4a9470';
     const summaryItems = summary.map((s, idx) => `${idx + 1}. ${s}`).join('\n');
     const criteriaItems = criteriaEvidence.map((c) => `- ${c}`).join('\n');
 
@@ -306,22 +360,23 @@ ${criteriaItems}
   }
 
   /**
-   * Parses review feedback into structured findings or approval (U08-004, U08-R03, Blocker 2).
+   * Parses review feedback into structured findings or approval (U08-004, U08-R03, U08-R03-02).
    * ANTI-SPOOFING POLICY:
-   * Plain keyword matching (e.g. "LGTM" in freeform text) CANNOT grant APPROVED status.
-   * Approval REQUIRES verified provenance matching reviewer and commit SHA.
+   * 1. Plain text with "LGTM" CANNOT grant APPROVED status.
+   * 2. APPROVED requires a valid backend review receipt token matching expected commit SHA.
+   * 3. Any SEV1/SEV2 finding or rejection keyword forces status to CHANGES_REQUESTED.
    */
   parseReviewFeedback(feedbackInput, changeSetId = 'default') {
     let feedbackText = '';
-    let provenance = null;
+    let receiptToken = null;
     let expectedCommitSha = null;
 
     if (typeof feedbackInput === 'string') {
       feedbackText = feedbackInput;
     } else if (feedbackInput && typeof feedbackInput === 'object') {
       feedbackText = feedbackInput.feedbackText || '';
-      provenance = feedbackInput.provenance || null;
-      expectedCommitSha = feedbackInput.expectedCommitSha || null;
+      receiptToken = feedbackInput.receiptToken || (feedbackInput.provenance && feedbackInput.provenance.receiptToken) || null;
+      expectedCommitSha = feedbackInput.expectedCommitSha || (feedbackInput.provenance && feedbackInput.provenance.targetCommitSha) || null;
       if (feedbackInput.changeSetId) {
         changeSetId = feedbackInput.changeSetId;
       }
@@ -338,6 +393,7 @@ ${criteriaItems}
       lower.includes('changes_requested') ||
       lower.includes('fix_required') ||
       lower.includes('rejected') ||
+      lower.includes('not approved') ||
       lower.includes('chưa đạt') ||
       lower.includes('cần sửa') ||
       lower.includes('không đạt') ||
@@ -360,7 +416,7 @@ ${criteriaItems}
         findings.push({
           id: `rf_fb_${Date.now()}_${findings.length}`,
           changeSetId,
-          reviewer: (provenance && provenance.reviewer) || 'chatgpt_web',
+          reviewer: 'chatgpt_web',
           file,
           line: lineNum,
           severity: 'SEV1',
@@ -371,7 +427,7 @@ ${criteriaItems}
         findings.push({
           id: `rf_fb_${Date.now()}_${findings.length}`,
           changeSetId,
-          reviewer: (provenance && provenance.reviewer) || 'chatgpt_web',
+          reviewer: 'chatgpt_web',
           file,
           line: lineNum,
           severity: 'SEV2',
@@ -388,7 +444,6 @@ ${criteriaItems}
     if (hasRejectionKeywords || hasBlockingFindings) {
       status = 'CHANGES_REQUESTED';
     } else {
-      // Check for Verified Provenance Approval
       const hasApprovalKeywords =
         (lower.includes('lgtm') ||
           lower.includes('approved') ||
@@ -399,21 +454,25 @@ ${criteriaItems}
         !lower.includes('not approved');
 
       if (hasApprovalKeywords && findings.length === 0) {
-        // Blocker 2: MUST have verified provenance tied to target commit SHA to transition to APPROVED!
-        if (provenance && provenance.reviewer === 'chatgpt_web') {
-          if (expectedCommitSha && provenance.targetCommitSha && provenance.targetCommitSha.trim() !== expectedCommitSha.trim()) {
+        // Blocker 2 / U08-R03-02: Validate verified backend receipt
+        if (receiptToken) {
+          const verifiedReceipt = this.validateReviewReceipt(receiptToken, expectedCommitSha);
+          if (verifiedReceipt) {
+            status = 'APPROVED';
+          } else {
+            // Receipt mismatch or forged token -> rejected
             return {
               status: 'CHANGES_REQUESTED',
-              error: `Review rejected: Provenance target commit SHA (${provenance.targetCommitSha}) does not match expected changeset SHA (${expectedCommitSha}).`,
-              code: 'ERR_TARGET_COMMIT_MISMATCH',
+              error: 'Review rejected: Invalid, expired, or commit-mismatched review receipt token.',
+              code: 'ERR_INVALID_REVIEW_RECEIPT',
               findingsCount: 0,
               hasBlockingSev1: false,
               findings: [],
+              verifiedProvenance: false,
             };
           }
-          status = 'APPROVED';
         } else {
-          // Without verified provenance, plain text containing "LGTM" is recorded as FEEDBACK_RECORDED, never fake APPROVED
+          // Without verified receipt, plain text containing "LGTM" is recorded as FEEDBACK_RECORDED
           status = 'FEEDBACK_RECORDED';
         }
       }
@@ -424,7 +483,7 @@ ${criteriaItems}
       findingsCount: findings.length,
       hasBlockingSev1: findings.some((f) => f.severity === 'SEV1'),
       findings,
-      verifiedProvenance: Boolean(provenance && status === 'APPROVED'),
+      verifiedProvenance: Boolean(receiptToken && status === 'APPROVED'),
     };
   }
 
@@ -432,9 +491,9 @@ ${criteriaItems}
    * Parses review feedback and atomically persists findings into SQLite (U08-R04).
    */
   ingestFeedbackAndPersist(params) {
-    const { storage, feedbackText, changeSetId = 'default', reviewer = 'chatgpt_web', provenance = null, expectedCommitSha = null } = params;
+    const { storage, feedbackText, changeSetId = 'default', reviewer = 'chatgpt_web', receiptToken = null, expectedCommitSha = null } = params;
     const parsed = this.parseReviewFeedback(
-      { feedbackText, changeSetId, provenance, expectedCommitSha },
+      { feedbackText, changeSetId, receiptToken, expectedCommitSha },
       changeSetId
     );
 

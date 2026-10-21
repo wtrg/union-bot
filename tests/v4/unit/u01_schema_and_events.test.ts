@@ -166,15 +166,36 @@ describe('UB-V4-U01: Core Schemas, Event Authority & Database Operations', () =>
     });
 
     // Mismatched digest cannot consume grant
-    const badConsume = storage.consumePermissionGrant('grant-push-1', '0000000000000000000000000000000000000000000000000000000000000000');
+    const badConsume = storage.consumePermissionGrant({
+      id: 'grant-push-1',
+      payloadDigest: '0000000000000000000000000000000000000000000000000000000000000000',
+      actor: 'antigravity',
+      action: 'GIT_PUSH',
+      repo: 'wtrg/union-bot',
+      branch: 'feature/union-bot-v4-autonomous',
+    });
     assert.equal(badConsume, false);
 
     // Matching digest consumes grant
-    const firstConsume = storage.consumePermissionGrant('grant-push-1', digest);
+    const firstConsume = storage.consumePermissionGrant({
+      id: 'grant-push-1',
+      payloadDigest: digest,
+      actor: 'antigravity',
+      action: 'GIT_PUSH',
+      repo: 'wtrg/union-bot',
+      branch: 'feature/union-bot-v4-autonomous',
+    });
     assert.equal(firstConsume, true);
 
     // Replay attack: cannot consume again
-    const replayConsume = storage.consumePermissionGrant('grant-push-1', digest);
+    const replayConsume = storage.consumePermissionGrant({
+      id: 'grant-push-1',
+      payloadDigest: digest,
+      actor: 'antigravity',
+      action: 'GIT_PUSH',
+      repo: 'wtrg/union-bot',
+      branch: 'feature/union-bot-v4-autonomous',
+    });
     assert.equal(replayConsume, false);
   });
 });

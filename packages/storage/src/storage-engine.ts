@@ -561,9 +561,10 @@ export class StorageEngine {
     idOrParams: string | { id: string; payloadDigest: string; actor?: string; action?: string; repo?: string; branch?: string },
     legacyDigest?: string
   ): boolean {
-    const id = typeof idOrParams === 'string' ? idOrParams : idOrParams.id;
-    const payloadDigest = typeof idOrParams === 'string' ? legacyDigest || '' : idOrParams.payloadDigest;
-    const constraints: any = typeof idOrParams === 'object' ? idOrParams : {};
+    const isObjectCall = typeof idOrParams === 'object';
+    const id = isObjectCall ? idOrParams.id : idOrParams;
+    const payloadDigest = isObjectCall ? idOrParams.payloadDigest : legacyDigest || '';
+    const constraints: any = isObjectCall ? idOrParams : null;
 
     const grant = this.db.prepare('SELECT * FROM permission_grants WHERE id = ?').get(id) as any;
     if (!grant) return false;
@@ -571,11 +572,25 @@ export class StorageEngine {
     if (grant.payload_digest.toLowerCase() !== payloadDigest.toLowerCase()) return false;
     if (new Date(grant.expires_at).getTime() < Date.now()) return false;
 
-    // Check authority constraints (actor, action, repo, branch)
-    if (constraints.actor && grant.actor !== constraints.actor) return false;
-    if (constraints.action && grant.action !== constraints.action) return false;
-    if (constraints.repo && grant.repo && grant.repo.toLowerCase() !== constraints.repo.toLowerCase()) return false;
-    if (constraints.branch && grant.branch && grant.branch.toLowerCase() !== constraints.branch.toLowerCase()) return false;
+    // STRICT FAIL-CLOSED POLICY FOR GIT_PUSH (U08-R03-03):
+    if (grant.action === 'GIT_PUSH') {
+      // 1. Calling consumePermissionGrant for GIT_PUSH without full constraints is strictly prohibited
+      if (!constraints) return false;
+
+      // 2. Grant must have non-empty repo, branch, and actor in database
+      if (!grant.repo || !grant.branch || !grant.actor) return false;
+
+      // 3. Strict equality matching (case-insensitive for repo/branch)
+      if (grant.actor !== constraints.actor) return false;
+      if (grant.action !== constraints.action) return false;
+      if (grant.repo.trim().toLowerCase() !== (constraints.repo || '').trim().toLowerCase()) return false;
+      if (grant.branch.trim().toLowerCase() !== (constraints.branch || '').trim().toLowerCase()) return false;
+    } else if (constraints) {
+      if (constraints.actor && grant.actor !== constraints.actor) return false;
+      if (constraints.action && grant.action !== constraints.action) return false;
+      if (constraints.repo && grant.repo && grant.repo.toLowerCase() !== constraints.repo.toLowerCase()) return false;
+      if (constraints.branch && grant.branch && grant.branch.toLowerCase() !== constraints.branch.toLowerCase()) return false;
+    }
 
     const res = this.db.prepare('UPDATE permission_grants SET used = 1 WHERE id = ? AND used = 0').run(id);
     return res.changes > 0;

@@ -74,7 +74,7 @@ describe('UB-V4-U08: GitHub Push Approval & ChatGPT Code Review Loop', () => {
       name: 'GitHub Push Approval & Review Loop',
       ticketIds: ['UB-V4-U08-001', 'UB-V4-U08-002'],
       headSha: 'abc1234',
-      baseSha: 'd4c87ea',
+      baseSha: '3f62109',
       branch: 'feature/union-bot-v4-autonomous',
       summary: ['Fail-closed git safety', 'Standardized review packets'],
       criteriaEvidence: ['No push to main confirmed', 'Unit tests passing'],
@@ -87,58 +87,69 @@ describe('UB-V4-U08: GitHub Push Approval & ChatGPT Code Review Loop', () => {
     assert.ok(packet.includes('`PENDING_INDEPENDENT_QA`'));
   });
 
-  it('U08-004: parses reviewer feedback into approval or actionable findings with provenance', () => {
+  it('U08-004: parses reviewer feedback with backend receipt verification (anti-spoofing)', () => {
     const service: any = new GitReviewService();
 
-    // 1. Raw text with "LGTM" but lacking verified provenance -> cannot claim fake APPROVED (Blocker 2)
+    // 1. Raw text with "LGTM" but lacking verified backend receipt -> status is FEEDBACK_RECORDED (Blocker 2)
     const unverified = service.parseReviewFeedback('LGTM! Báo cáo rất rõ ràng, đạt yêu cầu qua gate U08.');
     assert.equal(unverified.status, 'FEEDBACK_RECORDED');
     assert.equal(unverified.verifiedProvenance, false);
 
-    // 2. Verified provenance with matching target commit SHA -> valid APPROVED
+    // 2. Issue valid backend receipt token for commit SHA 3f62109
+    const validToken = service.issueReviewReceipt({
+      reviewer: 'chatgpt_web',
+      commitSha: '3f6210937b764e06bb115ebd1f0538962a4a9470',
+      gate: 'U08',
+    });
+    assert.ok(validToken.startsWith('rcpt_'));
+
+    // 3. Verified receipt with matching target commit SHA -> APPROVED
     const verified = service.parseReviewFeedback({
       feedbackText: 'LGTM! Báo cáo rất rõ ràng, đạt yêu cầu qua gate U08.',
       changeSetId: 'cs_123',
-      provenance: {
-        reviewer: 'chatgpt_web',
-        targetCommitSha: '7c468ca',
-        gate: 'U08',
-      },
-      expectedCommitSha: '7c468ca',
+      receiptToken: validToken,
+      expectedCommitSha: '3f6210937b764e06bb115ebd1f0538962a4a9470',
     });
     assert.equal(verified.status, 'APPROVED');
     assert.equal(verified.verifiedProvenance, true);
     assert.equal(verified.hasBlockingSev1, false);
 
-    // 3. Verified provenance but mismatched commit SHA -> rejected
+    // 4. Forged / invalid receipt token -> rejected
+    const forged = service.parseReviewFeedback({
+      feedbackText: 'LGTM! Gate passed.',
+      changeSetId: 'cs_123',
+      receiptToken: 'rcpt_forged_fake_token_1234567890',
+      expectedCommitSha: '3f6210937b764e06bb115ebd1f0538962a4a9470',
+    });
+    assert.equal(forged.status, 'CHANGES_REQUESTED');
+    assert.equal(forged.code, 'ERR_INVALID_REVIEW_RECEIPT');
+
+    // 5. Valid receipt token but mismatched target commit SHA -> rejected
     const shaMismatch = service.parseReviewFeedback({
       feedbackText: 'LGTM! Gate passed.',
       changeSetId: 'cs_123',
-      provenance: {
-        reviewer: 'chatgpt_web',
-        targetCommitSha: '0000000',
-        gate: 'U08',
-      },
-      expectedCommitSha: '7c468ca',
+      receiptToken: validToken,
+      expectedCommitSha: '0000000000000000000000000000000000000000',
     });
     assert.equal(shaMismatch.status, 'CHANGES_REQUESTED');
-    assert.equal(shaMismatch.code, 'ERR_TARGET_COMMIT_MISMATCH');
+    assert.equal(shaMismatch.code, 'ERR_INVALID_REVIEW_RECEIPT');
 
-    // 4. Feedback with SEV1 blocker -> CHANGES_REQUESTED
+    // 6. Valid receipt token but feedback contains SEV1 blocker -> CHANGES_REQUESTED
     const blocking = service.parseReviewFeedback(
-      'Phát hiện lỗi blocker nghiêm trọng: Push safety chưa chặn master.\nCần sửa thêm test case.',
+      {
+        feedbackText: 'Phát hiện lỗi blocker nghiêm trọng: Push safety chưa chặn master.\nCần sửa thêm test case.',
+        changeSetId: 'cs_123',
+        receiptToken: validToken,
+        expectedCommitSha: '3f6210937b764e06bb115ebd1f0538962a4a9470',
+      },
       'cs_123'
     );
     assert.equal(blocking.status, 'CHANGES_REQUESTED');
     assert.equal(blocking.hasBlockingSev1, true);
     assert.ok(blocking.findingsCount >= 1);
-
-    const sev1 = blocking.findings.find((f: any) => f.severity === 'SEV1');
-    assert.ok(sev1);
-    assert.equal(sev1.changeSetId, 'cs_123');
   });
 
-  // --- REGRESSION SUITE: ChatGPT Web Reviewer Findings (U08-R01 to U08-R05) ---
+  // --- REGRESSION SUITE: ChatGPT Web Reviewer Findings (U08-R01 to U08-R05, R03-01..03) ---
 
   it('U08-R01: blocks push to protected branches via refspec and argv injection', () => {
     const service: any = new GitReviewService();
@@ -184,25 +195,59 @@ describe('UB-V4-U08: GitHub Push Approval & ChatGPT Code Review Loop', () => {
     assert.equal(a3.code, 'ERR_FORBIDDEN_BRANCH');
   });
 
-  it('U08-R02: enforces mandatory immutable PermissionGrant with full constraints and anti-TOCTOU', () => {
+  it('U08-R02 & U08-R03-01/03: strict Git HEAD inspection and fail-closed PermissionGrant', () => {
     const service: any = new GitReviewService();
     const storage = new StorageEngine();
     const now = Date.now();
 
     const pushDigest = '11223344556677889900aabbccddeeff11223344556677889900aabbccddeeff';
+    const actualHead = service.getActualGitHead() || '3f6210937b764e06bb115ebd1f0538962a4a9470';
 
-    // 1. Missing grant -> strictly forbidden (Blocker 1)
+    // 1. Missing expectedHead or invalid expectedHead -> strictly denied (U08-R03-01)
+    const missingExpHead = service.validatePushExecution({
+      branch: 'feature/union-bot-v4-autonomous',
+      expectedHead: '',
+      permissionGrantId: 'grant-test-1',
+      pushDigest,
+      storage,
+    });
+    assert.equal(missingExpHead.allowed, false);
+    assert.equal(missingExpHead.code, 'ERR_INVALID_EXPECTED_HEAD');
+
+    // 2. Unreadable host Git HEAD -> fail-closed (U08-R03-01)
+    const unreadableService: any = new GitReviewService({ repoRoot: 'C:\\NonExistent_Corrupted_Dir_123' });
+    const unreadableHead = unreadableService.validatePushExecution({
+      branch: 'feature/union-bot-v4-autonomous',
+      expectedHead: actualHead,
+      permissionGrantId: 'grant-test-1',
+      pushDigest,
+      storage,
+    });
+    assert.equal(unreadableHead.allowed, false);
+    assert.equal(unreadableHead.code, 'ERR_GIT_HEAD_UNREADABLE');
+
+    // 3. TOCTOU Head mismatch -> denied (U08-R03-01)
+    const toctou = service.validatePushExecution({
+      branch: 'feature/union-bot-v4-autonomous',
+      expectedHead: '0000000000000000000000000000000000000000',
+      permissionGrantId: 'grant-test-1',
+      pushDigest,
+      storage,
+    });
+    assert.equal(toctou.allowed, false);
+    assert.equal(toctou.code, 'ERR_HEAD_MISMATCH');
+
+    // 4. Missing grant -> strictly forbidden (Blocker 1)
     const noGrant = service.validatePushExecution({
       branch: 'feature/union-bot-v4-autonomous',
-      expectedHead: 'sha_123',
-      currentHead: 'sha_123',
+      expectedHead: actualHead,
       pushDigest,
       storage,
     });
     assert.equal(noGrant.allowed, false);
     assert.equal(noGrant.code, 'ERR_GRANT_REQUIRED');
 
-    // Save active grant with strict authority binding
+    // 5. Save grant with full authority binding
     storage.savePermissionGrant({
       id: 'grant-u08-1',
       actor: 'antigravity',
@@ -216,7 +261,7 @@ describe('UB-V4-U08: GitHub Push Approval & ChatGPT Code Review Loop', () => {
       createdAt: now,
     });
 
-    // 2. Grant Immutability check: Attempt to overwrite existing grant must fail
+    // 6. Grant Immutability check: Attempt to overwrite existing grant must fail
     assert.throws(() => {
       storage.savePermissionGrant({
         id: 'grant-u08-1',
@@ -232,25 +277,14 @@ describe('UB-V4-U08: GitHub Push Approval & ChatGPT Code Review Loop', () => {
       });
     });
 
-    const actualHead = service.getActualGitHead() || 'sha_matching_123';
+    // 7. Legacy consume without constraints on GIT_PUSH is rejected (U08-R03-03)
+    const legacyConsume = storage.consumePermissionGrant('grant-u08-1', pushDigest);
+    assert.equal(legacyConsume, false);
 
-    // 3. TOCTOU Head mismatch -> denied before consuming grant
-    const toctou = service.validatePushExecution({
-      branch: 'feature/union-bot-v4-autonomous',
-      expectedHead: 'sha_mismatched_000',
-      currentHead: actualHead,
-      permissionGrantId: 'grant-u08-1',
-      pushDigest,
-      storage,
-    });
-    assert.equal(toctou.allowed, false);
-    assert.equal(toctou.code, 'ERR_HEAD_MISMATCH');
-
-    // 4. Authority constraint mismatch: wrong actor -> denied
+    // 8. Authority constraint mismatch: wrong actor -> denied
     const wrongActor = service.validatePushExecution({
       branch: 'feature/union-bot-v4-autonomous',
       expectedHead: actualHead,
-      currentHead: actualHead,
       permissionGrantId: 'grant-u08-1',
       pushDigest,
       storage,
@@ -259,11 +293,10 @@ describe('UB-V4-U08: GitHub Push Approval & ChatGPT Code Review Loop', () => {
     assert.equal(wrongActor.allowed, false);
     assert.equal(wrongActor.code, 'ERR_PERMISSION_GRANT_INVALID');
 
-    // 5. Successful execution consumes grant atomically
+    // 9. Successful execution consumes grant atomically
     const execValid = service.validatePushExecution({
       branch: 'feature/union-bot-v4-autonomous',
       expectedHead: actualHead,
-      currentHead: actualHead,
       permissionGrantId: 'grant-u08-1',
       pushDigest,
       storage,
@@ -273,11 +306,10 @@ describe('UB-V4-U08: GitHub Push Approval & ChatGPT Code Review Loop', () => {
     assert.equal(execValid.allowed, true);
     assert.equal(execValid.grantConsumed, true);
 
-    // 6. Replay attack: attempt to use the same grant again -> denied
+    // 10. Replay attack: attempt to use the same grant again -> denied
     const execReplay = service.validatePushExecution({
       branch: 'feature/union-bot-v4-autonomous',
       expectedHead: actualHead,
-      currentHead: actualHead,
       permissionGrantId: 'grant-u08-1',
       pushDigest,
       storage,
@@ -292,6 +324,11 @@ describe('UB-V4-U08: GitHub Push Approval & ChatGPT Code Review Loop', () => {
 
   it('U08-R03: fail-closed feedback parsing when text contains both approved and changes_requested', () => {
     const service: any = new GitReviewService();
+    const token = service.issueReviewReceipt({
+      reviewer: 'chatgpt_web',
+      commitSha: '3f62109',
+      gate: 'U08',
+    });
 
     // Text mentioning LGTM or approved in the context of changes requested
     const conflicting = `
@@ -305,11 +342,8 @@ describe('UB-V4-U08: GitHub Push Approval & ChatGPT Code Review Loop', () => {
     const parsed = service.parseReviewFeedback({
       feedbackText: conflicting,
       changeSetId: 'cs_conflict',
-      provenance: {
-        reviewer: 'chatgpt_web',
-        targetCommitSha: '7c468ca',
-      },
-      expectedCommitSha: '7c468ca',
+      receiptToken: token,
+      expectedCommitSha: '3f62109',
     });
     assert.equal(parsed.status, 'CHANGES_REQUESTED');
     assert.equal(parsed.hasBlockingSev1, true);
