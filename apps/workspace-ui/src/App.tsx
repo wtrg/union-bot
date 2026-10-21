@@ -41,7 +41,7 @@ const DEFAULT_ROOMS: RoomDef[] = [
 ];
 
 const INITIAL_CHECKLIST: ChecklistItem[] = [
-  { id: 'ck-1', text: 'Khung Chat Nhóm 70% màn hình chữ 12.5px gọn đẹp', done: true },
+  { id: 'ck-1', text: 'Khung Chat Nhóm 70% màn hình chữ 13px thoáng đẹp', done: true },
   { id: 'ck-2', text: 'Khung Đảo Hoa Lam 3D riêng biệt không bị che khuất', done: true },
   { id: 'ck-3', text: 'Bảng Tác Vụ & Checklist thu gọn mở rộng 100% 3D', done: true },
   { id: 'ck-4', text: 'Kết nối trực tiếp Hội Đồng 6 AI qua Electron IPC', done: true },
@@ -113,7 +113,7 @@ export const App: React.FC = () => {
   // Layout & Theme State
   const [layoutRatio, setLayoutRatio] = useState<'70' | '85' | '100' | 'garden'>('70');
   const [isDayTheme, setIsDayTheme] = useState<boolean>(false);
-  const [chatFontSize, setChatFontSize] = useState<number>(12.5);
+  const [chatFontSize, setChatFontSize] = useState<number>(13);
   const [focusedAgent, setFocusedAgent] = useState<string | null>(null);
   const [isMobileTaskOpen, setIsMobileTaskOpen] = useState<boolean>(false);
   const [isBrowserOpen, setIsBrowserOpen] = useState<boolean>(false);
@@ -140,8 +140,8 @@ export const App: React.FC = () => {
         id: 'welcome-001',
         sender: 'ChatGPT',
         time: formatTime(Date.now()),
-        text: 'Chào **Commander**! 💙 Hệ thống **Union Bot** đã sẵn sàng.\n• Gửi tin nhắn bất kỳ để bắt đầu phối hợp.\n• Nhập `@ChatGPT`, `@Antigravity`, `@Codex`, `@Gemini`, `@Claude`, `@DeepSeek` để chỉ định AI.\n• Bấm nút **`🌐 Web AI`** trên thanh tiêu đề nếu bạn muốn đăng nhập trực tiếp tài khoản ChatGPT / Claude / Gemini Web.',
-        reactions: { '💙': 5, '⚡': 3 },
+        text: 'Chào **Commander**! 💙 Hệ thống **Union Bot** đã sẵn sàng phối hợp.\n• Nhập tin nhắn bất kỳ để thảo luận và giao việc.\n• Gõ `@ChatGPT`, `@Antigravity`, `@Codex`, `@Gemini`, `@Claude`, `@DeepSeek` để gọi đích danh AI.\n• Bấm nút **`🌐 Web AI`** trên thanh tiêu đề để đăng nhập tài khoản ChatGPT / Claude / Gemini Web của bạn.',
+        reactions: { '💙': 3 },
       },
     ],
   });
@@ -149,9 +149,9 @@ export const App: React.FC = () => {
   const [botTasks, setBotTasks] = useState<BotTask[]>([
     {
       id: 'TASK-01',
-      title: 'Đồng bộ Hội Đồng 6 AI & Khung chat 70% Sora Blue',
+      title: 'Đồng bộ Hội Đồng 6 AI & Tối ưu bố cục khung chat thoáng đẹp',
       agent: 'Codex',
-      progress: 85,
+      progress: 90,
       status: 'RUNNING',
     },
     {
@@ -189,7 +189,6 @@ export const App: React.FC = () => {
   useEffect(() => {
     if (!isDesktop || !window.unionBotAPI) return;
 
-    // Load initial room history from SQLite
     window.unionBotAPI
       .getRoomHistory(activeRoom)
       .then((history: EnvelopeView[]) => {
@@ -203,13 +202,11 @@ export const App: React.FC = () => {
       })
       .catch((err: any) => console.error('[App] getRoomHistory error:', err));
 
-    // Listen to real-time streamed or completed envelopes
     const unsubscribe = window.unionBotAPI.onEnvelopeReceived((env: EnvelopeView) => {
       if (!env || !env.roomId) return;
       const targetRoom = env.roomId;
       const newMsg = envelopeToChatMessage(env);
 
-      // Typing animation state for the sender
       if (newMsg.sender !== 'Commander') {
         const envStatus = (env as any).status || env.delivery?.state;
         const isStreaming = envStatus === 'streaming' || envStatus === 'sending';
@@ -222,7 +219,6 @@ export const App: React.FC = () => {
             return next;
           });
         }
-        // Trigger 3D Mochi bounce
         islandRef.current?.triggerHappyBounce(newMsg.sender, isStreaming ? 'Đang trả lời... ⚡' : 'Đã phản hồi! 💙');
       }
 
@@ -276,7 +272,7 @@ export const App: React.FC = () => {
 
   // Font size synchronization
   const handleFontSizeChange = (val: number) => {
-    const clamped = Math.max(11, Math.min(15, Math.round(val * 2) / 2));
+    const clamped = Math.max(11, Math.min(16, Math.round(val * 2) / 2));
     setChatFontSize(clamped);
     document.documentElement.style.setProperty('--chat-font-size', `${clamped}px`);
   };
@@ -494,14 +490,12 @@ export const App: React.FC = () => {
       parts: [{ kind: 'text', text }],
     };
 
-    // Render user message immediately
     const userChatMsg = envelopeToChatMessage(userEnvelope);
     setRoomMessages((prev) => {
       const list = prev[activeRoom] || [];
       return { ...prev, [activeRoom]: [...list, userChatMsg] };
     });
 
-    // Animate all mochis when commander issues command
     AGENT_IDS.forEach((id) => islandRef.current?.triggerHappyBounce(id, 'Nhận lệnh! ⚡'));
 
     if (isDesktop && window.unionBotAPI?.sendGroupMessage) {
@@ -510,7 +504,6 @@ export const App: React.FC = () => {
         if (!res || !res.success) {
           const errText = res?.error || 'Lỗi IPC không xác định';
           showToast(`⚠️ ${errText}`);
-          // Add system feedback note
           setRoomMessages((prev) => ({
             ...prev,
             [activeRoom]: [
@@ -531,7 +524,6 @@ export const App: React.FC = () => {
         setIsSending(false);
       }
     } else {
-      // Standalone web preview warning
       setTimeout(() => {
         setRoomMessages((prev) => ({
           ...prev,
@@ -578,7 +570,7 @@ export const App: React.FC = () => {
           sender: 'ChatGPT',
           time: formatTime(Date.now()),
           text: `💙 Đã làm mới giao diện phòng **${activeRoom}**! Khung chat 70% cỡ chữ \`${chatFontSize}px\` đã sẵn sàng.`,
-          reactions: { '💙': 4, '✅': 3 },
+          reactions: { '💙': 1 },
         },
       ],
     }));
@@ -598,50 +590,78 @@ export const App: React.FC = () => {
       const randomId = AGENT_IDS[Math.floor(Math.random() * AGENT_IDS.length)];
       const phrases = [
         'Sẵn sàng nhận lệnh! ⚡',
-        'Chat 70% chữ 12.5px! 💙',
+        'Khung chat thoáng đẹp! 💙',
         'wtrg/union-bot 60FPS! 💎',
         'Bấm mình để giao việc! 📋',
       ];
       const pick = phrases[Math.floor(Math.random() * phrases.length)];
       islandRef.current?.triggerHappyBounce(randomId, pick);
-    }, 7500);
+    }, 9000);
 
     return () => clearInterval(timer);
   }, []);
 
-  // Format message text with markdown code blocks, bold, task links, mentions
+  // HIGH-READABILITY STRUCTURED PROSE FORMATTER
   const renderFormattedText = (raw: string) => {
     const codeBlocks: string[] = [];
     let text = String(raw).replace(/```(\w+)?\n([\s\S]*?)```/g, (_, lang, code) => {
       const idx = codeBlocks.length;
       const clean = code.trim();
       const encoded = encodeURIComponent(clean);
+      const lineCount = clean.split('\n').length;
       codeBlocks.push(
-        `<div class="my-1.5 rounded-xl overflow-hidden border border-sky-400/30 bg-[#040B1A]/95 font-mono text-[11px] text-sky-100 shadow-inner">
-          <div class="flex items-center justify-between px-2.5 py-0.5 bg-sky-500/10 border-b border-sky-400/20 text-[9.5px]">
-            <span class="text-sky-300 font-bold uppercase">💎 ${lang || 'CODE'}</span>
-            <button type="button" onclick="navigator.clipboard.writeText(decodeURIComponent('${encoded}')); alert('Đã sao chép!');" class="px-2 py-0.5 rounded bg-sky-500/20 hover:bg-sky-500/40 text-sky-200 transition text-[9.5px]">📋 Sao chép</button>
+        `<div class="my-2.5 rounded-xl overflow-hidden border border-sky-400/25 bg-[#050e1f] font-mono text-xs shadow-lg">
+          <div class="flex items-center justify-between px-3 py-1 bg-sky-950/60 border-b border-sky-400/20 text-[10px]">
+            <div class="flex items-center gap-1.5 font-bold uppercase tracking-wider text-sky-300">
+              <span class="w-2 h-2 rounded-full bg-sky-400"></span>
+              <span>${lang || 'CODE'}</span>
+              <span class="text-sky-400/50 normal-case font-normal font-mono">• ${lineCount} dòng</span>
+            </div>
+            <button type="button" onclick="navigator.clipboard.writeText(decodeURIComponent('${encoded}')); alert('Đã sao chép đoạn code!');" class="px-2 py-0.5 rounded bg-sky-500/20 hover:bg-sky-500/40 text-sky-200 transition text-[10px] flex items-center gap-1 font-sans">
+              📋 Sao chép
+            </button>
           </div>
-          <pre class="py-1.5 px-2.5 overflow-x-auto text-[11px] text-sky-200 leading-relaxed"><code>${escapeHtml(clean)}</code></pre>
+          <pre class="p-3 overflow-x-auto text-[11.5px] leading-relaxed text-sky-100 font-mono"><code>${escapeHtml(clean)}</code></pre>
         </div>`
       );
       return `@@CODE_${idx}@@`;
     });
 
     text = escapeHtml(text);
-    text = text.replace(/\*\*([^*]+)\*\*/g, '<strong class="font-extrabold text-sky-300">$1</strong>');
-    text = text.replace(/`([^`]+)`/g, '<code class="px-1.5 py-0.5 rounded bg-sky-500/15 border border-sky-400/30 font-mono text-[11px] text-sky-300 font-semibold">$1</code>');
-    text = text.replace(/\[(TASK-\d+)\]/g, `<span class="cursor-pointer px-1.5 py-0.5 rounded bg-blue-600/30 border border-sky-400/50 font-mono text-[9.5px] font-bold text-sky-200 hover:bg-blue-600/50">$1</span>`);
+
+    // Blockquotes
+    text = text.replace(/^&gt;\s?([\s\S]+?)$/gm, '<div class="chat-blockquote">$1</div>');
+
+    // Bullet points (•, -, *)
+    text = text.replace(/^[•\-\*]\s+([\s\S]+?)$/gm, '<div class="chat-list-item"><span class="chat-list-bullet">✦</span><span>$1</span></div>');
+
+    // Numbered lists (1. , 2. )
+    text = text.replace(/^(\d+)\.\s+([\s\S]+?)$/gm, '<div class="chat-list-item"><span class="font-mono font-bold text-sky-400 text-xs">$1.</span><span>$2</span></div>');
+
+    // Bold & italic
+    text = text.replace(/\*\*([^*]+)\*\*/g, '<strong class="font-bold text-white tracking-wide">$1</strong>');
+    text = text.replace(/\*([^*]+)\*/g, '<em class="italic text-sky-200">$1</em>');
+
+    // Inline code
+    text = text.replace(/`([^`]+)`/g, '<code class="px-1.5 py-0.5 rounded-md bg-sky-500/15 border border-sky-400/30 font-mono text-[11.5px] text-sky-200 font-medium">$1</code>');
+
+    // Task tag
+    text = text.replace(/\[(TASK-\d+)\]/g, `<span class="cursor-pointer inline-flex items-center px-1.5 py-0.5 rounded-md bg-blue-600/30 border border-sky-400/50 font-mono text-[10px] font-bold text-sky-200 hover:bg-blue-600/50">$1</span>`);
+
+    // Mentions
     text = text.replace(/@(TấtCả|ChatGPT|Gemini|Codex|Antigravity|Claude|DeepSeek|all|team)/gi, (m) => {
-      return `<span class="cursor-pointer px-1.5 py-0.2 rounded-md font-display font-bold text-[10.5px] bg-sky-500/20 text-sky-300 border border-sky-400/30">${m}</span>`;
+      return `<span class="cursor-pointer inline-flex items-center px-1.5 py-0.5 rounded-md font-display font-bold text-[11px] bg-sky-500/20 text-sky-300 border border-sky-400/30 hover:bg-sky-500/35">${m}</span>`;
     });
 
+    // Paragraph breaks
+    text = text.replace(/\n\n+/g, '</p><p class="mt-2">');
     text = text.replace(/\n/g, '<br/>');
+
     codeBlocks.forEach((html, idx) => {
       text = text.replace(`@@CODE_${idx}@@`, html);
     });
 
-    return <div dangerouslySetInnerHTML={{ __html: text }} />;
+    return <div className="chat-prose" dangerouslySetInnerHTML={{ __html: `<p>${text}</p>` }} />;
   };
 
   const activeTaskList = botTasks.filter((t) => t.status !== 'DONE');
@@ -654,7 +674,6 @@ export const App: React.FC = () => {
     <div className="fixed inset-0 z-20 flex flex-col justify-between p-2 gap-2 select-none">
       {/* ==================== 1. ULTRA-SLIM TOP BAR (40px) ==================== */}
       <header className="blue-glass rounded-2xl px-3 py-1.5 flex flex-wrap items-center justify-between gap-2 shrink-0">
-        {/* Brand & Repo Link */}
         <div className="flex items-center gap-2">
           <button
             type="button"
@@ -679,7 +698,7 @@ export const App: React.FC = () => {
           </div>
         </div>
 
-        {/* Layout Ratio Switcher (Default: 70% Chat) */}
+        {/* Layout Ratio Switcher */}
         <div className="flex items-center bg-black/25 p-0.5 rounded-xl border border-sky-400/20">
           <button
             type="button"
@@ -727,7 +746,7 @@ export const App: React.FC = () => {
           </button>
         </div>
 
-        {/* Right Action Buttons */}
+        {/* Action Buttons */}
         <div className="flex items-center gap-1.5">
           <button
             type="button"
@@ -793,9 +812,9 @@ export const App: React.FC = () => {
         </div>
       </header>
 
-      {/* ==================== 2. MAIN SPLIT WORKSPACE (30% LEFT + 70% RIGHT) ==================== */}
+      {/* ==================== 2. MAIN SPLIT WORKSPACE ==================== */}
       <div className="flex-1 flex items-stretch gap-2 min-h-0 relative">
-        {/* ================= LEFT COLUMN: DEDICATED 3D ISLAND + COLLAPSIBLE TASK DOCK ================= */}
+        {/* ================= LEFT COLUMN: DEDICATED 3D ISLAND + TASK DOCK ================= */}
         <aside
           id="left-column"
           className={`${
@@ -810,7 +829,7 @@ export const App: React.FC = () => {
             isMobileTaskOpen ? '!flex fixed inset-2 z-40 bg-slate-950/95 p-2 rounded-2xl' : ''
           } flex-col gap-2 min-h-0 transition-all duration-300`}
         >
-          {/* TOP HALF: DEDICATED 3D SORA BLUE SAKURA ISLAND VIEWPORT */}
+          {/* TOP HALF: 3D VIEWPORT */}
           <Sora3DIsland
             ref={islandRef}
             onSelectAgent={handleSelectAgent}
@@ -819,7 +838,7 @@ export const App: React.FC = () => {
             onRestoreLayout={layoutRatio === 'garden' ? () => setLayoutRatio('70') : undefined}
           />
 
-          {/* BOTTOM HALF: COLLAPSIBLE TASK & SPRINT DOCK */}
+          {/* BOTTOM HALF: TASK & SPRINT DOCK */}
           <div
             id="leftTaskDock"
             className="blue-glass rounded-2xl flex flex-col shrink-0 overflow-hidden transition-all duration-300"
@@ -835,10 +854,7 @@ export const App: React.FC = () => {
                 <span className="font-display font-bold text-[11.5px] text-theme-main">
                   Tác Vụ & Tiến Độ Bot
                 </span>
-                <span
-                  id="task-counter-badge"
-                  className="px-1.5 py-0.2 rounded-md bg-sky-500/25 border border-sky-400/40 text-[9.5px] font-mono font-bold text-sky-300"
-                >
+                <span className="px-1.5 py-0.2 rounded-md bg-sky-500/25 border border-sky-400/40 text-[9.5px] font-mono font-bold text-sky-300">
                   {activeTaskList.length} Active
                 </span>
               </div>
@@ -869,7 +885,6 @@ export const App: React.FC = () => {
 
                   {!collapsed.activeTasks && (
                     <div className="p-2 space-y-1.5 border-t border-sky-400/15">
-                      {/* Quick Add Task Form */}
                       <form onSubmit={handleAddNewTask} className="flex items-center gap-1">
                         <input
                           type="text"
@@ -897,7 +912,6 @@ export const App: React.FC = () => {
                         </button>
                       </form>
 
-                      {/* Dynamic Active Tasks List */}
                       <div className="space-y-1 max-h-32 overflow-y-auto pr-0.5">
                         {botTasks.map((t) => {
                           const ag = AGENTS[t.agent] || AGENTS.Codex;
@@ -1066,7 +1080,7 @@ export const App: React.FC = () => {
           </div>
         </aside>
 
-        {/* ================= RIGHT COLUMN: COMPACT 12.5PX GROUP CHAT HUB ================= */}
+        {/* ================= RIGHT COLUMN: REFINED HIGH-READABILITY CHAT HUB ================= */}
         <main
           id="chat-column"
           className={`${
@@ -1079,9 +1093,9 @@ export const App: React.FC = () => {
               : 'w-full lg:w-[70%]'
           } blue-glass rounded-2xl flex flex-col min-h-0 overflow-hidden transition-all duration-300`}
         >
-          {/* 1. COMPACT CHAT HEADER + COLLAPSIBLE 6 AI BAR */}
-          <div className="px-3 pt-2 pb-1.5 border-b border-sky-400/20 flex flex-col gap-1.5 shrink-0 bg-gradient-to-r from-blue-950/45 via-sky-950/20 to-transparent">
-            {/* Top Row: Channel Tabs + Collapse Toggles + Font Size Slider */}
+          {/* 1. SLIM & ELEGANT CHAT HEADER */}
+          <div className="px-3 py-1.5 border-b border-sky-400/20 flex flex-col gap-1.5 shrink-0 bg-gradient-to-r from-blue-950/40 via-sky-950/15 to-transparent">
+            {/* Row 1: Channels + 6 AI Member Pills + Controls */}
             <div className="flex flex-wrap items-center justify-between gap-1.5">
               <div className="flex items-center gap-1 overflow-x-auto">
                 {rooms.map((r) => {
@@ -1096,7 +1110,7 @@ export const App: React.FC = () => {
                           prev.map((x) => (x.id === r.id ? { ...x, unread: 0 } : x))
                         );
                       }}
-                      className={`btn-pop px-2.5 py-0.5 rounded-xl text-[11px] font-display font-bold transition flex items-center gap-1 whitespace-nowrap ${
+                      className={`btn-pop px-2.5 py-1 rounded-xl text-[11px] font-display font-bold transition flex items-center gap-1 whitespace-nowrap ${
                         active
                           ? 'bg-gradient-to-r from-blue-600 to-sky-500 text-white shadow-sm'
                           : 'blue-card text-theme-sub hover:text-sky-300'
@@ -1113,6 +1127,40 @@ export const App: React.FC = () => {
                 })}
               </div>
 
+              {/* 6 AI Member Avatar Pills in Header */}
+              <div className="hidden sm:flex items-center gap-1 px-1.5 py-0.5 rounded-xl bg-black/25 border border-sky-400/20 overflow-x-auto">
+                {AGENT_IDS.map((id) => {
+                  const ag = AGENTS[id];
+                  const isFocused = focusedAgent === id;
+                  const isTyping = typingAgents.has(id);
+                  return (
+                    <button
+                      key={id}
+                      type="button"
+                      onClick={() => handleSelectAgent(ag.id)}
+                      title={`Bấm để gọi @${ag.name} (${ag.role})`}
+                      className={`btn-pop px-2 py-0.5 rounded-lg flex items-center gap-1 text-[10px] font-display font-bold transition ${
+                        isFocused
+                          ? 'bg-sky-500/25 text-white border border-sky-400/60'
+                          : 'text-theme-sub hover:text-sky-200'
+                      }`}
+                    >
+                      <span className="relative flex items-center justify-center">
+                        <span>{ag.emoji}</span>
+                        {isTyping && (
+                          <span
+                            className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full animate-ping"
+                            style={{ background: ag.colorCss }}
+                          />
+                        )}
+                      </span>
+                      <span>{ag.name}</span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Font Size & Tool Toggles */}
               <div className="flex items-center gap-1.5 shrink-0">
                 <button
                   type="button"
@@ -1124,21 +1172,13 @@ export const App: React.FC = () => {
 
                 <button
                   type="button"
-                  onClick={() => toggleSection('aiMemberBar')}
-                  className="btn-pop px-2 py-0.5 rounded-lg blue-card text-[10px] font-display font-bold text-sky-300 hover:border-sky-400"
-                >
-                  <span>{collapsed.aiMemberBar ? '▾ Mở rộng 6 AI' : '▴ Thu gọn 6 AI'}</span>
-                </button>
-
-                <button
-                  type="button"
                   onClick={() => toggleSection('pinnedTaskBanner')}
                   className="btn-pop px-2 py-0.5 rounded-lg blue-card text-[10px] font-display font-bold text-theme-sub hover:text-sky-300"
                 >
                   <span>{collapsed.pinnedTaskBanner ? '📌 Hiện Task' : '📌 Ghim Task'}</span>
                 </button>
 
-                {/* Font Size Controls (11px - 15px, default 12.5px) */}
+                {/* Font Size Controls */}
                 <div className="flex items-center gap-1 blue-card px-2 py-0.5 rounded-lg">
                   <button
                     type="button"
@@ -1151,13 +1191,13 @@ export const App: React.FC = () => {
                   <input
                     type="range"
                     min="11"
-                    max="15"
+                    max="16"
                     step="0.5"
                     value={chatFontSize}
                     onChange={(e) => handleFontSizeChange(parseFloat(e.target.value))}
-                    className="w-14 h-1 accent-sky-400 cursor-pointer"
+                    className="w-12 h-1 accent-sky-400 cursor-pointer"
                   />
-                  <span className="text-[10px] font-mono text-sky-400 font-bold min-w-[34px] text-center">
+                  <span className="text-[10px] font-mono text-sky-400 font-bold min-w-[32px] text-center">
                     {chatFontSize}px
                   </span>
                   <button
@@ -1172,153 +1212,92 @@ export const App: React.FC = () => {
               </div>
             </div>
 
-            {/* COLLAPSIBLE 6 AI MOCHI STRIP */}
-            {collapsed.aiMemberBar ? (
-              <div className="flex items-center gap-1.5 overflow-x-auto py-0.5">
-                {AGENT_IDS.map((id) => {
-                  const ag = AGENTS[id];
-                  const isFocused = focusedAgent === id;
-                  const isTyping = typingAgents.has(id);
-                  return (
-                    <button
-                      key={id}
-                      type="button"
-                      onClick={() => handleSelectAgent(ag.id)}
-                      className="btn-pop px-2 py-0.5 rounded-full blue-card flex items-center gap-1.5 shrink-0 text-[10px] font-display font-bold"
-                      style={{
-                        borderColor: isFocused ? ag.colorCss : 'var(--glass-border)',
-                      }}
-                    >
-                      <span
-                        className={`w-1.5 h-1.5 rounded-full ${isTyping ? 'animate-ping' : ''}`}
-                        style={{ background: ag.colorCss }}
-                      />
-                      <span>
-                        {ag.emoji} {ag.name}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-            ) : (
-              <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5">
-                {AGENT_IDS.map((id) => {
-                  const ag = AGENTS[id];
-                  const isFocused = focusedAgent === id;
-                  const isTyping = typingAgents.has(id);
-
-                  return (
-                    <button
-                      key={id}
-                      type="button"
-                      onClick={() => handleSelectAgent(ag.id)}
-                      title={`Bấm để gọi @${ag.name} (${ag.role}) và ngắm Mochi 3D`}
-                      className="btn-pop blue-card rounded-xl px-2 py-1 flex items-center gap-1.5 text-left relative overflow-hidden"
-                      style={{
-                        borderColor: isFocused ? ag.colorCss : 'var(--glass-border)',
-                      }}
-                    >
-                      <div className="relative w-5 h-5 rounded-lg overflow-hidden shrink-0">
-                        <div
-                          className="w-full h-full"
-                          dangerouslySetInnerHTML={{ __html: ag.svg }}
-                        />
-                        <span
-                          className={`absolute -bottom-0.5 -right-0.5 w-1.5 h-1.5 rounded-full border border-slate-900 ${
-                            isTyping ? 'animate-ping' : ''
-                          }`}
-                          style={{ background: ag.colorCss }}
-                        />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="text-[10.5px] font-display font-bold text-theme-main truncate leading-tight">
-                          {ag.name}
-                        </div>
-                        <div className="text-[9px] text-theme-muted truncate leading-tight">
-                          {isTyping ? 'đang trả lời...' : ag.role}
-                        </div>
-                      </div>
-                    </button>
-                  );
-                })}
+            {/* 2. SLIM PINNED TASK BANNER (ONLY 28PX HEIGHT) */}
+            {!collapsed.pinnedTaskBanner && pinnedTask && (
+              <div className="px-2.5 py-1 rounded-xl bg-blue-600/15 border border-sky-400/25 flex items-center justify-between gap-2 text-xs">
+                <div className="flex items-center gap-2 min-w-0 flex-1">
+                  <span className="px-1.5 py-0.2 rounded bg-sky-500/25 border border-sky-400/40 text-[9px] font-mono font-bold text-sky-200 shrink-0">
+                    ĐANG THỰC THI
+                  </span>
+                  <span className="text-[11px] font-display font-bold text-theme-main truncate">
+                    [{pinnedTask.id}] {pinnedTask.title}
+                  </span>
+                  <span className="text-[10px] font-mono text-sky-300 shrink-0">
+                    @{pinnedTask.agent} • {pinnedTask.progress}%
+                  </span>
+                  <div className="hidden sm:block w-20 h-1.5 rounded-full bg-black/40 overflow-hidden shrink-0">
+                    <div
+                      className="h-full bg-gradient-to-r from-blue-500 to-sky-300 transition-all duration-300"
+                      style={{ width: `${pinnedTask.progress}%` }}
+                    />
+                  </div>
+                </div>
+                <div className="flex items-center gap-1 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setInputText(`@${pinnedTask.agent} Hãy báo cáo chi tiết tiến độ thực thi [${pinnedTask.id}] "${pinnedTask.title}" (${pinnedTask.progress}%)`);
+                      inputRef.current?.focus();
+                    }}
+                    className="btn-pop px-2 py-0.5 rounded-lg bg-sky-500/20 hover:bg-sky-500/40 text-sky-200 border border-sky-400/35 text-[9.5px] font-display font-bold"
+                  >
+                    📢 Báo cáo
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => toggleSection('pinnedTaskBanner')}
+                    className="text-theme-muted hover:text-sky-300 text-xs px-1"
+                    title="Ẩn thanh ghim"
+                  >
+                    ✕
+                  </button>
+                </div>
               </div>
             )}
           </div>
 
-          {/* 2. COLLAPSIBLE PINNED ACTIVE TASK BANNER */}
-          {!collapsed.pinnedTaskBanner && pinnedTask && (
-            <div className="px-3 py-1 bg-blue-600/15 border-b border-sky-400/20 flex items-center justify-between gap-2 shrink-0">
-              <div className="flex items-center gap-2 min-w-0 flex-1">
-                <span className="px-1.5 py-0.5 rounded bg-sky-500/30 border border-sky-400/50 text-[9px] font-mono font-bold text-sky-200 shrink-0">
-                  ĐANG THỰC THI
-                </span>
-                <span className="text-[11px] font-display font-bold text-theme-main truncate">
-                  [{pinnedTask.id}] {pinnedTask.title}
-                </span>
-                <span className="text-[10px] font-mono text-sky-300 shrink-0">
-                  @{pinnedTask.agent} • {pinnedTask.progress}%
-                </span>
-                <div className="hidden sm:block w-24 h-1.5 rounded-full bg-black/40 overflow-hidden shrink-0">
-                  <div
-                    className="h-full bg-gradient-to-r from-blue-500 to-sky-300 transition-all duration-300"
-                    style={{ width: `${pinnedTask.progress}%` }}
-                  />
-                </div>
-              </div>
-              <div className="flex items-center gap-1 shrink-0">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setInputText(`@${pinnedTask.agent} Hãy báo cáo chi tiết tiến độ thực thi [${pinnedTask.id}] "${pinnedTask.title}" (${pinnedTask.progress}%)`);
-                    inputRef.current?.focus();
-                  }}
-                  className="btn-pop px-2 py-0.5 rounded-md bg-sky-500/25 hover:bg-sky-500/40 text-sky-200 border border-sky-400/40 text-[10px] font-display font-bold"
-                >
-                  📢 Báo cáo vào Chat
-                </button>
-                <button
-                  type="button"
-                  onClick={() => toggleSection('pinnedTaskBanner')}
-                  className="text-theme-muted hover:text-sky-300 text-xs px-1"
-                  title="Ẩn thanh ghim"
-                >
-                  ✕
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* 3. SPACIOUS 70% CHAT MESSAGE STREAM (12.5px COMPACT FONT) */}
+          {/* 3. REFINED HIGH-READABILITY CHAT STREAM */}
           <div
             ref={chatBoxRef}
-            className="flex-1 overflow-y-auto px-3.5 py-2.5 space-y-2 select-text"
+            className="flex-1 overflow-y-auto px-4 py-3 space-y-3.5 select-text"
           >
             {currentMessages.map((msg) => {
               const ag = AGENTS[msg.sender] || AGENTS.ChatGPT;
               const isUser = msg.sender === 'Commander';
-              const reactions = msg.reactions || { '💙': 1 };
+              const reactions = msg.reactions || {};
+              const activeReactionEntries = Object.entries(reactions).filter(([_, count]) => count > 0);
 
               if (isUser) {
                 return (
-                  <div key={msg.id} className="msg-bounce-in flex items-start justify-end gap-2">
-                    <div
-                      className="max-w-[85%] rounded-2xl rounded-tr-sm px-3 py-1.5 shadow-md"
-                      style={{
-                        background: ag.cardBg,
-                        border: `1px solid ${ag.cardBorder}`,
-                      }}
-                    >
-                      <div className="flex items-center justify-end gap-2 pb-0.5 mb-1 border-b border-sky-400/20">
-                        <span className="text-[9.5px] font-mono text-theme-muted">{msg.time}</span>
-                        <span className="font-display font-semibold text-[11.5px] text-sky-300">
+                  <div
+                    key={msg.id}
+                    className="chat-msg-wrapper msg-bounce-in flex items-start justify-end gap-2.5 group"
+                  >
+                    {/* Hover action toolbar */}
+                    <div className="chat-hover-toolbar flex items-center gap-1 self-center mr-1">
+                      <button
+                        type="button"
+                        onClick={() => handleAddReaction(msg.id, '💙')}
+                        className="px-1.5 py-0.5 rounded-lg bg-slate-900/80 hover:bg-sky-900 text-[10px] text-sky-300 border border-sky-400/30 shadow"
+                        title="Thả tim 💙"
+                      >
+                        💙
+                      </button>
+                    </div>
+
+                    <div className="max-w-[85%] rounded-2xl rounded-tr-sm px-3.5 py-2 shadow-md bg-gradient-to-br from-blue-900/50 via-sky-950/60 to-black/40 border border-sky-400/35">
+                      <div className="flex items-center justify-end gap-2 pb-1 mb-1 border-b border-sky-400/20">
+                        <span className="text-[10px] font-mono text-sky-400/60">{msg.time}</span>
+                        <span className="font-display font-bold text-xs text-sky-300">
                           👑 {ag.name}
                         </span>
                       </div>
-                      <div className="chat-text-body text-theme-main">
+                      <div className="text-theme-main">
                         {renderFormattedText(msg.text)}
                       </div>
                     </div>
-                    <div className="w-6 h-6 rounded-lg overflow-hidden shrink-0 shadow-md">
+
+                    <div className="w-7 h-7 rounded-xl overflow-hidden shrink-0 shadow-md border border-sky-400/40 bg-sky-950/80">
                       <div
                         className="w-full h-full"
                         dangerouslySetInnerHTML={{ __html: ag.svg }}
@@ -1329,41 +1308,42 @@ export const App: React.FC = () => {
               }
 
               return (
-                <div key={msg.id} className="msg-bounce-in flex items-start gap-2">
+                <div
+                  key={msg.id}
+                  className="chat-msg-wrapper msg-bounce-in flex items-start gap-2.5 p-2 rounded-2xl hover:bg-white/[0.02] transition-colors group"
+                >
+                  {/* Agent Avatar */}
                   <div
                     onClick={() => handleSelectAgent(ag.id)}
                     title={`Bấm để xem Mochi 3D của ${ag.name}`}
-                    className="btn-pop w-6 h-6 rounded-lg overflow-hidden shrink-0 cursor-pointer shadow-md mt-0.5"
+                    className="btn-pop w-8 h-8 rounded-xl overflow-hidden shrink-0 cursor-pointer shadow-md mt-0.5 border"
+                    style={{ borderColor: ag.colorCss }}
                   >
                     <div
                       className="w-full h-full"
                       dangerouslySetInnerHTML={{ __html: ag.svg }}
                     />
                   </div>
-                  <div
-                    className="flex-1 max-w-[94%] rounded-2xl rounded-tl-sm px-3 py-1.5 shadow-md"
-                    style={{
-                      background: ag.cardBg,
-                      border: `1px solid ${ag.cardBorder}`,
-                      borderLeft: `3px solid ${ag.colorCss}`,
-                    }}
-                  >
-                    <div className="flex flex-wrap items-center justify-between gap-1 pb-0.5 mb-1 border-b border-white/10">
-                      <div className="flex items-center gap-1.5">
+
+                  {/* Message Bubble & Content */}
+                  <div className="flex-1 min-w-0 max-w-[95%]">
+                    {/* Header Row */}
+                    <div className="flex items-center justify-between gap-2 mb-1">
+                      <div className="flex items-center gap-1.5 flex-wrap">
                         <span
                           onClick={() => handleSelectAgent(ag.id)}
-                          className="font-display font-bold text-[11.5px] cursor-pointer hover:underline"
+                          className="font-display font-extrabold text-xs cursor-pointer hover:underline tracking-wide"
                           style={{ color: ag.colorCss }}
                         >
                           {ag.emoji} {ag.name}
                         </span>
-                        <span className="px-1.5 py-0.2 rounded text-[9px] font-display font-bold blue-card text-theme-sub">
+                        <span className="px-1.5 py-0.2 rounded text-[9.5px] font-display font-semibold bg-white/5 border border-white/10 text-theme-sub">
                           {ag.role}
                         </span>
                         {msg.taskTag && (
                           <span
                             onClick={() => handlePinTask(msg.taskTag!)}
-                            className="cursor-pointer px-1.5 py-0.2 rounded bg-sky-500/20 border border-sky-400/40 font-mono text-[9px] text-sky-300 font-bold"
+                            className="cursor-pointer px-1.5 py-0.2 rounded-md bg-sky-500/15 border border-sky-400/40 font-mono text-[9.5px] text-sky-300 font-bold hover:bg-sky-500/30"
                           >
                             📌 {msg.taskTag}
                           </span>
@@ -1374,54 +1354,71 @@ export const App: React.FC = () => {
                           </span>
                         )}
                       </div>
-                      <span className="text-[9.5px] font-mono text-theme-muted">{msg.time}</span>
+
+                      {/* Right metadata & Hover action toolbar */}
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <div className="chat-hover-toolbar flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => handleAddReaction(msg.id, '💙')}
+                            className="px-1.5 py-0.5 rounded bg-slate-900/90 hover:bg-sky-900 text-[10px] text-sky-300 border border-sky-400/30 shadow"
+                            title="Thả cảm xúc"
+                          >
+                            + Reaction
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (collapsed.taskHub) toggleSection('taskHub');
+                              if (collapsed.activeTasks) toggleSection('activeTasks');
+                              setNewTaskAgent(ag.id);
+                              setNewTaskTitle(`Giao nhiệm vụ cho @${ag.id}`);
+                              showToast(`📋 Nhập tên Task ở cột trái để giao cho @${ag.id}!`);
+                            }}
+                            className="px-1.5 py-0.5 rounded bg-emerald-950/80 hover:bg-emerald-900 text-[10px] text-emerald-300 border border-emerald-400/30 shadow font-display font-bold"
+                          >
+                            + Giao Task
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => insertMention(`@${ag.id}`)}
+                            className="px-1.5 py-0.5 rounded bg-sky-950/80 hover:bg-sky-900 text-[10px] text-sky-300 border border-sky-400/30 shadow font-display font-bold"
+                          >
+                            ↩ Trả lời
+                          </button>
+                        </div>
+
+                        <span className="text-[10px] font-mono text-sky-400/50">{msg.time}</span>
+                      </div>
                     </div>
 
-                    <div className="chat-text-body text-theme-main">
+                    {/* Formatted Content Card */}
+                    <div
+                      className="rounded-2xl rounded-tl-sm px-3.5 py-2.5 shadow-sm"
+                      style={{
+                        background: ag.cardBg,
+                        border: `1px solid ${ag.cardBorder}`,
+                        borderLeft: `3px solid ${ag.colorCss}`,
+                      }}
+                    >
                       {renderFormattedText(msg.text)}
-                    </div>
 
-                    <div className="flex flex-wrap items-center justify-between gap-1 mt-1 pt-1 border-t border-white/10">
-                      <div className="flex items-center gap-1 flex-wrap">
-                        {['💙', '⚡', '🚀', '✅'].map((emo) => {
-                          const count = reactions[emo] || 0;
-                          return (
+                      {/* Reactions Pills (Only display active reactions > 0) */}
+                      {activeReactionEntries.length > 0 && (
+                        <div className="flex items-center gap-1.5 mt-2 pt-1.5 border-t border-white/10 flex-wrap">
+                          {activeReactionEntries.map(([emo, count]) => (
                             <button
                               key={emo}
                               type="button"
                               onClick={() => handleAddReaction(msg.id, emo)}
-                              className={`btn-pop px-1.5 py-0.2 rounded-full text-[9.5px] blue-card hover:border-sky-400 flex items-center gap-1 ${
-                                count > 0 ? 'opacity-100' : 'opacity-60'
-                              }`}
+                              className="btn-pop px-2 py-0.5 rounded-full text-[10px] bg-sky-950/60 hover:bg-sky-900 border border-sky-400/30 flex items-center gap-1 font-mono text-sky-200"
                             >
                               <span>{emo}</span>
                               <span className="font-bold text-sky-300">{count}</span>
                             </button>
-                          );
-                        })}
-                      </div>
-                      <div className="flex items-center gap-1">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            if (collapsed.taskHub) toggleSection('taskHub');
-                            if (collapsed.activeTasks) toggleSection('activeTasks');
-                            setNewTaskAgent(ag.id);
-                            setNewTaskTitle(`Giao nhiệm vụ cho @${ag.id}`);
-                            showToast(`📋 Nhập tên Task ở cột trái để giao cho @${ag.id}!`);
-                          }}
-                          className="px-1.5 py-0.2 rounded blue-card text-[9.5px] font-display font-bold text-emerald-300 hover:border-emerald-400 transition"
-                        >
-                          + Giao Task
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => insertMention(`@${ag.id}`)}
-                          className="px-1.5 py-0.2 rounded blue-card text-[9.5px] font-display font-bold text-theme-sub hover:text-sky-300 transition"
-                        >
-                          ↩ Trả lời
-                        </button>
-                      </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -1429,16 +1426,16 @@ export const App: React.FC = () => {
             })}
           </div>
 
-          {/* 4. ANIMATED TYPING BAR */}
+          {/* 4. ANIMATED TYPING INDICATOR */}
           {typingAgents.size > 0 && (
-            <div className="px-3.5 py-1 bg-sky-500/10 border-t border-sky-400/20 flex items-center justify-between text-[10.5px] shrink-0">
+            <div className="px-4 py-1.5 bg-sky-500/10 border-t border-sky-400/20 flex items-center justify-between text-xs shrink-0">
               <div className="flex items-center gap-2">
                 <div className="flex items-center gap-1">
                   <span className="w-1.5 h-1.5 rounded-full bg-sky-400 dot-1"></span>
                   <span className="w-1.5 h-1.5 rounded-full bg-blue-400 dot-2"></span>
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 dot-3"></span>
                 </div>
-                <span className="font-display font-bold text-sky-300 text-[10.5px]">
+                <span className="font-display font-bold text-sky-300 text-xs">
                   💎{' '}
                   {Array.from(typingAgents)
                     .map((id) => `${AGENTS[id]?.emoji} ${AGENTS[id]?.name}`)
@@ -1446,13 +1443,13 @@ export const App: React.FC = () => {
                   đang xử lý tác vụ & trả lời...
                 </span>
               </div>
-              <span className="text-[9.5px] font-mono text-theme-muted">⚡ Đồng bộ 3D</span>
+              <span className="text-[10px] font-mono text-theme-muted">⚡ Đồng bộ 3D</span>
             </div>
           )}
 
-          {/* 5. COMPACT BOTTOM INPUT & COLLAPSIBLE QUICK CHIPS */}
-          <div className="p-2 bg-black/20 border-t border-sky-400/20 flex flex-col gap-1.5 shrink-0">
-            {/* Collapsible Quick Action Chips */}
+          {/* 5. SLICK BOTTOM INPUT & QUICK ACTIONS */}
+          <div className="p-2.5 bg-black/25 border-t border-sky-400/20 flex flex-col gap-2 shrink-0">
+            {/* Quick Chips Row */}
             {!collapsed.quickChips && (
               <div className="flex flex-wrap items-center justify-between gap-1">
                 <div className="flex items-center gap-1 overflow-x-auto">
@@ -1462,7 +1459,7 @@ export const App: React.FC = () => {
                       setInputText('@ChatGPT @Codex Hãy phân tích các công việc cần làm tiếp theo');
                       inputRef.current?.focus();
                     }}
-                    className="btn-pop px-2 py-0.5 rounded-lg bg-gradient-to-r from-blue-600/40 to-sky-500/40 hover:from-blue-600/60 hover:to-sky-500/60 text-sky-100 border border-sky-400/40 text-[10px] font-display font-bold whitespace-nowrap"
+                    className="btn-pop px-2.5 py-0.5 rounded-lg bg-gradient-to-r from-blue-600/40 to-sky-500/40 hover:from-blue-600/60 hover:to-sky-500/60 text-sky-100 border border-sky-400/40 text-[10.5px] font-display font-bold whitespace-nowrap"
                   >
                     ⚡ Thảo Luận Tác Vụ
                   </button>
@@ -1470,7 +1467,7 @@ export const App: React.FC = () => {
                   <button
                     type="button"
                     onClick={handleRollCall}
-                    className="btn-pop px-2 py-0.5 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/35 text-emerald-300 border border-emerald-400/40 text-[10px] font-display font-bold whitespace-nowrap"
+                    className="btn-pop px-2.5 py-0.5 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/35 text-emerald-300 border border-emerald-400/40 text-[10.5px] font-display font-bold whitespace-nowrap"
                   >
                     🙋‍♂️ Điểm Danh 6 AI
                   </button>
@@ -1478,7 +1475,7 @@ export const App: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => insertMention('@all')}
-                    className="btn-pop px-2 py-0.5 rounded-lg blue-card text-[10px] font-bold text-sky-300 hover:border-sky-400 whitespace-nowrap"
+                    className="btn-pop px-2 py-0.5 rounded-lg blue-card text-[10.5px] font-bold text-sky-300 hover:border-sky-400 whitespace-nowrap"
                   >
                     @all
                   </button>
@@ -1486,7 +1483,7 @@ export const App: React.FC = () => {
                   <button
                     type="button"
                     onClick={handleClearChat}
-                    className="btn-pop px-2 py-0.5 rounded-lg blue-card text-[10px] text-theme-muted hover:text-rose-400 whitespace-nowrap"
+                    className="btn-pop px-2 py-0.5 rounded-lg blue-card text-[10.5px] text-theme-muted hover:text-rose-400 whitespace-nowrap"
                   >
                     🧹 Dọn chat
                   </button>
@@ -1520,18 +1517,18 @@ export const App: React.FC = () => {
             )}
 
             {/* Input Row */}
-            <form onSubmit={handleSendMessage} className="flex items-center gap-1.5">
+            <form onSubmit={handleSendMessage} className="flex items-center gap-2">
               {collapsed.quickChips && (
                 <button
                   type="button"
                   onClick={() => toggleSection('quickChips')}
-                  className="px-2 py-1 rounded-xl blue-card text-[10px] font-bold text-sky-300 shrink-0"
+                  className="px-2 py-1.5 rounded-xl blue-card text-[10.5px] font-bold text-sky-300 shrink-0"
                 >
                   ▾ Phím tắt
                 </button>
               )}
 
-              <div className="flex-1 bg-theme-input border border-sky-400/35 focus-within:border-sky-400 rounded-xl px-2.5 py-1 flex items-center gap-2 transition shadow-inner">
+              <div className="flex-1 bg-theme-input border border-sky-400/35 focus-within:border-sky-400 rounded-xl px-3 py-1.5 flex items-center gap-2 transition shadow-inner">
                 <textarea
                   ref={inputRef}
                   rows={1}
@@ -1544,13 +1541,13 @@ export const App: React.FC = () => {
                     }
                   }}
                   placeholder="Nhập tin nhắn hoặc giao việc cho AI (@ChatGPT, @Antigravity, @Codex...) — Enter để gửi"
-                  className="w-full bg-transparent text-[12.5px] text-theme-main placeholder-sky-300/45 focus:outline-none resize-none font-sans leading-snug py-0.5"
+                  className="w-full bg-transparent text-[13px] text-theme-main placeholder-sky-300/45 focus:outline-none resize-none font-sans leading-snug py-0.5"
                 />
 
                 <button
                   type="button"
                   onClick={insertCodeTemplate}
-                  className="px-2 py-0.5 rounded-lg blue-card text-[10px] font-mono text-sky-300 hover:border-sky-400 shrink-0"
+                  className="px-2 py-0.5 rounded-lg blue-card text-[10.5px] font-mono text-sky-300 hover:border-sky-400 shrink-0"
                   title="Chèn khối code"
                 >
                   {'{ }'} Code
@@ -1560,7 +1557,7 @@ export const App: React.FC = () => {
               <button
                 type="submit"
                 disabled={isSending}
-                className="btn-pop px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-blue-600 to-sky-500 hover:from-blue-500 hover:to-sky-400 disabled:opacity-50 text-white font-display font-bold text-xs shadow-[0_4px_14px_rgba(14,165,233,0.45)] flex items-center gap-1 shrink-0"
+                className="btn-pop px-4 py-2 rounded-xl bg-gradient-to-r from-blue-600 to-sky-500 hover:from-blue-500 hover:to-sky-400 disabled:opacity-50 text-white font-display font-bold text-xs shadow-[0_4px_14px_rgba(14,165,233,0.45)] flex items-center gap-1.5 shrink-0"
               >
                 <span>{isSending ? 'Đang gửi...' : 'Gửi'}</span>
                 <span>💙</span>

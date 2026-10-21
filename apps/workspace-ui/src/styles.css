@@ -7,7 +7,7 @@
 }
 
 :root {
-  --chat-font-size: 12.5px;
+  --chat-font-size: 13px;
   --bg-gradient: radial-gradient(circle at 18% 22%, #0D274E 0%, #071630 58%, #040B1A 100%);
   --glass-bg: rgba(8, 20, 43, 0.88);
   --glass-border: rgba(56, 189, 248, 0.26);
@@ -99,21 +99,76 @@ html, body {
   background: rgba(14, 165, 233, 0.75);
 }
 
-.chat-text-body {
+/* =========================================================================
+ * HIGH-READABILITY CHAT TYPOGRAPHY & MESSAGE STREAM
+ * ========================================================================= */
+.chat-prose {
   font-size: var(--chat-font-size);
-  line-height: 1.5;
+  line-height: 1.62;
+  color: var(--text-main);
+}
+
+.chat-prose p {
+  margin-bottom: 0.45rem;
+}
+.chat-prose p:last-child {
+  margin-bottom: 0;
+}
+
+.chat-prose .chat-list-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  margin-bottom: 0.35rem;
+  padding-left: 0.25rem;
+}
+
+.chat-prose .chat-list-bullet {
+  color: #38bdf8;
+  font-size: 1rem;
+  line-height: 1.2;
+  user-select: none;
+}
+
+.chat-prose .chat-blockquote {
+  border-left: 3px solid rgba(56, 189, 248, 0.6);
+  background: rgba(56, 189, 248, 0.08);
+  padding: 0.35rem 0.75rem;
+  border-radius: 0 0.5rem 0.5rem 0;
+  margin: 0.4rem 0;
+  color: var(--text-sub);
+  font-style: italic;
+}
+
+/* Message Hover Actions Toolbar */
+.chat-msg-wrapper {
+  position: relative;
+  transition: background-color 0.15s ease;
+}
+
+.chat-msg-wrapper:hover .chat-hover-toolbar {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+.chat-hover-toolbar {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(4px);
+  transition: opacity 0.15s ease, transform 0.15s ease;
 }
 
 @keyframes springPop {
-  0% { opacity: 0; transform: translateY(8px) scale(0.98); }
+  0% { opacity: 0; transform: translateY(6px) scale(0.99); }
   100% { opacity: 1; transform: translateY(0) scale(1); }
 }
 .msg-bounce-in {
-  animation: springPop 0.24s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  animation: springPop 0.2s cubic-bezier(0.22, 1, 0.36, 1) forwards;
 }
 
 .btn-pop {
-  transition: transform 0.18s cubic-bezier(0.34, 1.56, 0.64, 1), background-color 0.18s ease;
+  transition: transform 0.15s cubic-bezier(0.34, 1.56, 0.64, 1), background-color 0.15s ease;
 }
 .btn-pop:hover {
   transform: translateY(-1px);
