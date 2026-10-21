@@ -1103,6 +1103,9 @@ class StorageServiceClient extends EventEmitter {
     }
 
     if (!this.worker) {
+      if (!this.allowNonDurableDemo) {
+        return Promise.reject(new Error('ERR_STORAGE_UNAVAILABLE: Storage worker process is not running (UB-P2-R02-001, U08-R09-03)'));
+      }
       return this.handleFallback(method, args);
     }
 

@@ -794,7 +794,7 @@ describe('UB-V4-U08: GitHub Push Approval & ChatGPT Code Review Loop', () => {
       assert.equal(mismatchIntake.success, false);
       assert.equal(mismatchIntake.code, 'ERR_APPROVAL_EVIDENCE_MISMATCH');
 
-      // 1.3 Target commit SHA mismatch in reviewer message -> rejected (U08-R08-02)
+      // 1.3 Target commit SHA mismatch in reviewer message -> rejected (U08-R08-02, U08-R09-01)
       browserBridge.registerTabContext('tab_wrong_sha', {
         url: 'https://chatgpt.com/c/6ad64b63-ad44-83ec-90ca-83cacbc26da5',
         text: 'OFFICIAL VERDICT: SOURCE_REVIEW_APPROVED\nTarget commit: 0000000000000000000000000000000000000001',
@@ -807,6 +807,20 @@ describe('UB-V4-U08: GitHub Push Approval & ChatGPT Code Review Loop', () => {
       });
       assert.equal(wrongShaIntake.success, false);
       assert.equal(wrongShaIntake.code, 'ERR_COMMIT_SHA_MISMATCH');
+
+      // U08-R09-01: Message containing labels like "Head SHA: 11111111..." without target SHA is strictly rejected
+      browserBridge.registerTabContext('tab_head_sha_bypass', {
+        url: 'https://chatgpt.com/c/6ad64b63-ad44-83ec-90ca-83cacbc26da5',
+        text: 'OFFICIAL VERDICT: SOURCE_REVIEW_APPROVED\nHead SHA: 1111111111111111111111111111111111111111\nBase SHA: 2222222222222222222222222222222222222222',
+      });
+      const leaseHeadBypass = browserBridge.acquireControllerLease('tab_head_sha_bypass', 'agent_chatgpt');
+      const headBypassIntake = service.intakeTrustedReview({
+        source: 'BROWSER_BRIDGE',
+        commitSha,
+        evidence: { tabId: 'tab_head_sha_bypass', leaseToken: leaseHeadBypass.leaseToken },
+      });
+      assert.equal(headBypassIntake.success, false);
+      assert.equal(headBypassIntake.code, 'ERR_COMMIT_SHA_MISMATCH');
 
       // 1.4 Browser tab with ChatGPT URL, matching target commit SHA, and verified SOURCE_REVIEW_APPROVED:
       // Successfully issues receipt with locked APPROVED verdict
@@ -824,6 +838,22 @@ describe('UB-V4-U08: GitHub Push Approval & ChatGPT Code Review Loop', () => {
       });
       assert.equal(passIntake.success, true);
       assert.equal(passIntake.receipt.verdict, 'APPROVED');
+
+      // U08-R09-02: Synthetic tab context rejected in production mode
+      const origEnv = process.env.NODE_ENV;
+      try {
+        process.env.NODE_ENV = 'production';
+        const prodSyntheticCheck = browserBridge.inspectReviewContext(
+          'tab_verified_pass',
+          leasePass.leaseToken,
+          commitSha,
+          { allowSyntheticFixture: false }
+        );
+        assert.equal(prodSyntheticCheck.success, false);
+        assert.equal(prodSyntheticCheck.code, 'ERR_SYNTHETIC_CONTEXT_FORBIDDEN');
+      } finally {
+        process.env.NODE_ENV = origEnv;
+      }
 
       // =========================================================================
       // PART 2: U08-R07-02 & U08-R08-01 — CRYPTOGRAPHIC PO AUTHORITY KEY ENFORCEMENT
@@ -977,6 +1007,37 @@ describe('UB-V4-U08: GitHub Push Approval & ChatGPT Code Review Loop', () => {
       assert.ok(nativeWf1);
       assert.equal(nativeWf1.state, 'VERIFIED_FIXED');
       await nativeParityClient.closeAsync();
+
+      // 3.6 REAL WORKER CRASH RECOVERY & ATOMICITY TEST (U08-R09-03)
+      const crashDbPath = path.join(tempDir, 'worker-crash-recovery.sqlite');
+      const crashWorker = new StorageServiceClient(crashDbPath, { forceWorker: true });
+      await crashWorker.ready;
+      assert.equal(crashWorker.isNative, false);
+      const baseFinding = await crashWorker.ingestReviewFindingsBatchAsync('cs_crash', 'chatgpt_web', [
+        { file: 'main.js', line: 1, severity: 'SEV1', description: 'baseline finding before crash' },
+      ]);
+      assert.equal(baseFinding.inserted, 1);
+
+      // Force kill the worker process
+      if (crashWorker.worker) {
+        crashWorker.worker.kill('SIGKILL');
+      }
+
+      // Assert fail-closed rejection on dead worker channel
+      await assert.rejects(
+        async () => {
+          await crashWorker.getReviewFindingsAsync('cs_crash');
+        },
+        /ERR_STORAGE_UNAVAILABLE/
+      );
+
+      // Fresh worker client recovers from disk without corrupted state
+      const recoveredWorker = new StorageServiceClient(crashDbPath, { forceWorker: true });
+      await recoveredWorker.ready;
+      const recoveredFindings = await recoveredWorker.getReviewFindingsAsync('cs_crash');
+      assert.equal(recoveredFindings.length, 1);
+      assert.equal(recoveredFindings[0].description, 'baseline finding before crash');
+      await recoveredWorker.closeAsync();
     } finally {
       try {
         fs.rmSync(tempDir, { recursive: true, force: true });

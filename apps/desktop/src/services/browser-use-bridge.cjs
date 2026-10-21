@@ -175,6 +175,15 @@ class BrowserUseBridge {
       };
     }
 
+    // Prohibit synthetic context in production or when explicitly disallowed (U08-R09-02)
+    if (ctx.isSynthetic && (process.env.NODE_ENV === 'production' || options.allowSyntheticFixture === false)) {
+      return {
+        success: false,
+        error: `Synthetic browser context rejected for tab '${tabId}'. Production strictly requires real browser runtime snapshot (U08-R09-02).`,
+        code: 'ERR_SYNTHETIC_CONTEXT_FORBIDDEN',
+      };
+    }
+
     // 2. Validate trusted reviewer URL
     const tabUrl = String(ctx.url || '');
     const isTrustedReviewerUrl =
@@ -189,21 +198,29 @@ class BrowserUseBridge {
       };
     }
 
-    // 3. Extract the latest reviewer decision block
-    const fullText = String(ctx.text || '');
+    // 3. Extract the latest reviewer decision block (no full transcript fallback - U08-R09-02)
     let reviewMessage = String(ctx.latestAssistantMessage || '');
-    if (!reviewMessage && fullText) {
-      const parts = fullText.split(/ChatGPT said:|\[CHATGPT WEB TECHNICAL LEADER/i);
-      reviewMessage = parts.length > 1 ? parts[parts.length - 1] : fullText;
+    if (!reviewMessage && ctx.text) {
+      const parts = String(ctx.text).split(/ChatGPT said:|\[CHATGPT WEB TECHNICAL LEADER/i);
+      if (parts.length > 1) {
+        reviewMessage = parts[parts.length - 1];
+      }
+    }
+    if (!reviewMessage) {
+      return {
+        success: false,
+        error: `No discrete reviewer assistant message found in tab '${tabId}'.`,
+        code: 'ERR_UNVERIFIED_EVIDENCE',
+      };
     }
 
-    // 4. Validate target commit SHA binding in review message (U08-R08-02)
+    // 4. Strict absolute commit SHA binding (U08-R09-01)
     if (expectedCommitSha && typeof expectedCommitSha === 'string' && expectedCommitSha.length >= 7) {
       const targetSha = expectedCommitSha.trim().toLowerCase();
       const shortSha = targetSha.substring(0, 7);
       const textLower = reviewMessage.toLowerCase();
       const referencesCommit = textLower.includes(targetSha) || textLower.includes(shortSha);
-      if (!referencesCommit && !textLower.includes('base sha') && !textLower.includes('head sha')) {
+      if (!referencesCommit) {
         return {
           success: false,
           error: `Review message does not reference expected commit SHA '${targetSha}'.`,
