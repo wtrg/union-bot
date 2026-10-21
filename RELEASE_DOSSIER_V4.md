@@ -35,7 +35,7 @@ All 13 gates (U00 to U12) achieved 100% completion with complete auditability, v
 | **U09** | Real Browser-Use & Context Bridge | `RU09` | `ee8df56` | Single-controller tab lease, DOM snapshot, sensitive credential redaction, 4 unit tests | VERIFIED (0 VNĐ) |
 | **U10** | Pragmatic Low-Noise UX & Accessibility | `RU10` | `439cbb9` | ActivityFeedPanel, CommandPaletteModal (`Ctrl+K`), High-contrast theme, Vite build | VERIFIED (0 VNĐ) |
 | **U11** | Security, Reliability, Observability & Performance | `RU11` | `1fed9df` | Prompt injection guard, Unicode bidi defense, 0đ egress audit, WAL checkpoint, 4 unit tests | VERIFIED (0 VNĐ) |
-| **U12** | End-to-End UAT, Windows Portable & Release Dossier | `RU12` | *(Current)* | 47/47 V4 unit tests, Standalone Portable Bundle, Vietnamese User Manual | VERIFIED (0 VNĐ) |
+| **U12** | End-to-End UAT, Windows Portable & Release Dossier | `RU12` | *(Current)* | 51/51 V4 unit tests, Standalone Portable Bundle, Vietnamese User Manual | VERIFIED (0 VNĐ) |
 
 ---
 

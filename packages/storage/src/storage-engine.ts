@@ -538,8 +538,9 @@ export class StorageEngine {
   // --- V4 Permissions & Handoff ---
   public savePermissionGrant(grant: PermissionGrant): void {
     const parsed = PermissionGrantSchema.parse(grant);
+    // Enforce grant immutability: NEVER allow overwriting or resetting an existing grant
     this.db.prepare(`
-      INSERT OR REPLACE INTO permission_grants (
+      INSERT INTO permission_grants (
         id, actor, action, repo, branch, payload_digest, single_use, used, expires_at, created_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
@@ -556,12 +557,25 @@ export class StorageEngine {
     );
   }
 
-  public consumePermissionGrant(id: string, payloadDigest: string): boolean {
+  public consumePermissionGrant(
+    idOrParams: string | { id: string; payloadDigest: string; actor?: string; action?: string; repo?: string; branch?: string },
+    legacyDigest?: string
+  ): boolean {
+    const id = typeof idOrParams === 'string' ? idOrParams : idOrParams.id;
+    const payloadDigest = typeof idOrParams === 'string' ? legacyDigest || '' : idOrParams.payloadDigest;
+    const constraints: any = typeof idOrParams === 'object' ? idOrParams : {};
+
     const grant = this.db.prepare('SELECT * FROM permission_grants WHERE id = ?').get(id) as any;
     if (!grant) return false;
     if (grant.used === 1) return false;
     if (grant.payload_digest.toLowerCase() !== payloadDigest.toLowerCase()) return false;
     if (new Date(grant.expires_at).getTime() < Date.now()) return false;
+
+    // Check authority constraints (actor, action, repo, branch)
+    if (constraints.actor && grant.actor !== constraints.actor) return false;
+    if (constraints.action && grant.action !== constraints.action) return false;
+    if (constraints.repo && grant.repo && grant.repo.toLowerCase() !== constraints.repo.toLowerCase()) return false;
+    if (constraints.branch && grant.branch && grant.branch.toLowerCase() !== constraints.branch.toLowerCase()) return false;
 
     const res = this.db.prepare('UPDATE permission_grants SET used = 1 WHERE id = ? AND used = 0').run(id);
     return res.changes > 0;

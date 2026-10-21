@@ -126,7 +126,7 @@
 - [x] `U11-005`: Safe IPC handlers and unit test verification (4/4 PASS)
 
 ### U12 — End-to-End UAT, Windows Portable, Migration & Release Dossier
-- [x] `U12-001`: Full V4 Integration & Regression test verification (47/47 V4 unit tests PASS, schema integrity, zero regressions)
+- [x] `U12-001`: Full V4 Integration & Regression test verification (51/51 V4 unit tests PASS, schema integrity, zero regressions)
 - [x] `U12-002`: Portable Windows x64 distribution assembly & standalone outside-repo verification (`scripts/assemble-portable.cjs`, `scripts/verify-portable-standalone.cjs` 100% PASS)
 - [x] `U12-003`: Comprehensive Vietnamese User Manual (`docs/v4/HUONG_DAN_SU_DUNG_V4.md`)
 - [x] `U12-004`: Final Release Dossier & Architecture Closure (`RELEASE_DOSSIER_V4.md`)

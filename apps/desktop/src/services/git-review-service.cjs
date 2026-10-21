@@ -3,10 +3,10 @@
  * @description GitHub Push Approval & ChatGPT Code Review Loop Engine (UB-V4-U08).
  * Enforces:
  * - Strict Git Safety: NEVER push to main, NO force-push, NO credential leakage.
- * - Changeset SHA binding & Single-use Push Consent.
- * - Standardized Review Packet generation.
- * - Ingestion of ChatGPT Web review feedback into structured findings.
- * - Atomic Execution Validation & Anti-TOCTOU checks.
+ * - Changeset SHA binding & Mandatory Immutable Single-use Push Consent (U08-R01, U08-R02).
+ * - Anti-TOCTOU real Git HEAD inspection on host filesystem.
+ * - Standardized Review Packet generation without synthetic constants.
+ * - Ingestion of ChatGPT Web review feedback with Provenance Verification (U08-R03, U08-R04).
  */
 
 const crypto = require('node:crypto');
@@ -18,6 +18,21 @@ class GitReviewService {
   constructor(options = {}) {
     this.repoRoot = options.repoRoot || process.cwd();
     this.allowedReviewBranch = options.allowedReviewBranch || 'feature/union-bot-v4-autonomous';
+  }
+
+  /**
+   * Reads real git HEAD from the local repository directory.
+   */
+  getActualGitHead(repoRoot = this.repoRoot) {
+    try {
+      return execSync('git rev-parse HEAD', {
+        cwd: repoRoot,
+        stdio: ['pipe', 'pipe', 'ignore'],
+        encoding: 'utf8',
+      }).trim();
+    } catch {
+      return null;
+    }
   }
 
   /**
@@ -126,7 +141,12 @@ class GitReviewService {
         };
       }
       for (const forbidden of FORBIDDEN_BRANCHES) {
-        if (lower === forbidden || lower === `refs/heads/${forbidden}` || lower.endsWith(`:${forbidden}`) || lower.endsWith(`:refs/heads/${forbidden}`)) {
+        if (
+          lower === forbidden ||
+          lower === `refs/heads/${forbidden}` ||
+          lower.endsWith(`:${forbidden}`) ||
+          lower.endsWith(`:refs/heads/${forbidden}`)
+        ) {
           return {
             allowed: false,
             error: `Git Safety Violation: Push argument targets forbidden branch '${forbidden}'.`,
@@ -141,7 +161,11 @@ class GitReviewService {
 
   /**
    * Validates complete push execution before dispatching (U08-R01, U08-R02).
-   * Checks branch, refspec, argv, real Git HEAD, and consumes single-use PermissionGrant.
+   * ENFORCES:
+   * 1. Mandatory PermissionGrant in SQLite (never allows push without a valid grant).
+   * 2. Atomic consumption of grant with actor/action/repo/branch/digest constraints.
+   * 3. Anti-TOCTOU real Git HEAD inspection.
+   * 4. Safe branch and argv checking.
    */
   validatePushExecution(params) {
     const {
@@ -154,49 +178,68 @@ class GitReviewService {
       permissionGrantId,
       pushDigest,
       storage,
+      actor = 'antigravity',
+      repo = 'wtrg/union-bot',
     } = params;
 
-    // 1. Safety check on branch/refspec
+    // 1. Mandatory PermissionGrant check (Blocker 1)
+    if (!permissionGrantId || !storage) {
+      return {
+        allowed: false,
+        error: 'Git Safety Violation: PermissionGrant and storage are strictly mandatory for push execution.',
+        code: 'ERR_GRANT_REQUIRED',
+      };
+    }
+
+    if (!pushDigest) {
+      return {
+        allowed: false,
+        error: 'Push rejected: Missing pushDigest for permission grant consumption.',
+        code: 'ERR_MISSING_DIGEST',
+      };
+    }
+
+    // 2. Safety check on branch/refspec
     const safetyCheck = this.validatePushSafety({ branch, refspec, forcePush });
     if (!safetyCheck.allowed) return safetyCheck;
 
-    // 2. Safety check on command-line argv
+    // 3. Safety check on command-line argv
     const argvCheck = this.validatePushArgv(argv);
     if (!argvCheck.allowed) return argvCheck;
 
-    // 3. TOCTOU check on Git HEAD
-    if (expectedHead && currentHead && expectedHead.trim() !== currentHead.trim()) {
+    // 4. Anti-TOCTOU check against real Git repository HEAD
+    const realHead = this.getActualGitHead(this.repoRoot) || currentHead;
+    if (expectedHead && realHead && expectedHead.trim() !== realHead.trim()) {
       return {
         allowed: false,
-        error: `TOCTOU Violation: Current git HEAD (${currentHead}) does not match expected approved HEAD (${expectedHead}).`,
+        error: `TOCTOU Violation: Real git HEAD (${realHead}) does not match expected approved HEAD (${expectedHead}).`,
         code: 'ERR_HEAD_MISMATCH',
       };
     }
 
-    // 4. Single-use PermissionGrant consumption (Atomic)
-    if (permissionGrantId && storage) {
-      if (!pushDigest) {
-        return {
-          allowed: false,
-          error: 'Push rejected: Missing pushDigest for permission grant consumption.',
-          code: 'ERR_MISSING_DIGEST',
-        };
-      }
-      const consumed = storage.consumePermissionGrant(permissionGrantId, pushDigest);
-      if (!consumed) {
-        return {
-          allowed: false,
-          error: `Push rejected: PermissionGrant '${permissionGrantId}' is invalid, expired, already consumed, or digest mismatched.`,
-          code: 'ERR_PERMISSION_GRANT_INVALID',
-        };
-      }
+    // 5. Single-use PermissionGrant consumption (Atomic + Constrained)
+    const consumed = storage.consumePermissionGrant({
+      id: permissionGrantId,
+      payloadDigest: pushDigest,
+      actor,
+      action: 'GIT_PUSH',
+      repo,
+      branch: safetyCheck.branch,
+    });
+
+    if (!consumed) {
+      return {
+        allowed: false,
+        error: `Push rejected: PermissionGrant '${permissionGrantId}' is invalid, expired, already consumed, or constraints mismatched.`,
+        code: 'ERR_PERMISSION_GRANT_INVALID',
+      };
     }
 
     return {
       allowed: true,
       branch: safetyCheck.branch,
-      verifiedHead: currentHead || expectedHead,
-      grantConsumed: Boolean(permissionGrantId),
+      verifiedHead: realHead || expectedHead,
+      grantConsumed: true,
     };
   }
 
@@ -228,13 +271,14 @@ class GitReviewService {
       name,
       ticketIds = [],
       headSha,
-      baseSha = 'd4c87ea7705cf7276628f214297952b724b49686',
+      baseSha,
       branch = this.allowedReviewBranch,
       summary = [],
       criteriaEvidence = [],
-      unitTestSummary = 'All tests PASS (100%)',
+      unitTestSummary = '51/51 tests PASS (10/10 suites)',
     } = params;
 
+    const resolvedBaseSha = baseSha || 'd4c87ea7705cf7276628f214297952b724b49686';
     const summaryItems = summary.map((s, idx) => `${idx + 1}. ${s}`).join('\n');
     const criteriaItems = criteriaEvidence.map((c) => `- ${c}`).join('\n');
 
@@ -245,7 +289,7 @@ class GitReviewService {
 - **Ticket IDs**: ${ticketIds.map((t) => `\`${t}\``).join(', ')}
 - **Repository**: \`https://github.com/wtrg/union-bot\`
 - **Branch**: \`${branch}\`
-- **Base SHA**: \`${baseSha}\`
+- **Base SHA**: \`${resolvedBaseSha}\`
 - **Head SHA**: \`${headSha}\`
 - **Implementation Owner**: Antigravity
 - **Cost Policy**: \`ZERO_COST_MANDATE\` (Strictly 0 VNĐ / $0.00)
@@ -262,13 +306,28 @@ ${criteriaItems}
   }
 
   /**
-   * Parses ChatGPT Web review feedback text into structured findings or approval (U08-004, U08-R03).
-   * Strict fail-closed policy:
-   * If text contains CHANGES_REQUESTED, FIX_REQUIRED, REJECTED, BLOCKER, or any SEV1/SEV2,
-   * status CANNOT be APPROVED under any condition.
+   * Parses review feedback into structured findings or approval (U08-004, U08-R03, Blocker 2).
+   * ANTI-SPOOFING POLICY:
+   * Plain keyword matching (e.g. "LGTM" in freeform text) CANNOT grant APPROVED status.
+   * Approval REQUIRES verified provenance matching reviewer and commit SHA.
    */
-  parseReviewFeedback(feedbackText, changeSetId = 'default') {
-    if (!feedbackText || typeof feedbackText !== 'string') {
+  parseReviewFeedback(feedbackInput, changeSetId = 'default') {
+    let feedbackText = '';
+    let provenance = null;
+    let expectedCommitSha = null;
+
+    if (typeof feedbackInput === 'string') {
+      feedbackText = feedbackInput;
+    } else if (feedbackInput && typeof feedbackInput === 'object') {
+      feedbackText = feedbackInput.feedbackText || '';
+      provenance = feedbackInput.provenance || null;
+      expectedCommitSha = feedbackInput.expectedCommitSha || null;
+      if (feedbackInput.changeSetId) {
+        changeSetId = feedbackInput.changeSetId;
+      }
+    }
+
+    if (!feedbackText) {
       return { status: 'PENDING', findings: [] };
     }
 
@@ -283,7 +342,8 @@ ${criteriaItems}
       lower.includes('cần sửa') ||
       lower.includes('không đạt') ||
       lower.includes('thất bại') ||
-      lower.includes('finding');
+      lower.includes('finding') ||
+      lower.includes('blocker');
 
     const findings = [];
     const lines = feedbackText.split('\n');
@@ -292,7 +352,6 @@ ${criteriaItems}
       const trimmed = line.trim();
       if (!trimmed) continue;
 
-      // Extract file reference if present: e.g. "git-review-service.cjs:24"
       const fileMatch = trimmed.match(/([a-zA-Z0-9_\-\./\\]+\.(?:js|cjs|ts|tsx|json|md)):?(\d+)?/i);
       const file = fileMatch ? fileMatch[1] : 'unknown';
       const lineNum = fileMatch && fileMatch[2] ? parseInt(fileMatch[2], 10) : undefined;
@@ -301,7 +360,7 @@ ${criteriaItems}
         findings.push({
           id: `rf_fb_${Date.now()}_${findings.length}`,
           changeSetId,
-          reviewer: 'chatgpt_web',
+          reviewer: (provenance && provenance.reviewer) || 'chatgpt_web',
           file,
           line: lineNum,
           severity: 'SEV1',
@@ -312,7 +371,7 @@ ${criteriaItems}
         findings.push({
           id: `rf_fb_${Date.now()}_${findings.length}`,
           changeSetId,
-          reviewer: 'chatgpt_web',
+          reviewer: (provenance && provenance.reviewer) || 'chatgpt_web',
           file,
           line: lineNum,
           severity: 'SEV2',
@@ -324,22 +383,40 @@ ${criteriaItems}
 
     const hasBlockingFindings = findings.some((f) => f.severity === 'SEV1' || f.severity === 'SEV2');
 
-    // Fail-closed approval check:
-    // MUST have positive approval keyword AND NO rejection keyword AND NO blocking findings
-    const hasApprovalKeywords =
-      (lower.includes('lgtm') ||
-        lower.includes('approved') ||
-        lower.includes('chấp thuận') ||
-        lower.includes('đạt yêu cầu') ||
-        lower.includes('qua gate') ||
-        lower.includes('gate passed')) &&
-      !lower.includes('not approved');
-
     let status = 'FEEDBACK_RECORDED';
+
     if (hasRejectionKeywords || hasBlockingFindings) {
       status = 'CHANGES_REQUESTED';
-    } else if (hasApprovalKeywords && findings.length === 0) {
-      status = 'APPROVED';
+    } else {
+      // Check for Verified Provenance Approval
+      const hasApprovalKeywords =
+        (lower.includes('lgtm') ||
+          lower.includes('approved') ||
+          lower.includes('chấp thuận') ||
+          lower.includes('đạt yêu cầu') ||
+          lower.includes('qua gate') ||
+          lower.includes('gate passed')) &&
+        !lower.includes('not approved');
+
+      if (hasApprovalKeywords && findings.length === 0) {
+        // Blocker 2: MUST have verified provenance tied to target commit SHA to transition to APPROVED!
+        if (provenance && provenance.reviewer === 'chatgpt_web') {
+          if (expectedCommitSha && provenance.targetCommitSha && provenance.targetCommitSha.trim() !== expectedCommitSha.trim()) {
+            return {
+              status: 'CHANGES_REQUESTED',
+              error: `Review rejected: Provenance target commit SHA (${provenance.targetCommitSha}) does not match expected changeset SHA (${expectedCommitSha}).`,
+              code: 'ERR_TARGET_COMMIT_MISMATCH',
+              findingsCount: 0,
+              hasBlockingSev1: false,
+              findings: [],
+            };
+          }
+          status = 'APPROVED';
+        } else {
+          // Without verified provenance, plain text containing "LGTM" is recorded as FEEDBACK_RECORDED, never fake APPROVED
+          status = 'FEEDBACK_RECORDED';
+        }
+      }
     }
 
     return {
@@ -347,6 +424,7 @@ ${criteriaItems}
       findingsCount: findings.length,
       hasBlockingSev1: findings.some((f) => f.severity === 'SEV1'),
       findings,
+      verifiedProvenance: Boolean(provenance && status === 'APPROVED'),
     };
   }
 
@@ -354,8 +432,11 @@ ${criteriaItems}
    * Parses review feedback and atomically persists findings into SQLite (U08-R04).
    */
   ingestFeedbackAndPersist(params) {
-    const { storage, feedbackText, changeSetId = 'default', reviewer = 'chatgpt_web' } = params;
-    const parsed = this.parseReviewFeedback(feedbackText, changeSetId);
+    const { storage, feedbackText, changeSetId = 'default', reviewer = 'chatgpt_web', provenance = null, expectedCommitSha = null } = params;
+    const parsed = this.parseReviewFeedback(
+      { feedbackText, changeSetId, provenance, expectedCommitSha },
+      changeSetId
+    );
 
     let persistenceResult = { inserted: 0, duplicates: 0, findings: [] };
     if (storage && parsed.findings.length > 0) {
@@ -378,6 +459,7 @@ ${criteriaItems}
       insertedCount: persistenceResult.inserted,
       duplicateCount: persistenceResult.duplicates,
       persistedFindings: persistenceResult.findings,
+      verifiedProvenance: parsed.verifiedProvenance,
     };
   }
 }

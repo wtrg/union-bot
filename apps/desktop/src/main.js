@@ -5794,6 +5794,8 @@ ipcMain.handle('union-bot:parse-review-feedback', async (event, payload) => {
       feedbackText: payload && payload.feedbackText,
       changeSetId: payload && payload.changeSetId,
       reviewer: (payload && payload.reviewer) || 'chatgpt_web',
+      provenance: payload && payload.provenance,
+      expectedCommitSha: payload && payload.expectedCommitSha,
     });
   } catch (err) {
     return { status: 'ERROR', error: err.message, findings: [] };
