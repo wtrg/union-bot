@@ -49,7 +49,7 @@ describe('UB-V4-U08: GitHub Push Approval & ChatGPT Code Review Loop', () => {
     const service: any = new GitReviewService();
     const d1 = service.computePushDigest({
       branch: 'feature/union-bot-v4-autonomous',
-      headSha: '742588c',
+      headSha: '7051ff78de8cc657d76319f1d094e1ba3734ff7b',
       commitMessage: 'feat(v4-u07): implement WorkflowSupervisor',
       filesChanged: ['apps/desktop/src/main.js', 'package.json'],
     });
@@ -57,7 +57,7 @@ describe('UB-V4-U08: GitHub Push Approval & ChatGPT Code Review Loop', () => {
     // Order of files should be normalized/sorted deterministically
     const d2 = service.computePushDigest({
       branch: 'feature/union-bot-v4-autonomous',
-      headSha: '742588c',
+      headSha: '7051ff78de8cc657d76319f1d094e1ba3734ff7b',
       commitMessage: 'feat(v4-u07): implement WorkflowSupervisor',
       filesChanged: ['package.json', 'apps/desktop/src/main.js'],
     });
@@ -73,8 +73,8 @@ describe('UB-V4-U08: GitHub Push Approval & ChatGPT Code Review Loop', () => {
       gate: 'U08',
       name: 'GitHub Push Approval & Review Loop',
       ticketIds: ['UB-V4-U08-001', 'UB-V4-U08-002'],
-      headSha: 'abc1234',
-      baseSha: '3f62109',
+      headSha: '7051ff78de8cc657d76319f1d094e1ba3734ff7b',
+      baseSha: '3f6210937b764e06bb115ebd1f0538962a4a9470',
       branch: 'feature/union-bot-v4-autonomous',
       summary: ['Fail-closed git safety', 'Standardized review packets'],
       criteriaEvidence: ['No push to main confirmed', 'Unit tests passing'],
@@ -87,69 +87,78 @@ describe('UB-V4-U08: GitHub Push Approval & ChatGPT Code Review Loop', () => {
     assert.ok(packet.includes('`PENDING_INDEPENDENT_QA`'));
   });
 
-  it('U08-004: parses reviewer feedback with backend receipt verification (anti-spoofing)', () => {
+  it('U08-004 & U08-R04-01: enforces trusted review intake and anti-replay receipt consumption', () => {
     const service: any = new GitReviewService();
+    const fullCommitSha = '7051ff78de8cc657d76319f1d094e1ba3734ff7b';
 
-    // 1. Raw text with "LGTM" but lacking verified backend receipt -> status is FEEDBACK_RECORDED (Blocker 2)
+    // 1. Untrusted source attempting self-issuance -> strictly rejected (U08-R04-01)
+    const selfIssue = service.intakeTrustedReview({
+      source: 'RENDERER_UNTRUSTED',
+      commitSha: fullCommitSha,
+      evidence: { threadId: 'thread_123' },
+    });
+    assert.equal(selfIssue.success, false);
+    assert.equal(selfIssue.code, 'ERR_UNTRUSTED_REVIEW_INTAKE');
+
+    // 2. Truncated or invalid commit SHA -> rejected (must be full 40-char hex)
+    const invalidSha = service.intakeTrustedReview({
+      source: 'BROWSER_BRIDGE',
+      commitSha: '7051ff7', // short SHA disallowed
+      evidence: { threadId: 'thread_123' },
+    });
+    assert.equal(invalidSha.success, false);
+    assert.equal(invalidSha.code, 'ERR_INVALID_COMMIT_SHA');
+
+    // 3. Trusted review intake from verified BROWSER_BRIDGE -> success
+    const validIntake = service.intakeTrustedReview({
+      source: 'BROWSER_BRIDGE',
+      reviewer: 'chatgpt_web',
+      commitSha: fullCommitSha,
+      gate: 'U08',
+      changeSetId: 'cs_123',
+      evidence: { threadId: 'thread_123', url: 'https://chatgpt.com/c/6ad64b63' },
+    });
+    assert.equal(validIntake.success, true);
+    assert.ok(validIntake.receiptId.startsWith('rcpt_'));
+
+    // 4. Raw text containing "LGTM" without receiptId -> status is strictly FEEDBACK_RECORDED (no fake approval)
     const unverified = service.parseReviewFeedback('LGTM! Báo cáo rất rõ ràng, đạt yêu cầu qua gate U08.');
     assert.equal(unverified.status, 'FEEDBACK_RECORDED');
     assert.equal(unverified.verifiedProvenance, false);
 
-    // 2. Issue valid backend receipt token for commit SHA 3f62109
-    const validToken = service.issueReviewReceipt({
-      reviewer: 'chatgpt_web',
-      commitSha: '3f6210937b764e06bb115ebd1f0538962a4a9470',
-      gate: 'U08',
-    });
-    assert.ok(validToken.startsWith('rcpt_'));
-
-    // 3. Verified receipt with matching target commit SHA -> APPROVED
+    // 5. Verified receipt with matching full 40-character commit SHA -> valid APPROVED
     const verified = service.parseReviewFeedback({
       feedbackText: 'LGTM! Báo cáo rất rõ ràng, đạt yêu cầu qua gate U08.',
       changeSetId: 'cs_123',
-      receiptToken: validToken,
-      expectedCommitSha: '3f6210937b764e06bb115ebd1f0538962a4a9470',
+      receiptId: validIntake.receiptId,
+      expectedCommitSha: fullCommitSha,
     });
     assert.equal(verified.status, 'APPROVED');
     assert.equal(verified.verifiedProvenance, true);
     assert.equal(verified.hasBlockingSev1, false);
 
-    // 4. Forged / invalid receipt token -> rejected
+    // 6. Anti-replay: Attempting to use the same receiptId a second time -> rejected
+    const replayReceipt = service.parseReviewFeedback({
+      feedbackText: 'LGTM! Báo cáo rất rõ ràng, đạt yêu cầu qua gate U08.',
+      changeSetId: 'cs_123',
+      receiptId: validIntake.receiptId,
+      expectedCommitSha: fullCommitSha,
+    });
+    assert.equal(replayReceipt.status, 'CHANGES_REQUESTED');
+    assert.equal(replayReceipt.code, 'ERR_RECEIPT_ALREADY_USED');
+
+    // 7. Forged receiptId -> rejected
     const forged = service.parseReviewFeedback({
       feedbackText: 'LGTM! Gate passed.',
       changeSetId: 'cs_123',
-      receiptToken: 'rcpt_forged_fake_token_1234567890',
-      expectedCommitSha: '3f6210937b764e06bb115ebd1f0538962a4a9470',
+      receiptId: 'rcpt_forged_fake_token_1234567890',
+      expectedCommitSha: fullCommitSha,
     });
     assert.equal(forged.status, 'CHANGES_REQUESTED');
     assert.equal(forged.code, 'ERR_INVALID_REVIEW_RECEIPT');
-
-    // 5. Valid receipt token but mismatched target commit SHA -> rejected
-    const shaMismatch = service.parseReviewFeedback({
-      feedbackText: 'LGTM! Gate passed.',
-      changeSetId: 'cs_123',
-      receiptToken: validToken,
-      expectedCommitSha: '0000000000000000000000000000000000000000',
-    });
-    assert.equal(shaMismatch.status, 'CHANGES_REQUESTED');
-    assert.equal(shaMismatch.code, 'ERR_INVALID_REVIEW_RECEIPT');
-
-    // 6. Valid receipt token but feedback contains SEV1 blocker -> CHANGES_REQUESTED
-    const blocking = service.parseReviewFeedback(
-      {
-        feedbackText: 'Phát hiện lỗi blocker nghiêm trọng: Push safety chưa chặn master.\nCần sửa thêm test case.',
-        changeSetId: 'cs_123',
-        receiptToken: validToken,
-        expectedCommitSha: '3f6210937b764e06bb115ebd1f0538962a4a9470',
-      },
-      'cs_123'
-    );
-    assert.equal(blocking.status, 'CHANGES_REQUESTED');
-    assert.equal(blocking.hasBlockingSev1, true);
-    assert.ok(blocking.findingsCount >= 1);
   });
 
-  // --- REGRESSION SUITE: ChatGPT Web Reviewer Findings (U08-R01 to U08-R05, R03-01..03) ---
+  // --- REGRESSION SUITE: ChatGPT Web Reviewer Findings (U08-R01 to U08-R05, R03-01..03, R04-01) ---
 
   it('U08-R01: blocks push to protected branches via refspec and argv injection', () => {
     const service: any = new GitReviewService();
@@ -195,24 +204,24 @@ describe('UB-V4-U08: GitHub Push Approval & ChatGPT Code Review Loop', () => {
     assert.equal(a3.code, 'ERR_FORBIDDEN_BRANCH');
   });
 
-  it('U08-R02 & U08-R03-01/03: strict Git HEAD inspection and fail-closed PermissionGrant', () => {
+  it('U08-R02 & U08-R03-01/03: strict 40-char Git HEAD inspection and fail-closed PermissionGrant', () => {
     const service: any = new GitReviewService();
     const storage = new StorageEngine();
     const now = Date.now();
 
     const pushDigest = '11223344556677889900aabbccddeeff11223344556677889900aabbccddeeff';
-    const actualHead = service.getActualGitHead() || '3f6210937b764e06bb115ebd1f0538962a4a9470';
+    const actualHead = service.getActualGitHead() || '7051ff78de8cc657d76319f1d094e1ba3734ff7b';
 
-    // 1. Missing expectedHead or invalid expectedHead -> strictly denied (U08-R03-01)
-    const missingExpHead = service.validatePushExecution({
+    // 1. Missing expectedHead or short expectedHead -> strictly denied (U08-R03-01, full 40-char required)
+    const shortExpHead = service.validatePushExecution({
       branch: 'feature/union-bot-v4-autonomous',
-      expectedHead: '',
+      expectedHead: '7051ff7',
       permissionGrantId: 'grant-test-1',
       pushDigest,
       storage,
     });
-    assert.equal(missingExpHead.allowed, false);
-    assert.equal(missingExpHead.code, 'ERR_INVALID_EXPECTED_HEAD');
+    assert.equal(shortExpHead.allowed, false);
+    assert.equal(shortExpHead.code, 'ERR_INVALID_EXPECTED_HEAD');
 
     // 2. Unreadable host Git HEAD -> fail-closed (U08-R03-01)
     const unreadableService: any = new GitReviewService({ repoRoot: 'C:\\NonExistent_Corrupted_Dir_123' });
@@ -324,10 +333,13 @@ describe('UB-V4-U08: GitHub Push Approval & ChatGPT Code Review Loop', () => {
 
   it('U08-R03: fail-closed feedback parsing when text contains both approved and changes_requested', () => {
     const service: any = new GitReviewService();
-    const token = service.issueReviewReceipt({
+    const fullCommitSha = '7051ff78de8cc657d76319f1d094e1ba3734ff7b';
+    const intake = service.intakeTrustedReview({
+      source: 'BROWSER_BRIDGE',
       reviewer: 'chatgpt_web',
-      commitSha: '3f62109',
+      commitSha: fullCommitSha,
       gate: 'U08',
+      evidence: { threadId: 'thread_123' },
     });
 
     // Text mentioning LGTM or approved in the context of changes requested
@@ -342,8 +354,8 @@ describe('UB-V4-U08: GitHub Push Approval & ChatGPT Code Review Loop', () => {
     const parsed = service.parseReviewFeedback({
       feedbackText: conflicting,
       changeSetId: 'cs_conflict',
-      receiptToken: token,
-      expectedCommitSha: '3f62109',
+      receiptId: intake.receiptId,
+      expectedCommitSha: fullCommitSha,
     });
     assert.equal(parsed.status, 'CHANGES_REQUESTED');
     assert.equal(parsed.hasBlockingSev1, true);

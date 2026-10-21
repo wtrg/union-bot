@@ -5,52 +5,113 @@
  * - Strict Git Safety: NEVER push to main, NO force-push, NO credential leakage.
  * - Changeset SHA binding & Mandatory Immutable Single-use Push Consent (U08-R01, U08-R02, U08-R03-03).
  * - Real Git HEAD inspection on host filesystem without renderer fallback (U08-R03-01).
- * - Standardized Review Packet generation.
- * - Ingestion of ChatGPT Web review feedback with Backend-verified Receipt (U08-R03-02, Anti-spoofing).
+ * - Strict 40-character hex commit SHA validation.
+ * - Trusted Review Intake & Anti-Spoofing Receipts (U08-R04-01).
  */
 
 const crypto = require('node:crypto');
 const { execSync } = require('node:child_process');
 
 const FORBIDDEN_BRANCHES = ['main', 'master', 'release', 'production'];
+const TRUSTED_INTAKE_SOURCES = ['BROWSER_BRIDGE', 'PO_MANUAL_CONSENT'];
 
 class GitReviewService {
   constructor(options = {}) {
     this.repoRoot = options.repoRoot || process.cwd();
     this.allowedReviewBranch = options.allowedReviewBranch || 'feature/union-bot-v4-autonomous';
-    this.authorizedReviewReceipts = new Map(); // token -> { reviewer, commitSha, gate, issuedAt }
+    this.authorizedReviewReceipts = new Map(); // receiptId -> receipt object
   }
 
   /**
-   * Issues a backend-verified review receipt token (U08-R03-02).
+   * Trusted Review Intake: Only callable by trusted backend channels (U08-R04-01).
+   * Renderer self-issuance is strictly prohibited.
    */
-  issueReviewReceipt(params) {
-    const { reviewer = 'chatgpt_web', commitSha, gate } = params;
-    if (!commitSha) throw new Error('commitSha is required to issue review receipt');
-    const token = `rcpt_${crypto.randomBytes(16).toString('hex')}`;
-    this.authorizedReviewReceipts.set(token, {
+  intakeTrustedReview(params) {
+    const {
+      source,
+      reviewer = 'chatgpt_web',
+      commitSha,
+      gate,
+      changeSetId = 'default',
+      verdict = 'FEEDBACK_RECORDED',
+      evidence,
+    } = params;
+
+    // 1. Source verification (no renderer self-issuance)
+    if (!source || !TRUSTED_INTAKE_SOURCES.includes(source)) {
+      return {
+        success: false,
+        error: `Review Intake Violation: Untrusted source '${source}'. Self-issuance is strictly prohibited.`,
+        code: 'ERR_UNTRUSTED_REVIEW_INTAKE',
+      };
+    }
+
+    // 2. Strict 40-character hex commit SHA enforcement
+    if (!commitSha || typeof commitSha !== 'string' || !/^[0-9a-f]{40}$/i.test(commitSha.trim())) {
+      return {
+        success: false,
+        error: 'Review Intake Violation: A valid full 40-character commit SHA is strictly required.',
+        code: 'ERR_INVALID_COMMIT_SHA',
+      };
+    }
+
+    // 3. Evidence requirement
+    if (!evidence) {
+      return {
+        success: false,
+        error: 'Review Intake Violation: Evidence reference is required for trusted review intake.',
+        code: 'ERR_MISSING_EVIDENCE',
+      };
+    }
+
+    const receiptId = `rcpt_${crypto.randomBytes(16).toString('hex')}`;
+    const receipt = {
+      id: receiptId,
+      source,
       reviewer,
       commitSha: commitSha.trim().toLowerCase(),
-      gate,
+      gate: gate || 'U08',
+      changeSetId,
+      verdict,
+      evidence,
       issuedAt: Date.now(),
-    });
-    return token;
+      used: false,
+    };
+
+    this.authorizedReviewReceipts.set(receiptId, receipt);
+    return { success: true, receiptId, receipt };
   }
 
   /**
-   * Validates a backend-verified review receipt token against target commit SHA.
+   * Consumes a trusted review receipt atomically (anti-replay).
    */
-  validateReviewReceipt(token, expectedCommitSha) {
-    if (!token || !this.authorizedReviewReceipts.has(token)) return null;
-    const receipt = this.authorizedReviewReceipts.get(token);
-    if (Date.now() - receipt.issuedAt > 3600000) return null; // 1-hour expiration
+  consumeReviewReceipt(receiptId, expectedCommitSha) {
+    if (!receiptId || !this.authorizedReviewReceipts.has(receiptId)) {
+      return { error: 'Review receipt is invalid or does not exist.', code: 'ERR_INVALID_REVIEW_RECEIPT' };
+    }
+
+    const receipt = this.authorizedReviewReceipts.get(receiptId);
+
+    if (receipt.used) {
+      return { error: 'Review receipt has already been consumed (replay attack blocked).', code: 'ERR_RECEIPT_ALREADY_USED' };
+    }
+
+    if (Date.now() - receipt.issuedAt > 3600000) {
+      return { error: 'Review receipt has expired.', code: 'ERR_RECEIPT_EXPIRED' };
+    }
+
     if (expectedCommitSha) {
       const exp = expectedCommitSha.trim().toLowerCase();
-      if (receipt.commitSha !== exp && !receipt.commitSha.startsWith(exp) && !exp.startsWith(receipt.commitSha)) {
-        return null;
+      if (receipt.commitSha !== exp) {
+        return {
+          error: `Receipt commit SHA (${receipt.commitSha}) does not match expected SHA (${exp}).`,
+          code: 'ERR_INVALID_REVIEW_RECEIPT',
+        };
       }
     }
-    return receipt;
+
+    receipt.used = true;
+    return { success: true, receipt };
   }
 
   /**
@@ -197,9 +258,9 @@ class GitReviewService {
   /**
    * Validates complete push execution before dispatching (U08-R01, U08-R02, U08-R03-01, U08-R03-03).
    * ENFORCES:
-   * 1. Mandatory valid expectedHead (commit SHA format).
-   * 2. Host filesystem real Git HEAD inspection (Strict: unreadable host HEAD fails closed, NO renderer fallback).
-   * 3. Anti-TOCTOU HEAD matching.
+   * 1. Mandatory full 40-character expectedHead commit SHA.
+   * 2. Host filesystem real Git HEAD inspection (Strict, unreadable host HEAD fails closed, NO renderer fallback).
+   * 3. Anti-TOCTOU exact HEAD matching.
    * 4. Mandatory PermissionGrant in SQLite.
    * 5. Atomic consumption of grant with actor/action/repo/branch/digest constraints.
    */
@@ -217,11 +278,11 @@ class GitReviewService {
       repo = 'wtrg/union-bot',
     } = params;
 
-    // 1. Mandatory valid expectedHead (U08-R03-01)
-    if (!expectedHead || typeof expectedHead !== 'string' || !/^[0-9a-f]{7,40}$/i.test(expectedHead.trim())) {
+    // 1. Mandatory valid full 40-character expectedHead (U08-R03-01)
+    if (!expectedHead || typeof expectedHead !== 'string' || !/^[0-9a-f]{40}$/i.test(expectedHead.trim())) {
       return {
         allowed: false,
-        error: 'Git Safety Violation: A valid expectedHead commit SHA is strictly mandatory.',
+        error: 'Git Safety Violation: A valid full 40-character expectedHead commit SHA is strictly mandatory.',
         code: 'ERR_INVALID_EXPECTED_HEAD',
       };
     }
@@ -236,9 +297,7 @@ class GitReviewService {
       };
     }
 
-    const expHeadLower = expectedHead.trim().toLowerCase();
-    const realHeadLower = realHead.toLowerCase();
-    if (expHeadLower !== realHeadLower && !realHeadLower.startsWith(expHeadLower)) {
+    if (expectedHead.trim().toLowerCase() !== realHead.toLowerCase()) {
       return {
         allowed: false,
         error: `TOCTOU Violation: Real host Git HEAD (${realHead}) does not match expected approved HEAD (${expectedHead}).`,
@@ -332,7 +391,7 @@ class GitReviewService {
       unitTestSummary = '51/51 tests PASS (10/10 suites)',
     } = params;
 
-    const resolvedBaseSha = baseSha || '3f6210937b764e06bb115ebd1f0538962a4a9470';
+    const resolvedBaseSha = baseSha || '7051ff78de8cc657d76319f1d094e1ba3734ff7b';
     const summaryItems = summary.map((s, idx) => `${idx + 1}. ${s}`).join('\n');
     const criteriaItems = criteriaEvidence.map((c) => `- ${c}`).join('\n');
 
@@ -360,22 +419,22 @@ ${criteriaItems}
   }
 
   /**
-   * Parses review feedback into structured findings or approval (U08-004, U08-R03, U08-R03-02).
+   * Parses review feedback into structured findings or approval (U08-004, U08-R03, U08-R04-01).
    * ANTI-SPOOFING POLICY:
    * 1. Plain text with "LGTM" CANNOT grant APPROVED status.
-   * 2. APPROVED requires a valid backend review receipt token matching expected commit SHA.
+   * 2. APPROVED strictly requires a consumed backend-verified receipt token matching expected full 40-char commit SHA.
    * 3. Any SEV1/SEV2 finding or rejection keyword forces status to CHANGES_REQUESTED.
    */
   parseReviewFeedback(feedbackInput, changeSetId = 'default') {
     let feedbackText = '';
-    let receiptToken = null;
+    let receiptId = null;
     let expectedCommitSha = null;
 
     if (typeof feedbackInput === 'string') {
       feedbackText = feedbackInput;
     } else if (feedbackInput && typeof feedbackInput === 'object') {
       feedbackText = feedbackInput.feedbackText || '';
-      receiptToken = feedbackInput.receiptToken || (feedbackInput.provenance && feedbackInput.provenance.receiptToken) || null;
+      receiptId = feedbackInput.receiptId || (feedbackInput.provenance && feedbackInput.provenance.receiptId) || null;
       expectedCommitSha = feedbackInput.expectedCommitSha || (feedbackInput.provenance && feedbackInput.provenance.targetCommitSha) || null;
       if (feedbackInput.changeSetId) {
         changeSetId = feedbackInput.changeSetId;
@@ -454,17 +513,17 @@ ${criteriaItems}
         !lower.includes('not approved');
 
       if (hasApprovalKeywords && findings.length === 0) {
-        // Blocker 2 / U08-R03-02: Validate verified backend receipt
-        if (receiptToken) {
-          const verifiedReceipt = this.validateReviewReceipt(receiptToken, expectedCommitSha);
-          if (verifiedReceipt) {
+        // Blocker 2 / U08-R04-01: Verify and atomically consume trusted review receipt
+        if (receiptId) {
+          const consumeRes = this.consumeReviewReceipt(receiptId, expectedCommitSha);
+          if (consumeRes && consumeRes.success) {
             status = 'APPROVED';
           } else {
-            // Receipt mismatch or forged token -> rejected
+            // Receipt mismatch, already used (replay), or non-existent -> rejected
             return {
               status: 'CHANGES_REQUESTED',
-              error: 'Review rejected: Invalid, expired, or commit-mismatched review receipt token.',
-              code: 'ERR_INVALID_REVIEW_RECEIPT',
+              error: consumeRes ? consumeRes.error : 'Invalid review receipt.',
+              code: consumeRes ? consumeRes.code : 'ERR_INVALID_REVIEW_RECEIPT',
               findingsCount: 0,
               hasBlockingSev1: false,
               findings: [],
@@ -483,7 +542,7 @@ ${criteriaItems}
       findingsCount: findings.length,
       hasBlockingSev1: findings.some((f) => f.severity === 'SEV1'),
       findings,
-      verifiedProvenance: Boolean(receiptToken && status === 'APPROVED'),
+      verifiedProvenance: Boolean(receiptId && status === 'APPROVED'),
     };
   }
 
@@ -491,9 +550,9 @@ ${criteriaItems}
    * Parses review feedback and atomically persists findings into SQLite (U08-R04).
    */
   ingestFeedbackAndPersist(params) {
-    const { storage, feedbackText, changeSetId = 'default', reviewer = 'chatgpt_web', receiptToken = null, expectedCommitSha = null } = params;
+    const { storage, feedbackText, changeSetId = 'default', reviewer = 'chatgpt_web', receiptId = null, expectedCommitSha = null } = params;
     const parsed = this.parseReviewFeedback(
-      { feedbackText, changeSetId, receiptToken, expectedCommitSha },
+      { feedbackText, changeSetId, receiptId, expectedCommitSha },
       changeSetId
     );
 
@@ -526,4 +585,5 @@ ${criteriaItems}
 module.exports = {
   GitReviewService,
   FORBIDDEN_BRANCHES,
+  TRUSTED_INTAKE_SOURCES,
 };
