@@ -1,46 +1,48 @@
 @echo off
+setlocal
+cd /d "%~dp0"
 chcp 65001 >nul
-title Union Bot - Local Workspace Runner (Desktop Multi-Agent)
+title Union Bot - Local Workspace Desktop
 
 echo ======================================================================
-echo    UNION BOT — WORKSPACE DESKTOP MULTI-AGENT COLLABORATION (0đ)
-echo    Chế độ: Local Workspace Runner (Chạy trực tiếp không cần installer)
+echo    UNION BOT - MULTI-AI COLLABORATION DESKTOP WORKSPACE
+echo    Che do: Local Workspace Runner
 echo ======================================================================
 echo.
-echo [1/3] Đang kiểm tra môi trường thực thi...
+echo [1/3] Kiem tra moi truong Node.js...
 
 set "NODE_CMD="
 if exist "bin\node.exe" (
     set "NODE_CMD=bin\node.exe"
-    echo [OK] Đã tìm thấy Node.js cục bộ: bin\node.exe
-) else (
-    where node >nul 2>&1
-    if %ERRORLEVEL% equ 0 (
-        set "NODE_CMD=node"
-        echo [OK] Đã tìm thấy Node.js từ môi trường PATH
-    ) else (
-        echo [LỖI] Không tìm thấy Node.js.
-        echo Để chạy ứng dụng ở chế độ Workspace Runner, vui lòng cài đặt Node.js LTS (>= 22.0.0).
-        echo Đối với bản phát hành đóng gói độc lập P11, toàn bộ runtime sẽ được nhúng trong gói standalone.
-        pause
-        exit /b 1
-    )
+    goto :found_node
 )
 
-echo [2/3] Khởi tạo thư mục làm việc và vùng cô lập scratch...
+where node >nul 2>&1
+if %ERRORLEVEL% EQU 0 (
+    set "NODE_CMD=node"
+    goto :found_node
+)
+
+echo [LOI] Khong tim thay Node.js tren may!
+echo Vui long cai dat Node.js LTS (>= 22.0.0) de khoi dong ung dung.
+pause
+exit /b 1
+
+:found_node
+echo [OK] Su dung Node.js: %NODE_CMD%
+echo [2/3] Khoi tao thu muc scratch...
 if not exist "scratch" mkdir "scratch"
 
-echo [3/3] Khởi chạy ứng dụng Union Bot Desktop...
+echo [3/3] Dang mo ung dung Union Bot Desktop...
 echo.
 echo ======================================================================
-echo  Ứng dụng đang mở. Để dừng ứng dụng, đóng cửa sổ hoặc nhấn Ctrl+C.
+echo  Ung dung dang chay. Dong cua so hoac nhan Ctrl+C de thoat.
 echo ======================================================================
 echo.
 
-%NODE_CMD% apps/desktop/scripts/launch.js %*
-
-if %ERRORLEVEL% neq 0 (
+"%NODE_CMD%" apps/desktop/scripts/launch.js %*
+if %ERRORLEVEL% NEQ 0 (
     echo.
-    echo [THÔNG BÁO] Ứng dụng đã thoát với mã: %ERRORLEVEL%
+    echo [THONG BAO] Ung dung da thoat voi ma: %ERRORLEVEL%
     pause
 )
