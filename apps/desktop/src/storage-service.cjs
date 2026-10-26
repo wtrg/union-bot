@@ -13,7 +13,9 @@ const { computeEnvelopeDigest, canonicalizeJson, computeCanonicalDigest } = requ
 const { runSchemaMigrations } = require('./schema-definition.cjs');
 
 function findSystemNode() {
-  if (process.env.SYSTEM_NODE_PATH && fs.existsSync(process.env.SYSTEM_NODE_PATH)) {
+  // An explicit runtime override is authoritative: a missing binary must fail
+  // initialization instead of silently using a different runtime.
+  if (process.env.SYSTEM_NODE_PATH) {
     return process.env.SYSTEM_NODE_PATH;
   }
   const portableCandidates = [

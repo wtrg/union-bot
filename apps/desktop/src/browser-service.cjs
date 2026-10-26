@@ -366,6 +366,8 @@ class BrowserService {
 
     for (const [tabId, view] of this.views.entries()) {
       const isThisTabActive = tabId === activeTabId;
+      const lease = this.controlBridge?.controllerLeases.get(tabId);
+      const isWorker = lease && lease.expiresAt > Date.now();
 
       if (effectiveVisible && isThisTabActive && bounds.width > 0 && bounds.height > 0) {
         // Ensure child view is mounted
@@ -381,6 +383,13 @@ class BrowserService {
         if (typeof view.setVisible === 'function') {
           view.setVisible(true);
         }
+      } else if (isWorker && typeof view.setVisible === 'function') {
+        // A never-mounted/hidden native view can defer provider rendering until
+        // the operator selects it. Give active workers an off-window surface;
+        // this preserves layout and streaming without opening the browser dock.
+        if (!this._isViewAttached(view)) this.mainWindow.contentView.addChildView(view);
+        view.setBounds({ x: -2048, y: 0, width: 1024, height: 768 });
+        view.setVisible(true);
       } else {
         // Hide inactive view or hide when modal is active (P4-008)
         if (typeof view.setVisible === 'function') {
@@ -405,7 +414,11 @@ class BrowserService {
   }
 
   getState() {
-    return this.stateManager.getState();
+    const state = this.stateManager.getState();
+    return { ...state, tabs: state.tabs.map(tab => {
+      const lease = this.controlBridge?.controllerLeases.get(tab.id);
+      return { ...tab, worker: lease && lease.expiresAt > Date.now() ? lease.controllerId : undefined };
+    }) };
   }
 
   runGroupTurn(options) {
@@ -462,6 +475,8 @@ class BrowserService {
   }
 
   closeTab(tabId) {
+    const lease = this.controlBridge?.controllerLeases.get(tabId);
+    if (lease && lease.expiresAt > Date.now()) return { closed: false, error: 'Tab đang được AI điều khiển. Dừng lượt trước khi đóng tab.' };
     const view = this.views.get(tabId);
     if (view) {
       if (this._isViewAttached(view)) {
@@ -491,6 +506,8 @@ class BrowserService {
 
   async navigate(tabId, inputUrl) {
     const targetTabId = tabId || this.stateManager.getState().activeTabId;
+    const lease = this.controlBridge?.controllerLeases.get(targetTabId);
+    if (lease && lease.expiresAt > Date.now()) return { success: false, error: 'Tab đang được AI điều khiển. Dừng lượt trước khi điều hướng.' };
     if (!targetTabId) {
       return { success: false, error: 'No active tab' };
     }
@@ -572,6 +589,8 @@ class BrowserService {
 
   async performAction(tabId, action) {
     const targetTabId = tabId || this.stateManager.getState().activeTabId;
+    const lease = this.controlBridge?.controllerLeases.get(targetTabId);
+    if (lease && lease.expiresAt > Date.now() && !action.startsWith('zoom-')) return { success: false, error: 'Tab đang được AI điều khiển. Dừng lượt trước khi thay đổi trang.' };
     if (!targetTabId) {
       return { success: false, error: 'No active tab' };
     }

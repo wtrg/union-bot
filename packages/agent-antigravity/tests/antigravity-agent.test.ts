@@ -22,6 +22,60 @@ import { ArtifactStore } from '../../artifact-store/src/index.ts';
 
 const electronRuntime = createRequire(import.meta.url)('../src/agent-antigravity.cjs');
 
+describe('Antigravity terminal lifecycle regression', () => {
+  for (const [name, Client] of [['typescript', AntigravityClient], ['electron', electronRuntime.AntigravityClient]] as const) {
+    const transport = (start: (t: any) => void) => {
+      const t: any = { closed: 0, start() { start(t); },
+        onMessage(fn: any) { t.message = fn; }, onError(fn: any) { t.error = fn; },
+        onClose(fn: any) { t.end = fn; }, close() { t.closed++; } };
+      return t;
+    };
+    it(`${name}: preserves fatal errors even with exit zero or no close event`, async () => {
+      for (const closeAfterError of [true, false]) {
+        const client = new Client();
+        const t = transport(t => { t.error(new Error('ROOT_TRANSPORT_ERROR')); if (closeAfterError) t.end(0); });
+        await assert.rejects(client.executeTurn('mock', 'probe', {timeoutMs: 200}, t), /ROOT_TRANSPORT_ERROR/);
+        assert.equal(client.executing, false);
+        assert.equal(t.closed, 1);
+      }
+    });
+    it(`${name}: diagnostic stderr permits a genuine result but empty/unfinished exits fail`, async () => {
+      const client = new Client();
+      const t = transport(t => {
+        t.error(Object.assign(new Error('warning'), {code: 'AGY_STDERR'}));
+        t.message(JSON.stringify({event: 'result', result: {status: 'SUCCESS', response: 'OK'}}));
+        t.end(0);
+      });
+      assert.equal((await client.executeTurn('mock', 'probe', {}, t)).status, 'SUCCESS');
+      for (const events of [[], [{event: 'step_update', step_update: {text_delta: 'partial'}}], [{event: 'result', result: {status: 'SUCCESS', response: ''}}]]) {
+        const empty = transport(t => { for (const event of events) t.message(JSON.stringify(event)); t.end(0); });
+        const result = await client.executeTurn('mock', 'probe', {}, empty);
+        assert.equal(result.status, 'ERROR');
+        assert.match(result.error || '', /ERR_ANTIGRAVITY_INCOMPLETE/);
+      }
+    });
+    it(`${name}: cancel settles without transport close and late callbacks cannot affect the next turn`, async () => {
+      const client = new Client();
+      const old = transport(() => {});
+      const first = client.executeTurn('mock', 'first', {}, old);
+      client.cancel();
+      assert.equal((await first).status, 'CANCELLED');
+      const current = transport(() => {});
+      const second = client.executeTurn('mock', 'second', {}, current);
+      old.end(0);
+      old.message(JSON.stringify({event: 'step_update', step_update: {text_delta: 'late'}}));
+      old.error(new Error('late failure'));
+      assert.equal(client.executing, true);
+      assert.equal(current.closed, 0);
+      current.message(JSON.stringify({event: 'result', result: {status: 'SUCCESS', response: 'SECOND'}}));
+      current.end(0);
+      assert.equal((await second).response, 'SECOND');
+      assert.equal(old.closed, 1);
+      assert.equal(current.closed, 1);
+    });
+  }
+});
+
 describe('Antigravity permission denial regression', () => {
   for (const [name, Client, Transport, Adapter] of [
     ['typescript', AntigravityClient, MockAntigravityTransport, AntigravityAdapter],

@@ -1,11 +1,11 @@
 {
-  "timestamp": "2026-10-20T10:49:54.111Z",
+  "timestamp": "2026-10-26T07:42:21.841Z",
   "environment": "Real Windows Electron (Phase P7 Native Antigravity Agent Integration)",
   "nodeEnv": "test",
   "results": {
     "antigravityDiscoverSuccess": true,
     "antigravityAvailable": true,
-    "antigravityVersion": "1.4.3",
+    "antigravityVersion": "1.4.7",
     "antigravityExecutablePath": "C:\\Users\\Lenovo\\AppData\\Local\\agy\\bin\\agy.exe",
     "antigravityVersionMatches": true,
     "validBoundaryAllowed": true,

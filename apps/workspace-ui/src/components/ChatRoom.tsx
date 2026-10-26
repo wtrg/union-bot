@@ -791,7 +791,7 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ roomName, envelopes, onSendM
                     )}
                     {env.delivery && (
                       <span className={`group-delivery ${env.delivery.state}`} data-testid="group-delivery-state" role="status" aria-live="polite">
-                        {{ sending: 'Đang kết nối…', streaming: 'Đang trả lời…', completed: 'Đã trả lời', blocked: 'Cần xử lý' }[env.delivery.state]}
+                        {{ cancelled: 'Đã hủy', queued: 'Đang chờ', sending: 'Đang kết nối…', streaming: 'Đang trả lời…', completed: 'Đã trả lời', blocked: 'Cần xử lý' }[env.delivery.state]}
                       </span>
                     )}
                     {env.delivery?.sourceUrl && (

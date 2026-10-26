@@ -216,7 +216,7 @@ class StdioAntigravityTransport {
       this.child.stderr.on('data', (data) => {
         const errText = data.toString('utf8');
         if (this.errorHandler) {
-          this.errorHandler(new Error(`[agy stderr] ${errText}`));
+          this.errorHandler(Object.assign(new Error(`[agy stderr] ${errText}`), { code: 'AGY_STDERR' }));
         }
       });
     }
@@ -445,12 +445,14 @@ class AntigravityClient extends EventEmitter {
 
     this.isExecuting = true;
     this.transport = customTransport || new StdioAntigravityTransport(executablePath, prompt, options);
+    const activeTransport = this.transport;
 
     return new Promise((resolve, reject) => {
       let fullResponseText = '';
       let conversationId = options.conversationId || 'synthetic-session';
       let turnStatus = 'SUCCESS';
       let permissionError;
+      let receivedResult = false;
       let durationSeconds = 0;
       let usage = {
         inputTokens: 0,
@@ -480,15 +482,16 @@ class AntigravityClient extends EventEmitter {
           clearTimeout(timer);
           timer = null;
         }
-        this.isExecuting = false;
-        if (this.transport) {
-          const t = this.transport;
+        if (this.transport === activeTransport) {
           this.transport = null;
-          t.close();
+          this.isExecuting = false;
+          this.cancelExecution = null;
         }
+        try { activeTransport.close(); } catch {}
       };
 
-      this.transport.onMessage((line) => {
+      activeTransport.onMessage((line) => {
+        if (hasSettled) return;
         try {
           const parsed = JSON.parse(line);
 
@@ -514,6 +517,7 @@ class AntigravityClient extends EventEmitter {
           }
 
           if (parsed.event === 'result' && parsed.result) {
+            receivedResult = true;
             const res = parsed.result;
             conversationId = res.conversation_id || conversationId;
             turnStatus = res.status === 'SUCCESS' ? 'SUCCESS' : 'ERROR';
@@ -538,14 +542,20 @@ class AntigravityClient extends EventEmitter {
         } catch {}
       });
 
-      this.transport.onError((err) => {
-        this.emit('error', err);
+      activeTransport.onError((err) => {
+        if (hasSettled) return;
+        if (err.code !== 'AGY_STDERR') {
+          hasSettled = true;
+          cleanup();
+          reject(err);
+        }
+        if (this.listenerCount('error') > 0) this.emit('error', err);
       });
 
-      this.transport.onClose((code) => {
-        cleanup();
+      activeTransport.onClose((code) => {
         if (hasSettled) return;
         hasSettled = true;
+        cleanup();
         if (code !== 0 && turnStatus === 'SUCCESS') {
           if (code === null) {
             turnStatus = 'CANCELLED';
@@ -554,6 +564,10 @@ class AntigravityClient extends EventEmitter {
           }
         }
 
+        if (turnStatus === 'SUCCESS' && (!receivedResult || !fullResponseText.trim())) {
+          turnStatus = 'ERROR';
+          permissionError = 'ERR_ANTIGRAVITY_INCOMPLETE: Process exited without a complete non-empty result';
+        }
         const result = {
           conversationId,
           status: turnStatus,
@@ -568,9 +582,21 @@ class AntigravityClient extends EventEmitter {
         resolve(result);
       });
 
+      this.cancelExecution = () => {
+        if (hasSettled) return;
+        turnStatus = 'CANCELLED';
+        hasSettled = true;
+        cleanup();
+        const result = { conversationId, status: 'CANCELLED', response: fullResponseText, durationSeconds, usage, numTurns: 1 };
+        this.emit('turn_completed', result);
+        resolve(result);
+      };
+
       try {
-        this.transport.start();
+        activeTransport.start();
       } catch (err) {
+        if (hasSettled) return;
+        hasSettled = true;
         cleanup();
         reject(err);
       }
@@ -578,11 +604,7 @@ class AntigravityClient extends EventEmitter {
   }
 
   cancel() {
-    if (this.transport) {
-      this.transport.close();
-      this.transport = null;
-    }
-    this.isExecuting = false;
+    this.cancelExecution?.();
     this.emit('cancelled');
   }
 

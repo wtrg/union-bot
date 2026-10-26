@@ -74,13 +74,20 @@ export interface EnvelopeView {
   parts: MessagePart[];
   fidelity: string;
   isDemo?: boolean;
+  status?: string;
+  correlationId?: string;
+  metadata?: { collaborationMode?: 'direct' | 'review'; runId?: string; [key: string]: unknown };
   delivery?: {
-    state: 'sending' | 'streaming' | 'completed' | 'blocked';
+    state: 'queued' | 'sending' | 'streaming' | 'completed' | 'blocked' | 'cancelled';
+    runId?: string;
+    phase?: string;
     provider: string;
     replyTo?: string;
     sourceUrl?: string;
     conversationId?: string;
     memberName?: string;
+    progressText?: string;
+    progressStage?: 'loading' | 'preparing' | 'sending' | 'waiting';
   };
 }
 
@@ -161,10 +168,25 @@ export interface TaskItem {
   metadata?: TaskMetadata;
 }
 
+export interface ProviderConnectionResult {
+  success: boolean;
+  providerId?: string;
+  tabId?: string;
+  status?: 'UNAVAILABLE' | 'LOGIN_REQUIRED' | 'CHALLENGE_REQUIRED' | 'READY_TO_CHAT' | 'LOADING' | 'BUSY' | 'DRAFT_PRESENT';
+  checkedAt?: number;
+  message?: string;
+  error?: string;
+}
+
 export interface UnionBotAPI {
+  clipboardWriteText?: (text: string) => Promise<{ success: boolean; error?: string }>;
   isElectron: boolean;
   version: string;
   sendGroupMessage: (envelope: EnvelopeView) => Promise<{ success: boolean; envelopeId?: string; deduplicated?: boolean; error?: string }>;
+  cancelGroupRun: (payload: { runId: string; roomId: string }) => Promise<{ success: boolean; error?: string }>;
+  providerOpenLogin: (payload: { providerId: string }) => Promise<ProviderConnectionResult>;
+  providerCheckSession: (payload: { providerId: string; tabId?: string }) => Promise<ProviderConnectionResult>;
+  getGroupBindings: (payload: { roomId: string }) => Promise<{ success: boolean; bindings?: Record<string, { url?: string; conversationId?: string }>; error?: string }>;
   bindGroupThread: (payload: { roomId: string; tabId: string }) => Promise<{ success: boolean; error?: string }>;
   openGroupThread: (payload: { roomId: string; provider: string }) => Promise<{ success: boolean; error?: string }>;
   dispatchEnvelope: (envelope: any) => Promise<{ success: boolean; envelopeId?: string; deduplicated?: boolean; error?: string; code?: string }>;
@@ -290,6 +312,8 @@ export interface BrowserTabInfo {
   id: string;
   providerId: 'chatgpt' | 'gemini' | 'claude' | 'deepseek' | 'search' | 'custom';
   title: string;
+  worker?: string;
+  connection?: { status: NonNullable<ProviderConnectionResult['status']>; checkedAt: number; message: string };
   url: string;
   partition: string;
   isLoading: boolean;

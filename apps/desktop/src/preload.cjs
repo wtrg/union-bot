@@ -8,7 +8,12 @@ const { contextBridge, ipcRenderer } = require('electron');
 const api = {
   isElectron: true,
   version: '1.0.0',
+  clipboardWriteText: text => ipcRenderer.invoke('union-bot:clipboard-write-text', text),
   sendGroupMessage: envelope => ipcRenderer.invoke('union-bot:group-send-message', envelope),
+  cancelGroupRun: payload => ipcRenderer.invoke('union-bot:group-cancel-run', payload),
+  providerOpenLogin: payload => ipcRenderer.invoke('union-bot:provider-open-login', payload),
+  providerCheckSession: payload => ipcRenderer.invoke('union-bot:provider-check-session', payload),
+  getGroupBindings: payload => ipcRenderer.invoke('union-bot:group-get-bindings', payload),
   bindGroupThread: payload => ipcRenderer.invoke('union-bot:group-bind-thread', payload),
   openGroupThread: payload => ipcRenderer.invoke('union-bot:group-open-thread', payload),
 

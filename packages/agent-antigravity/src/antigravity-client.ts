@@ -138,7 +138,7 @@ export class StdioAntigravityTransport implements AntigravityTransport {
       this.child.stderr.on('data', (data) => {
         const errText = data.toString('utf8');
         if (this.errorHandler) {
-          this.errorHandler(new Error(`[agy stderr] ${errText}`));
+          this.errorHandler(Object.assign(new Error(`[agy stderr] ${errText}`), { code: 'AGY_STDERR' }));
         }
       });
     }
@@ -278,6 +278,7 @@ export class HangingAntigravityTransport implements AntigravityTransport {
 export class AntigravityClient extends EventEmitter {
   private transport: AntigravityTransport | null = null;
   private isExecuting = false;
+  private cancelExecution: (() => void) | null = null;
 
   /**
    * Resolves a path to its canonical filesystem realpath.
@@ -416,6 +417,7 @@ export class AntigravityClient extends EventEmitter {
       let conversationId = options.conversationId || 'synthetic-session';
       let turnStatus: 'SUCCESS' | 'ERROR' | 'CANCELLED' = 'SUCCESS';
       let permissionError: string | undefined;
+      let receivedResult = false;
       let durationSeconds = 0;
       let usage: AntigravityUsage = {
         inputTokens: 0,
@@ -445,15 +447,16 @@ export class AntigravityClient extends EventEmitter {
           clearTimeout(timer);
           timer = null;
         }
-        this.isExecuting = false;
-        if (this.transport) {
-          const t = this.transport;
+        if (this.transport === activeTransport) {
           this.transport = null;
-          t.close();
+          this.isExecuting = false;
+          this.cancelExecution = null;
         }
+        try { activeTransport.close(); } catch {}
       };
 
       activeTransport.onMessage((line) => {
+        if (hasSettled) return;
         try {
           const parsed = JSON.parse(line);
 
@@ -482,6 +485,7 @@ export class AntigravityClient extends EventEmitter {
 
           // Handle final result event
           if (parsed.event === 'result' && parsed.result) {
+            receivedResult = true;
             const res = parsed.result;
             conversationId = res.conversation_id || conversationId;
             turnStatus = res.status === 'SUCCESS' ? 'SUCCESS' : 'ERROR';
@@ -509,15 +513,22 @@ export class AntigravityClient extends EventEmitter {
       });
 
       activeTransport.onError((err) => {
+        if (hasSettled) return;
+        // stderr is diagnostic; process/transport errors terminate the turn.
+        if ((err as Error & { code?: string }).code !== 'AGY_STDERR') {
+          hasSettled = true;
+          cleanup();
+          reject(err);
+        }
         if (this.listenerCount('error') > 0) {
           this.emit('error', err);
         }
       });
 
       activeTransport.onClose((code) => {
-        cleanup();
         if (hasSettled) return;
         hasSettled = true;
+        cleanup();
         if (code !== 0 && turnStatus === 'SUCCESS') {
           // Soft failure or process termination
           if (code === null) {
@@ -525,6 +536,10 @@ export class AntigravityClient extends EventEmitter {
           } else {
             turnStatus = 'ERROR';
           }
+        }
+        if (turnStatus === 'SUCCESS' && (!receivedResult || !fullResponseText.trim())) {
+          turnStatus = 'ERROR';
+          permissionError = 'ERR_ANTIGRAVITY_INCOMPLETE: Process exited without a complete non-empty result';
         }
 
         const result: AntigravityTurnResult = {
@@ -541,9 +556,22 @@ export class AntigravityClient extends EventEmitter {
         resolve(result);
       });
 
+      this.cancelExecution = () => {
+        if (hasSettled) return;
+        turnStatus = 'CANCELLED';
+        // Resolve independently of a transport's willingness to emit close.
+        hasSettled = true;
+        cleanup();
+        const result: AntigravityTurnResult = { conversationId, status: 'CANCELLED', response: fullResponseText, durationSeconds, usage, numTurns: 1 };
+        this.emit('turn_completed', result);
+        resolve(result);
+      };
+
       try {
         activeTransport.start();
       } catch (err) {
+        if (hasSettled) return;
+        hasSettled = true;
         cleanup();
         reject(err);
       }
@@ -554,11 +582,7 @@ export class AntigravityClient extends EventEmitter {
    * Cancels any in-flight Antigravity turn.
    */
   public cancel(): void {
-    if (this.transport) {
-      this.transport.close();
-      this.transport = null;
-    }
-    this.isExecuting = false;
+    this.cancelExecution?.();
     this.emit('cancelled');
   }
 

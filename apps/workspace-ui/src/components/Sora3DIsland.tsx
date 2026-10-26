@@ -1,123 +1,9 @@
 import React, { useEffect, useRef } from 'react';
 import * as THREE from 'three';
 
-export interface AgentDef {
-  id: string;
-  name: string;
-  emoji: string;
-  role: string;
-  colorHex: number;
-  earType: 'cat' | 'star' | 'fox' | 'bunny' | 'leaf' | 'koi';
-  colorCss: string;
-  cardBg: string;
-  cardBorder: string;
-  angle: number;
-  radius: number;
-  svg: string;
-}
-
-export const AGENTS: Record<string, AgentDef> = {
-  ChatGPT: {
-    id: 'ChatGPT',
-    name: 'ChatGPT',
-    emoji: '🍵',
-    role: 'Điều Phối Trưởng',
-    colorHex: 0x34D399,
-    earType: 'cat',
-    colorCss: '#34D399',
-    cardBg: 'rgba(16, 185, 129, 0.11)',
-    cardBorder: 'rgba(52, 211, 153, 0.36)',
-    angle: 0.25,
-    radius: 5.1,
-    svg: '<svg viewBox="0 0 40 40" class="w-full h-full"><circle cx="20" cy="20" r="19" fill="#064E3B" stroke="#34D399" stroke-width="2"/><polygon points="9,16 12,7 18,13" fill="#34D399"/><polygon points="31,16 28,7 22,13" fill="#34D399"/><ellipse cx="20" cy="22" rx="11" ry="9.5" fill="#6EE7B7"/><circle cx="15.5" cy="21" r="1.7" fill="#064E3B"/><circle cx="24.5" cy="21" r="1.7" fill="#064E3B"/><path d="M18 23.5 Q20 25.5 22 23.5" stroke="#064E3B" stroke-width="1.6" fill="none" stroke-linecap="round"/></svg>'
-  },
-  Gemini: {
-    id: 'Gemini',
-    name: 'Gemini',
-    emoji: '✨',
-    role: 'Đa Phương Thức',
-    colorHex: 0x38BDF8,
-    earType: 'star',
-    colorCss: '#38BDF8',
-    cardBg: 'rgba(56, 189, 248, 0.13)',
-    cardBorder: 'rgba(56, 189, 248, 0.42)',
-    angle: 1.30,
-    radius: 5.1,
-    svg: '<svg viewBox="0 0 40 40" class="w-full h-full"><circle cx="20" cy="20" r="19" fill="#0C4A6E" stroke="#38BDF8" stroke-width="2"/><polygon points="10,15 11,6 17,12" fill="#38BDF8"/><polygon points="30,15 29,6 23,12" fill="#38BDF8"/><ellipse cx="20" cy="22" rx="11" ry="9.5" fill="#7DD3FC"/><circle cx="15.5" cy="21" r="1.7" fill="#0C4A6E"/><circle cx="24.5" cy="21" r="1.7" fill="#0C4A6E"/><polygon points="20,9 21.2,11.5 24,12 21.2,12.8 20,15.2 18.8,12.8 16,12 18.8,11.5" fill="#FDE047"/></svg>'
-  },
-  Codex: {
-    id: 'Codex',
-    name: 'Codex',
-    emoji: '🦊',
-    role: 'Kỹ Sư Thực Thi Code',
-    colorHex: 0xFBBF24,
-    earType: 'fox',
-    colorCss: '#FBBF24',
-    cardBg: 'rgba(245, 158, 11, 0.11)',
-    cardBorder: 'rgba(251, 191, 36, 0.38)',
-    angle: 2.35,
-    radius: 5.1,
-    svg: '<svg viewBox="0 0 40 40" class="w-full h-full"><circle cx="20" cy="20" r="19" fill="#78350F" stroke="#FBBF24" stroke-width="2"/><polygon points="9,16 11,6 18,13" fill="#F59E0B"/><polygon points="31,16 29,6 22,13" fill="#F59E0B"/><ellipse cx="20" cy="22" rx="11" ry="9.5" fill="#FCD34D"/><circle cx="15.5" cy="21" r="1.7" fill="#1F2937"/><circle cx="24.5" cy="21" r="1.7" fill="#1F2937"/><path d="M17.5 23.5 Q20 26 22.5 23.5" stroke="#1F2937" stroke-width="1.6" fill="none" stroke-linecap="round"/></svg>'
-  },
-  Antigravity: {
-    id: 'Antigravity',
-    name: 'Antigravity',
-    emoji: '💠',
-    role: 'Kiến Trúc 3D WebGL',
-    colorHex: 0x818CF8,
-    earType: 'bunny',
-    colorCss: '#818CF8',
-    cardBg: 'rgba(99, 102, 241, 0.13)',
-    cardBorder: 'rgba(129, 140, 248, 0.40)',
-    angle: 3.40,
-    radius: 5.1,
-    svg: '<svg viewBox="0 0 40 40" class="w-full h-full"><circle cx="20" cy="20" r="19" fill="#1E1B4B" stroke="#818CF8" stroke-width="2"/><ellipse cx="15" cy="10" rx="2.5" ry="6.2" fill="#A5B4FC" stroke="#818CF8" stroke-width="1.2"/><ellipse cx="25" cy="10" rx="2.5" ry="6.2" fill="#A5B4FC" stroke="#818CF8" stroke-width="1.2"/><ellipse cx="20" cy="23" rx="11" ry="9" fill="#C7D2FE"/><circle cx="15.5" cy="22" r="1.7" fill="#1E1B4B"/><circle cx="24.5" cy="22" r="1.7" fill="#1E1B4B"/><path d="M18.2 24 Q20 25.8 21.8 24" stroke="#1E1B4B" stroke-width="1.5" fill="none" stroke-linecap="round"/></svg>'
-  },
-  Claude: {
-    id: 'Claude',
-    name: 'Claude',
-    emoji: '🍊',
-    role: 'Phản Biện & Bảo Mật',
-    colorHex: 0xFB923C,
-    earType: 'leaf',
-    colorCss: '#FB923C',
-    cardBg: 'rgba(249, 115, 22, 0.11)',
-    cardBorder: 'rgba(251, 146, 60, 0.36)',
-    angle: 4.45,
-    radius: 5.1,
-    svg: '<svg viewBox="0 0 40 40" class="w-full h-full"><circle cx="20" cy="20" r="19" fill="#7C2D12" stroke="#FB923C" stroke-width="2"/><ellipse cx="20" cy="22" rx="11" ry="9.5" fill="#FDBA74"/><path d="M20 12 Q25 8 27 12 Q23 15 20 12Z" fill="#34D399"/><circle cx="15.5" cy="21.5" r="1.7" fill="#1F2937"/><circle cx="24.5" cy="21.5" r="1.7" fill="#1F2937"/><path d="M18 24 Q20 25.5 22 24" stroke="#1F2937" stroke-width="1.6" fill="none" stroke-linecap="round"/></svg>'
-  },
-  DeepSeek: {
-    id: 'DeepSeek',
-    name: 'DeepSeek',
-    emoji: '🐟',
-    role: 'Tối Ưu Thuật Toán',
-    colorHex: 0x60A5FA,
-    earType: 'koi',
-    colorCss: '#60A5FA',
-    cardBg: 'rgba(37, 99, 235, 0.14)',
-    cardBorder: 'rgba(96, 165, 250, 0.42)',
-    angle: 5.50,
-    radius: 5.1,
-    svg: '<svg viewBox="0 0 40 40" class="w-full h-full"><circle cx="20" cy="20" r="19" fill="#1E3A8A" stroke="#60A5FA" stroke-width="2"/><ellipse cx="20" cy="22" rx="11" ry="9.5" fill="#93C5FD"/><circle cx="20" cy="15.5" r="2.2" fill="#38BDF8"/><circle cx="15.5" cy="21.5" r="1.7" fill="#1E3A8A"/><circle cx="24.5" cy="21.5" r="1.7" fill="#1E3A8A"/><path d="M18 24 Q20 25.8 22 24" stroke="#1E3A8A" stroke-width="1.6" fill="none" stroke-linecap="round"/></svg>'
-  },
-  Commander: {
-    id: 'Commander',
-    name: 'Bạn (Commander)',
-    emoji: '👑',
-    role: 'Chủ Dự Án',
-    colorHex: 0x38BDF8,
-    earType: 'cat',
-    colorCss: '#38BDF8',
-    cardBg: 'rgba(2, 132, 199, 0.24)',
-    cardBorder: 'rgba(56, 189, 248, 0.55)',
-    angle: 0,
-    radius: 0,
-    svg: '<svg viewBox="0 0 40 40" class="w-full h-full"><circle cx="20" cy="20" r="19" fill="#0284C7" stroke="#7DD3FC" stroke-width="2"/><path d="M11 26L14 14L20 20L26 14L29 26H11Z" fill="#E0F2FE"/></svg>'
-  }
-};
-
-export const AGENT_IDS = ['ChatGPT', 'Gemini', 'Codex', 'Antigravity', 'Claude', 'DeepSeek'];
+import { AGENTS, AGENT_IDS } from '../utils/agents.ts';
+import type { AgentDef } from '../utils/agents.ts';
+export { AGENTS, AGENT_IDS } from '../utils/agents.ts';
 
 interface MochiNode {
   agent: AgentDef;
@@ -151,6 +37,8 @@ interface Sora3DIslandProps {
 
 export const Sora3DIsland = React.forwardRef<Sora3DIslandRef, Sora3DIslandProps>(
   ({ onSelectAgent, focusedAgent, typingAgents, onRestoreLayout }, ref) => {
+    const runtimeRef = useRef({ typingAgents, focusedAgent, onSelectAgent });
+    runtimeRef.current = { typingAgents, focusedAgent, onSelectAgent };
     const containerRef = useRef<HTMLDivElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const labelsRef = useRef<HTMLDivElement>(null);
@@ -506,7 +394,7 @@ export const Sora3DIsland = React.forwardRef<Sora3DIslandRef, Sora3DIslandProps>
         tagEl.innerHTML = `<span class="text-[9.5px]">${ag.emoji}</span><span class="font-display font-bold text-[9.5px] text-theme-main">${ag.name}</span>`;
         tagEl.onclick = (e) => {
           e.stopPropagation();
-          onSelectAgent(ag.id);
+          runtimeRef.current.onSelectAgent(ag.id);
         };
         labelLayer.appendChild(tagEl);
 
@@ -616,7 +504,7 @@ export const Sora3DIsland = React.forwardRef<Sora3DIslandRef, Sora3DIslandProps>
           const hits = raycaster.intersectObjects(meshes, false);
           if (hits.length > 0) {
             const hitAgentId = (hits[0].object as any).userData?.agentId;
-            if (hitAgentId) onSelectAgent(hitAgentId);
+            if (hitAgentId) runtimeRef.current.onSelectAgent(hitAgentId);
           }
         }
       };
@@ -650,10 +538,16 @@ export const Sora3DIsland = React.forwardRef<Sora3DIslandRef, Sora3DIslandProps>
       const clock = new THREE.Clock();
       let animId: number;
 
+      const motionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
+      let lastFrame = 0;
       const animate = () => {
         animId = requestAnimationFrame(animate);
-        const delta = Math.min(clock.getDelta(), 0.05);
-        const elapsed = clock.getElapsedTime();
+        const now = performance.now();
+        if (document.hidden || now - lastFrame < (motionQuery.matches ? 250 : 1000 / 30)) return;
+        lastFrame = now;
+        const { typingAgents, focusedAgent } = runtimeRef.current;
+        const delta = motionQuery.matches ? 0 : Math.min(clock.getDelta(), 0.05);
+        const elapsed = motionQuery.matches ? 0 : clock.getElapsedTime();
 
         if (islandGroup) {
           islandGroup.position.y = Math.sin(elapsed * 1.4) * 0.1;
@@ -674,11 +568,14 @@ export const Sora3DIsland = React.forwardRef<Sora3DIslandRef, Sora3DIslandProps>
           const node = mochiNodesRef.current[id];
           if (!node) return;
 
-          if (typingAgents.has(id) && node.jumpIntensity < 0.7) {
-            node.jumpIntensity = 0.75;
+          if (!motionQuery.matches && typingAgents.has(id) && node.jumpIntensity < 0.25) {
+            node.jumpIntensity = 0.3;
           }
 
-          if (node.jumpIntensity > 0.01) {
+          if (motionQuery.matches) {
+            node.bodyGroup.position.y = 0;
+            node.bodyGroup.scale.set(1, 1, 1);
+          } else if (node.jumpIntensity > 0.01) {
             node.jumpPhase += delta * 11.5;
             const jumpWave = Math.abs(Math.sin(node.jumpPhase));
             node.bodyGroup.position.y = jumpWave * 0.85 * node.jumpIntensity;
@@ -694,7 +591,7 @@ export const Sora3DIsland = React.forwardRef<Sora3DIslandRef, Sora3DIslandProps>
           }
         });
 
-        if (petalsSystemRef.current) {
+        if (petalsSystemRef.current && !motionQuery.matches) {
           const posAttr = petalsSystemRef.current.geometry.attributes.position;
           const arr = posAttr.array as Float32Array;
           const vels = petalsSystemRef.current.userData.velocities;
@@ -760,7 +657,7 @@ export const Sora3DIsland = React.forwardRef<Sora3DIslandRef, Sora3DIslandProps>
           camOrbit.targetLookAt.set(0, 1.35, 0);
         }
 
-        if (!isDragging && !focusedAgent) {
+        if (!motionQuery.matches && !isDragging && !focusedAgent) {
           camOrbit.targetTheta += 0.06 * delta;
         }
 
@@ -821,6 +718,15 @@ export const Sora3DIsland = React.forwardRef<Sora3DIslandRef, Sora3DIslandProps>
         window.removeEventListener('mousemove', handleMouseMove);
         window.removeEventListener('mouseup', handleMouseUp);
         canvas.removeEventListener('wheel', handleWheel);
+        AGENT_IDS.forEach(id => { clearTimeout(mochiNodesRef.current[id]?.speechTimer); });
+        scene.traverse(object => {
+          const mesh = object as THREE.Mesh;
+          mesh.geometry?.dispose();
+          const materials = Array.isArray(mesh.material) ? mesh.material : mesh.material ? [mesh.material] : [];
+          materials.forEach(material => material.dispose());
+        });
+        labelsRef.current?.replaceChildren();
+        mochiNodesRef.current = {};
         renderer.dispose();
       };
     }, []);
@@ -855,7 +761,7 @@ export const Sora3DIsland = React.forwardRef<Sora3DIslandRef, Sora3DIslandProps>
               id="focused-mochi-badge"
               className="px-1.5 py-0.2 rounded bg-sky-500/30 text-sky-200 text-[9.5px] font-bold"
             >
-              {focusedAgentInfo ? `${focusedAgentInfo.emoji} ${focusedAgentInfo.name}` : '6 AI Live'}
+              {focusedAgentInfo ? `${focusedAgentInfo.emoji} ${focusedAgentInfo.name}` : 'Mascot · xem trạng thái ở thanh AI'}
             </span>
           </div>
 

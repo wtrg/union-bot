@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { ProviderSessionControls } from './ProviderSessionControls.tsx';
 import { BrowserTabInfo, BrowserManagerState } from '../types.ts';
 
 interface BrowserPanelProps {
@@ -33,8 +34,22 @@ export const BrowserPanel: React.FC<BrowserPanelProps> = ({ isOpen, onClose, act
     isModalActive: false,
   });
   const [addressInput, setAddressInput] = useState<string>('');
+  const editingAddress = useRef(false);
   const [shareSuccess, setShareSuccess] = useState<boolean>(false);
   const [bindingMessage, setBindingMessage] = useState('');
+  const [bindings, setBindings] = useState<Record<string, { url?: string }>>({});
+  const [bindingBusy, setBindingBusy] = useState(false);
+  const bindingRoomRef = useRef(activeRoomId);
+  bindingRoomRef.current = activeRoomId;
+  useEffect(() => {
+    setBindingMessage(''); setBindings({});
+    if (!isOpen || !window.unionBotAPI?.getGroupBindings) return;
+    let cancelled = false;
+    window.unionBotAPI.getGroupBindings({ roomId: activeRoomId }).then(result => {
+      if (!cancelled && result.success) setBindings(result.bindings || {});
+    }).catch(() => { if (!cancelled) setBindingMessage('Chưa đọc được liên kết hội thoại'); });
+    return () => { cancelled = true; };
+  }, [activeRoomId, isOpen]);
 
   // Synchronize open state with Electron main
   useEffect(() => {
@@ -121,7 +136,7 @@ export const BrowserPanel: React.FC<BrowserPanelProps> = ({ isOpen, onClose, act
         if (st && Array.isArray(st.tabs)) {
           setBrowserState(st);
           const act = st.tabs.find((t) => t.id === st.activeTabId);
-          if (act) setAddressInput(act.url);
+          if (act && !editingAddress.current) setAddressInput(act.url);
         }
       });
     }
@@ -131,7 +146,7 @@ export const BrowserPanel: React.FC<BrowserPanelProps> = ({ isOpen, onClose, act
         if (st && Array.isArray(st.tabs)) {
           setBrowserState(st);
           const act = st.tabs.find((t) => t.id === st.activeTabId);
-          if (act) setAddressInput(act.url);
+          if (act && !editingAddress.current) setAddressInput(act.url);
         }
       });
       return unsub;
@@ -160,7 +175,7 @@ export const BrowserPanel: React.FC<BrowserPanelProps> = ({ isOpen, onClose, act
       updateBounds();
       const timer = setTimeout(() => {
         updateBounds();
-      }, 60);
+      }, 300);
 
       const ro = new ResizeObserver(() => updateBounds());
       if (mountRef.current) ro.observe(mountRef.current);
@@ -174,8 +189,12 @@ export const BrowserPanel: React.FC<BrowserPanelProps> = ({ isOpen, onClose, act
   }, [isOpen, dockMode, updateBounds]);
 
   const activeTab = browserState.tabs.find((t) => t.id === browserState.activeTabId) || browserState.tabs[0];
+  const isBound = !!activeTab && !!bindings[activeTab.providerId]?.url && activeTab.url.split(/[?#]/)[0] === bindings[activeTab.providerId]?.url;
+
+  useEffect(() => { setBindingMessage(''); }, [browserState.activeTabId]);
 
   const handleSelectTab = (tabId: string) => {
+    editingAddress.current = false;
     if (window.unionBotAPI && typeof window.unionBotAPI.browserSelectTab === 'function') {
       window.unionBotAPI.browserSelectTab(tabId);
     } else {
@@ -187,6 +206,7 @@ export const BrowserPanel: React.FC<BrowserPanelProps> = ({ isOpen, onClose, act
 
   const handleCloseTab = (e: React.MouseEvent, tabId: string) => {
     e.stopPropagation();
+    if (browserState.tabs.find(tab => tab.id === tabId)?.worker) { setBindingMessage('AI đang dùng tab này. Dừng lượt trước khi đóng tab.'); return; }
     if (window.unionBotAPI && typeof window.unionBotAPI.browserCloseTab === 'function') {
       window.unionBotAPI.browserCloseTab(tabId);
     } else {
@@ -210,6 +230,7 @@ export const BrowserPanel: React.FC<BrowserPanelProps> = ({ isOpen, onClose, act
   const handleNavigate = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (!addressInput.trim()) return;
+    if (activeTab?.worker) { setBindingMessage('AI đang dùng tab này. Dừng lượt trước khi điều hướng.'); return; }
     if (window.unionBotAPI && typeof window.unionBotAPI.browserNavigate === 'function') {
       window.unionBotAPI.browserNavigate({
         tabId: activeTab?.id,
@@ -226,6 +247,7 @@ export const BrowserPanel: React.FC<BrowserPanelProps> = ({ isOpen, onClose, act
   };
 
   const handleAction = (action: string) => {
+    if (activeTab?.worker && !action.startsWith('zoom-')) { setBindingMessage('AI đang dùng tab này. Dừng lượt trước khi thay đổi trang.'); return; }
     if (window.unionBotAPI && typeof window.unionBotAPI.browserPerformAction === 'function') {
       window.unionBotAPI.browserPerformAction({
         tabId: activeTab?.id,
@@ -383,6 +405,8 @@ export const BrowserPanel: React.FC<BrowserPanelProps> = ({ isOpen, onClose, act
               className="browser-address-input"
               data-testid="browser-address-input"
               value={addressInput}
+              onFocus={() => { editingAddress.current = true; }}
+              onBlur={() => { editingAddress.current = false; }}
               onChange={(e) => setAddressInput(e.target.value)}
               placeholder="Enter HTTPS address or search query..."
             />
@@ -433,18 +457,29 @@ export const BrowserPanel: React.FC<BrowserPanelProps> = ({ isOpen, onClose, act
 
       {/* 3. Native WebContentsView Mount Container */}
       <div className="browser-group-context">
-        <span>💬 {bindingMessage || `Hội thoại liên kết với #${activeRoomId}`}</span>
+        <span>{bindingMessage || (isBound ? `Đã liên kết hội thoại này với #${activeRoomId}` : `Hội thoại này chưa liên kết với #${activeRoomId}`)}{activeTab?.worker ? ' · AI đang điều khiển tab, vui lòng chờ' : ''}</span>
         <button
           type="button"
+          disabled={bindingBusy || !!activeTab?.worker}
           onClick={async () => {
             if (!activeTab || !window.unionBotAPI?.bindGroupThread) return;
-            const result = await window.unionBotAPI.bindGroupThread({ roomId: activeRoomId, tabId: activeTab.id });
-            setBindingMessage(result.success ? `✓ Đã gắn hội thoại vào #${activeRoomId}` : result.error || 'Không gắn được hội thoại');
+            const room = activeRoomId; setBindingBusy(true);
+            try {
+              const result = await window.unionBotAPI.bindGroupThread({ roomId: room, tabId: activeTab.id });
+              if (bindingRoomRef.current !== room) return;
+              setBindingMessage(result.success ? `Đã gắn hội thoại vào #${room}` : result.error || 'Không gắn được hội thoại');
+              if (result.success) {
+                const current = await window.unionBotAPI.getGroupBindings({ roomId: room });
+                if (bindingRoomRef.current === room && current.success) setBindings(current.bindings || {});
+              }
+            } catch (error) { if (bindingRoomRef.current === room) setBindingMessage(String(error)); }
+            finally { setBindingBusy(false); }
           }}
         >
           🔗 Dùng cho nhóm
         </button>
       </div>
+      {activeTab && ['chatgpt', 'gemini', 'claude', 'deepseek'].includes(activeTab.providerId) && <div className="ub-provider-session-bar"><ProviderSessionControls providerId={activeTab.providerId} tabId={activeTab.id} onOpen={() => {}} /></div>}
       <div className="browser-view-container" ref={mountRef} data-testid="browser-view-mount">
         {/* Crash Recovery Card (Ticket P4-009) */}
         {activeTab?.crashed && (

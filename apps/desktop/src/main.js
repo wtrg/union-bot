@@ -10,7 +10,7 @@
  * - Automated GUI smoke test mode (--smoke)
  */
 
-const { app, BrowserWindow, WebContentsView, dialog, ipcMain, session, shell } = require('electron');
+const { app, BrowserWindow, WebContentsView, dialog, ipcMain, session, shell, clipboard } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -39,6 +39,7 @@ const { WorkflowSupervisor } = require('./services/workflow-supervisor.cjs');
 const { GitReviewService } = require('./services/git-review-service.cjs');
 const { BrowserUseBridge } = require('./services/browser-use-bridge.cjs');
 const { GroupChatService } = require('./services/group-chat-service.cjs');
+const { ProviderConnectionService } = require('./services/provider-connection-service.cjs');
 const { SecurityGuardService } = require('./services/security-guard.cjs');
 
 // Custom test userData override for isolated multi-process E2E testing
@@ -854,6 +855,7 @@ function createWindow() {
     browserService = new BrowserService(mainWindow, storage, artifactStore, path.resolve(__dirname, '../../..'));
     capabilityRegistry.browserService = browserService;
     taskGraphService.setSessionRegistry(browserService.sessionRegistry);
+    browserService.controlBridge = browserUseBridge;
     browserUseBridge.browserManager = browserService; // Connect real browser runtime for review inspection (U08-R10-01)
 
     // Phase P9 Production Transport Registration: Synchronously registered across all runtime modes (P9-R02-001)
@@ -5986,6 +5988,47 @@ ipcMain.handle('union-bot:group-send-message', async (event, envelope) => {
       group.enqueue(envelope);
     }
     return { success: true, envelopeId: result.envelopeId, deduplicated: result.deduplicated };
+  } catch (error) { return { success: false, error: error.message }; }
+});
+
+ipcMain.handle('union-bot:clipboard-write-text', (event, text) => {
+  if (!checkSenderAuthorized(event)) return { success: false, error: 'Unauthorized IPC sender' };
+  return require('./services/clipboard-service.cjs').writeClipboardText(clipboard, text);
+});
+
+ipcMain.handle('union-bot:provider-open-login', async (event, { providerId } = {}) => {
+  if (!checkSenderAuthorized(event)) return { success: false, error: 'Unauthorized IPC sender' };
+  try {
+    if (!browserService) throw new Error('Trình duyệt chưa sẵn sàng.');
+    return new ProviderConnectionService(browserService).open(providerId);
+  } catch (error) { return { success: false, error: error.message }; }
+});
+
+ipcMain.handle('union-bot:provider-check-session', async (event, { providerId, tabId } = {}) => {
+  if (!checkSenderAuthorized(event)) return { success: false, error: 'Unauthorized IPC sender' };
+  try {
+    if (!browserService) throw new Error('Trình duyệt chưa sẵn sàng.');
+    return await new ProviderConnectionService(browserService).check(providerId, tabId);
+  } catch (error) { return { success: false, error: error.message }; }
+});
+
+ipcMain.handle('union-bot:group-cancel-run', async (event, { runId, roomId } = {}) => {
+  if (!checkSenderAuthorized(event)) return { success: false, error: 'Unauthorized IPC sender' };
+  if (typeof runId !== 'string' || typeof roomId !== 'string') return { success: false, error: 'Thiếu lượt hoặc phòng' };
+  return groupChatService?.cancel(runId, roomId) || { success: false, error: 'Không có lượt đang chạy' };
+});
+
+ipcMain.handle('union-bot:group-get-bindings', async (event, { roomId } = {}) => {
+  if (!checkSenderAuthorized(event)) return { success: false, error: 'Unauthorized IPC sender' };
+  if (typeof roomId !== 'string' || !roomId) return { success: false, error: 'Thiếu phòng làm việc' };
+  try {
+    const bindings = {};
+    const group = getGroupChatService();
+    for (const provider of ['chatgpt', 'gemini', 'claude', 'deepseek']) {
+      const reference = group.threads[`${roomId}:${provider}`];
+      if (reference) bindings[provider] = reference;
+    }
+    return { success: true, bindings };
   } catch (error) { return { success: false, error: error.message }; }
 });
 
