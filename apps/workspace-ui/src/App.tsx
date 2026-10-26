@@ -14,14 +14,21 @@ const Sora3DIsland = React.lazy(() =>
   })),
 );
 import { ProviderSessionControls } from "./components/ProviderSessionControls.tsx";
-import { ChatMessage } from "./components/ChatMessage.tsx";
+import { ChatMessage, RunNotices, isRunNotice } from "./components/ChatMessage.tsx";
 import {
   AgentSignalStrip3D,
   type AgentNodeData,
   type AgentStatus,
 } from "./components/AgentSignalStrip3D.tsx";
+import { CosmicSakuraSky, type CosmicSakuraSkyRef } from "./components/CosmicSakuraSky.tsx";
+import { playChime } from "./utils/audio.ts";
 import { createEnvelopeBuffer } from "./utils/envelope-buffer.ts";
 import "./workspace-refinement.css";
+import "./glass-workspace.css";
+import "./chat-thread.css";
+import { commandMentionTargets } from "./utils/mentions.ts";
+import { MemberMentions } from "./components/MemberMentions.tsx";
+import { AetherOrb } from "./components/AetherOrb.tsx";
 import { BrowserPanel } from "./components/BrowserPanel.tsx";
 import { MessageContent } from "./components/MessageContent.tsx";
 import type { EnvelopeView, TaskItem, BrowserManagerState } from "./types.ts";
@@ -98,7 +105,8 @@ export const App: React.FC = () => {
   const [showDiagnostics, setShowDiagnostics] = useState(false);
   const [isBrowserOpen, setIsBrowserOpen] = useState(false);
   const [browser, setBrowser] = useState<BrowserManagerState | null>(null);
-  const [inspectorOpen, setInspectorOpen] = useState(false);
+  const [inspectorOpen, setInspectorOpen] = useState(() => window.innerWidth >= 1100);
+  const [navigationCollapsed, setNavigationCollapsed] = useState(false);
   const [motionEnabled, setMotionEnabled] = useState(true);
   const [pageHidden, setPageHidden] = useState(document.hidden);
   const composing = useRef(false);
@@ -107,10 +115,16 @@ export const App: React.FC = () => {
   >("members");
   const [garden, setGarden] = useState(false);
   const [focusedAgent, setFocusedAgent] = useState<string | null>(null);
-  const [fontSize, setFontSize] = useState(15);
+  const [fontSize, setFontSize] = useState(14);
   const [toast, setToast] = useState("");
   const [unread, setUnread] = useState<Record<string, number>>({});
   const [newMessages, setNewMessages] = useState(false);
+  const [soundEnabled, setSoundEnabled] = useState(true);
+  const [focusChatMode, setFocusChatMode] = useState(false);
+  const [densityLabel, setDensityLabel] = useState("Hoa & Sao: Rực rỡ");
+  const soundEnabledRef = useRef(soundEnabled);
+  soundEnabledRef.current = soundEnabled;
+  const skyRef = useRef<CosmicSakuraSkyRef>(null);
   const chatRef = useRef<HTMLDivElement>(null);
   const feedRef = useRef<HTMLDivElement>(null);
   const draftsRef = useRef(drafts);
@@ -273,6 +287,8 @@ export const App: React.FC = () => {
           AGENT_NAMES[providerOf(envelope)],
           "Hoàn tất",
         );
+        if (soundEnabledRef.current) playChime("success");
+        skyRef.current?.triggerSakuraBurst(window.innerWidth * 0.5, window.innerHeight * 0.35, 14);
       }
     });
     return () => {
@@ -336,7 +352,11 @@ export const App: React.FC = () => {
             ? state
             : "blocked"
         ) as AgentStatus;
-        return { id, name, status };
+        const stage = latest?.delivery?.progressStage;
+        const statusText = status === "sending" && stage
+          ? {loading:"Đang tải", preparing:"Đang soạn", sending:"Đang gửi", waiting:"Chờ AI"}[stage]
+          : undefined;
+        return { id, name, status, statusText };
       }),
     [roomMessages, activity],
   );
@@ -400,6 +420,8 @@ export const App: React.FC = () => {
     sendLock.current = true;
     setSending(true);
     nearBottom.current = true;
+    if (soundEnabledRef.current) playChime("soft");
+    skyRef.current?.triggerMeteorShower(2);
     setMessages((prev) => ({
       ...prev,
       [room]: mergeEnvelope(prev[room] || [], {
@@ -549,6 +571,24 @@ export const App: React.FC = () => {
   );
   const decisions = roomMessages.filter((e) => e.delivery?.phase === "summary");
   const roomName = rooms.find((r) => r.id === activeRoom)?.name || activeRoom;
+  const draftTargets = commandMentionTargets(drafts[activeRoom] || "");
+  const lastMessage = roomMessages[roomMessages.length - 1];
+  const lastTurn = lastMessage
+    ? roomMessages.filter(e => runIdOf(e) === runIdOf(lastMessage) && e.sender.kind !== "user")
+    : EMPTY_MESSAGES;
+  const aetherState = activity.length ? "thinking"
+    : lastTurn.some(e => ["blocked", "failed", "waiting_input"].includes(messageState(e))) ? "blocked"
+    : lastTurn.length > 0 && lastTurn.every(e => messageState(e) === "completed") ? "completed" : "idle";
+
+  const blockedAgents = useMemo(() => {
+    return Object.entries(AGENT_NAMES).filter(([provider]) => {
+      const tab = browser?.tabs.find((t) => t.providerId === provider);
+      if (tab?.authStatus === "LOGIN_REQUIRED") return true;
+      const turns = roomMessages.filter((e) => providerOf(e) === provider && e.sender.kind !== "user");
+      const latest = turns[turns.length - 1];
+      return latest && ["blocked", "failed"].includes(messageState(latest));
+    });
+  }, [browser, roomMessages]);
 
   return (
     <div
@@ -556,17 +596,56 @@ export const App: React.FC = () => {
       data-motion={motionEnabled && !pageHidden ? "on" : "off"}
       style={{ "--chat-font-size": `${fontSize}px` } as React.CSSProperties}
     >
+      <CosmicSakuraSky ref={skyRef} motionEnabled={motionEnabled && !pageHidden} />
       <header className="ub-topbar">
-        <div className="ub-brand">
+        <div
+          className="ub-brand"
+          style={{ cursor: "pointer" }}
+          onClick={() => {
+            if (soundEnabledRef.current) playChime("soft");
+            skyRef.current?.triggerMeteorShower(6);
+            skyRef.current?.triggerSakuraBurst(140, 32, 16);
+          }}
+        >
           <span>U</span>
           <div>
-            Union Bot<small>Không gian làm việc cùng AI</small>
+            Union Bot<small>Sakura Galaxy Workspace</small>
           </div>
         </div>
         <div className="ub-top-actions">
           <span className="ub-connection">
             {api ? "Desktop đã kết nối" : "Bản xem trước"}
           </span>
+          <button
+            title="Gọi mưa sao băng lướt qua bầu trời"
+            onClick={() => {
+              if (soundEnabledRef.current) playChime("soft");
+              skyRef.current?.triggerMeteorShower(6);
+            }}
+          >
+            🌠 Mưa Sao Băng
+          </button>
+          <button
+            title="Thu gọn 2 bên để phóng to khung Chat & ngắm cảnh Vũ trụ Hoa Anh Đào"
+            aria-pressed={focusChatMode}
+            onClick={() => {
+              setFocusChatMode((v) => !v);
+              if (!focusChatMode) {
+                skyRef.current?.triggerMeteorShower(4);
+              }
+            }}
+          >
+            🎯 {focusChatMode ? "Hiện 2 bên" : "Tập trung Chat"}
+          </button>
+          <button
+            title="Đổi mật độ Hoa Anh Đào & Sao Băng"
+            onClick={() => {
+              const nextLabel = skyRef.current?.cycleDensity() || "Hoa & Sao: Rực rỡ";
+              setDensityLabel(nextLabel);
+            }}
+          >
+            🌸 {densityLabel}
+          </button>
           <button
             aria-pressed={motionEnabled}
             title={motionEnabled ? "Tắt chuyển động" : "Bật chuyển động"}
@@ -590,10 +669,23 @@ export const App: React.FC = () => {
           >
             Chi tiết
           </button>
+          <button
+            title={soundEnabled ? "Tắt âm thanh chuông gió" : "Bật âm thanh chuông gió"}
+            aria-pressed={soundEnabled}
+            onClick={() => {
+              setSoundEnabled((v) => !v);
+              if (!soundEnabled) playChime("soft");
+            }}
+          >
+            {soundEnabled ? "🔔" : "🔕"}
+          </button>
         </div>
       </header>
-      <div className={`ub-shell ${inspectorOpen ? "" : "inspector-hidden"}`}>
+      <div className={`ub-shell ${inspectorOpen ? "" : "inspector-hidden"} ${navigationCollapsed ? "nav-collapsed" : ""} ${focusChatMode ? "focus-chat-mode" : ""}`}>
         <nav className="ub-navigation" aria-label="Phòng làm việc">
+          <button className="ub-nav-toggle" aria-label={navigationCollapsed ? "Mở rộng thanh phòng" : "Thu gọn thanh phòng"} aria-expanded={!navigationCollapsed} onClick={() => setNavigationCollapsed(v => !v)}>
+            <span aria-hidden="true">◫</span><strong>Không gian của bạn</strong>
+          </button>
           <p className="ub-eyebrow">Phòng làm việc</p>
           {rooms.map((room) => (
             <button
@@ -635,6 +727,7 @@ export const App: React.FC = () => {
           </div>
         </nav>
         <main className="ub-conversation">
+          <div className="ub-room-bar">
           <header className="ub-room-header">
             <div>
               <p className="ub-eyebrow">
@@ -642,6 +735,8 @@ export const App: React.FC = () => {
               </p>
               <h1>{roomName}</h1>
             </div>
+            <div className="ub-room-tools">
+            <AetherOrb motionEnabled={motionEnabled && !pageHidden} state={aetherState} />
             <details className="ub-view-options">
               <summary>Tùy chọn</summary>
               <div className="ub-font-control">
@@ -670,12 +765,14 @@ export const App: React.FC = () => {
                 </button>
               </div>
             </details>
+            </div>
           </header>
           <AgentSignalStrip3D
             agents={agentNodes}
             onSelectAgent={selectAgent}
             motionEnabled={motionEnabled}
           />
+          </div>
           {activity.length > 0 && (
             <div className="ub-run-status" role="status">
               {activity.filter((e) => messageState(e) !== "queued").length} đang
@@ -703,6 +800,7 @@ export const App: React.FC = () => {
               >
                 <Sora3DIsland
                   ref={islandRef}
+                  motionEnabled={motionEnabled && !pageHidden}
                   typingAgents={typingAgents}
                   focusedAgent={focusedAgent}
                   onSelectAgent={(id) => {
@@ -764,14 +862,16 @@ export const App: React.FC = () => {
                         </button>
                       </div>
                     )}
-                    {envelopes.map((envelope) => (
+                    {envelopes.filter(e => !isRunNotice(e)).map((envelope, index, visible) => (
                       <ChatMessage
                         key={envelope.id}
                         envelope={envelope}
+                        continuation={index > 0 && visible[index - 1].sender.kind === envelope.sender.kind && providerOf(visible[index - 1]) === providerOf(envelope) && Math.abs(envelope.timestamp - visible[index - 1].timestamp) < 5 * 60_000 && visible[index - 1].delivery?.phase === envelope.delivery?.phase}
                         onReply={selectAgent}
                         onOpenThread={openThread}
                       />
                     ))}
+                    <RunNotices envelopes={envelopes.filter(isRunNotice)} onOpenThread={openThread} />
                   </section>
                 ))}
               </div>
@@ -792,6 +892,21 @@ export const App: React.FC = () => {
               </button>
             )}
           </div>
+          {blockedAgents.length > 0 ? (
+            <div className="ub-blocked-banner" role="status">
+              <span>⚠️ <strong>{blockedAgents.length} AI cần xử lý:</strong> {blockedAgents.map(([_, name]) => name).join(", ")}</span>
+              <button
+                type="button"
+                onClick={() => setIsBrowserOpen(true)}
+              >
+                ⚡ Mở Trình duyệt để gỡ chặn
+              </button>
+            </div>
+          ) : (
+            <div className="ub-blocked-banner all-ok" role="status">
+              <span>✓ <strong>Tất cả 6 AI đã kết nối hoàn tất!</strong> Sẵn sàng nhận yêu cầu song song.</span>
+            </div>
+          )}
           <form className="ub-composer" onSubmit={sendMessage}>
             <div className="ub-composer-controls">
               <label>
@@ -820,6 +935,33 @@ export const App: React.FC = () => {
                   <option value="review">Phản biện & tổng hợp</option>
                 </select>
               </label>
+              <span
+                className="ub-mention-chip"
+                title="Gọi toàn bộ 6 AI"
+                onClick={() => {
+                  setDrafts((prev) => ({
+                    ...prev,
+                    [activeRoom]: "@all " + (prev[activeRoom] || "").replace(/^\s*@\S+\s*/, ""),
+                  }));
+                  inputRef.current?.focus();
+                }}
+              >
+                @all
+              </span>
+              <span
+                className="ub-mention-chip"
+                title="Gọi Antigravity triển khai code"
+                onClick={() => {
+                  setDrafts((prev) => ({
+                    ...prev,
+                    [activeRoom]: "@Antigravity " + (prev[activeRoom] || "").replace(/^\s*@\S+\s*/, ""),
+                  }));
+                  inputRef.current?.focus();
+                }}
+              >
+                @Antigravity
+              </span>
+              {draftTargets.length > 0 && <span className="ub-tag-targets" aria-live="polite">Gọi: <MemberMentions text={draftTargets.length === 6 ? "@all" : draftTargets.map(id => `@${id}`).join(" ")} /></span>}
             </div>
             <textarea
               ref={inputRef}
@@ -937,6 +1079,7 @@ export const App: React.FC = () => {
                         ) && (
                           <ProviderSessionControls
                             providerId={provider}
+                            roomId={activeRoom}
                             tabId={tab?.id}
                             onOpen={() => setIsBrowserOpen(true)}
                           />
@@ -944,8 +1087,12 @@ export const App: React.FC = () => {
                         {tab && (
                           <button
                             onClick={async () => {
-                              await api?.browserSelectTab?.(tab.id);
-                              setIsBrowserOpen(true);
+                              if (!api) return;
+                              try {
+                                const result = await api.openGroupThread({roomId: activeRoom, provider});
+                                if (!result.success) throw Error(result.error || "Không mở được hội thoại của phòng.");
+                                setIsBrowserOpen(true);
+                              } catch (error) { notify(String(error)); }
                             }}
                           >
                             Mở tab {name} ↗

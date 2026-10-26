@@ -1,0 +1,42 @@
+[
+  {
+    "turnId": "UNION_TURN_1b14c1f6-3759-47f3-af9d-a5d909e4288a",
+    "provider": "gemini",
+    "selectedModel": "Argon",
+    "promptChars": 525,
+    "stagesMs": {
+      "start": 0,
+      "ready": 13,
+      "draftInserted": 2330,
+      "sendClicked": 2362,
+      "promptObserved": 3108,
+      "generationObserved": 3108,
+      "firstText": 51404,
+      "generationStopped": 53103,
+      "completed": 54681,
+      "released": 54682
+    },
+    "jsCalls": 71,
+    "jsTotalMs": 1591
+  },
+  {
+    "turnId": "UNION_TURN_575a4a96-ee7c-4b8d-9690-6367da1148db",
+    "provider": "gemini",
+    "selectedModel": "Argon",
+    "promptChars": 1436,
+    "stagesMs": {
+      "start": 0,
+      "ready": 275,
+      "draftInserted": 6226,
+      "sendClicked": 6263,
+      "promptObserved": 7203,
+      "generationObserved": 7203,
+      "firstText": 26451,
+      "generationStopped": 27872,
+      "completed": 29289,
+      "released": 29289
+    },
+    "jsCalls": 35,
+    "jsTotalMs": 946
+  }
+]

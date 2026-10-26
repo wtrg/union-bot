@@ -113,6 +113,30 @@ class BrowserService {
         callback({ cancel: false });
       });
 
+      if (partitionName === 'persist:mcb-web-gemini' && process.env.UNION_BOT_GROUP_DIAGNOSTICS === '1') {
+        // Read-only transport timing: never log query strings, request bodies,
+        // cookies, headers or account identifiers.
+        const pending = new Map();
+        const filter = {urls:['https://gemini.google.com/*']};
+        partSession.webRequest.onSendHeaders(filter, details => {
+          if(details.method !== 'POST') return;
+          const path = new URL(details.url).pathname;
+          const route = /StreamGenerate/i.test(path) ? 'generation' : /batchexecute/i.test(path) ? 'rpc' : 'other';
+          if(route !== 'generation') return;
+          pending.set(details.id,{started:Date.now(),route});
+          console.log('[GeminiNetwork]',JSON.stringify({event:'sent',id:details.id,route}));
+        });
+        const record = event => details => {
+          const request = pending.get(details.id);
+          if(!request) return;
+          console.log('[GeminiNetwork]',JSON.stringify({event,id:details.id,route:request.route,elapsedMs:Date.now()-request.started,status:details.statusCode,error:details.error}));
+          if(event!=='headers') pending.delete(details.id);
+        };
+        partSession.webRequest.onResponseStarted(filter,record('headers'));
+        partSession.webRequest.onCompleted(filter,record('completed'));
+        partSession.webRequest.onErrorOccurred(filter,record('error'));
+      }
+
       this.configuredPartitions.add(partitionName);
     } catch (err) {
       console.error(`[BrowserSession] Fail-closed: security configuration failed for partition ${partitionName}:`, err.message);
@@ -384,11 +408,11 @@ class BrowserService {
           view.setVisible(true);
         }
       } else if (isWorker && typeof view.setVisible === 'function') {
-        // A never-mounted/hidden native view can defer provider rendering until
-        // the operator selects it. Give active workers an off-window surface;
-        // this preserves layout and streaming without opening the browser dock.
+        // A fully clipped native view can defer rendering until selected. Keep
+        // the full provider viewport with only one corner pixel intersecting
+        // the window, without opening the browser dock or covering its controls.
         if (!this._isViewAttached(view)) this.mainWindow.contentView.addChildView(view);
-        view.setBounds({ x: -2048, y: 0, width: 1024, height: 768 });
+        view.setBounds({ x: -1023, y: -767, width: 1024, height: 768 });
         view.setVisible(true);
       } else {
         // Hide inactive view or hide when modal is active (P4-008)

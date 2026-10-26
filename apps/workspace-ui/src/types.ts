@@ -186,7 +186,7 @@ export interface UnionBotAPI {
   cancelGroupRun: (payload: { runId: string; roomId: string }) => Promise<{ success: boolean; error?: string }>;
   providerOpenLogin: (payload: { providerId: string }) => Promise<ProviderConnectionResult>;
   providerCheckSession: (payload: { providerId: string; tabId?: string }) => Promise<ProviderConnectionResult>;
-  getGroupBindings: (payload: { roomId: string }) => Promise<{ success: boolean; bindings?: Record<string, { url?: string; conversationId?: string }>; error?: string }>;
+  getGroupBindings: (payload: { roomId: string }) => Promise<{ success: boolean; bindings?: Record<string, { url?: string; conversationId?: string; tabId?: string }>; error?: string }>;
   bindGroupThread: (payload: { roomId: string; tabId: string }) => Promise<{ success: boolean; error?: string }>;
   openGroupThread: (payload: { roomId: string; provider: string }) => Promise<{ success: boolean; error?: string }>;
   dispatchEnvelope: (envelope: any) => Promise<{ success: boolean; envelopeId?: string; deduplicated?: boolean; error?: string; code?: string }>;

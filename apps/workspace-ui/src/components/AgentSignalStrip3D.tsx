@@ -14,6 +14,7 @@ export interface AgentNodeData {
   id: string;
   name: string;
   status: AgentStatus;
+  statusText?: string;
 }
 
 const STATUS_LABEL: Record<AgentStatus, string> = {
@@ -62,8 +63,8 @@ export const AgentSignalStrip3D = memo(function AgentSignalStrip3D({
             type="button"
             className="ub-node-button"
             data-status={agent.status}
-            aria-label={`${agent.name}: ${STATUS_LABEL[agent.status]}`}
-            title={`${agent.name}: ${STATUS_LABEL[agent.status]}`}
+            aria-label={`${agent.name}: ${agent.statusText || STATUS_LABEL[agent.status]}`}
+            title={`${agent.name}: ${agent.statusText || STATUS_LABEL[agent.status]}`}
             onClick={() => onSelectAgent(agent.id)}
           >
             <span className="ub-node-orb" aria-hidden="true">
@@ -73,7 +74,7 @@ export const AgentSignalStrip3D = memo(function AgentSignalStrip3D({
             <span className="ub-node-meta">
               <span className="ub-node-name">{agent.name}</span>
               <span className="ub-node-state">
-                {STATUS_LABEL[agent.status]}
+                {agent.statusText || STATUS_LABEL[agent.status]}
               </span>
             </span>
           </button>

@@ -28,6 +28,7 @@ export interface Sora3DIslandRef {
 }
 
 interface Sora3DIslandProps {
+  motionEnabled?: boolean;
   onSelectAgent: (agentId: string) => void;
   focusedAgent: string | null;
   typingAgents: Set<string>;
@@ -36,9 +37,9 @@ interface Sora3DIslandProps {
 }
 
 export const Sora3DIsland = React.forwardRef<Sora3DIslandRef, Sora3DIslandProps>(
-  ({ onSelectAgent, focusedAgent, typingAgents, onRestoreLayout }, ref) => {
-    const runtimeRef = useRef({ typingAgents, focusedAgent, onSelectAgent });
-    runtimeRef.current = { typingAgents, focusedAgent, onSelectAgent };
+  ({ onSelectAgent, focusedAgent, typingAgents, onRestoreLayout, motionEnabled = true }, ref) => {
+    const runtimeRef = useRef({ typingAgents, focusedAgent, onSelectAgent, motionEnabled });
+    runtimeRef.current = { typingAgents, focusedAgent, onSelectAgent, motionEnabled };
     const containerRef = useRef<HTMLDivElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const labelsRef = useRef<HTMLDivElement>(null);
@@ -543,11 +544,12 @@ export const Sora3DIsland = React.forwardRef<Sora3DIslandRef, Sora3DIslandProps>
       const animate = () => {
         animId = requestAnimationFrame(animate);
         const now = performance.now();
-        if (document.hidden || now - lastFrame < (motionQuery.matches ? 250 : 1000 / 30)) return;
+        const reduceMotion = motionQuery.matches || !runtimeRef.current.motionEnabled;
+        if (document.hidden || now - lastFrame < (reduceMotion ? 250 : 1000 / 30)) return;
         lastFrame = now;
         const { typingAgents, focusedAgent } = runtimeRef.current;
-        const delta = motionQuery.matches ? 0 : Math.min(clock.getDelta(), 0.05);
-        const elapsed = motionQuery.matches ? 0 : clock.getElapsedTime();
+        const delta = reduceMotion ? 0 : Math.min(clock.getDelta(), 0.05);
+        const elapsed = reduceMotion ? 0 : clock.getElapsedTime();
 
         if (islandGroup) {
           islandGroup.position.y = Math.sin(elapsed * 1.4) * 0.1;
@@ -568,11 +570,11 @@ export const Sora3DIsland = React.forwardRef<Sora3DIslandRef, Sora3DIslandProps>
           const node = mochiNodesRef.current[id];
           if (!node) return;
 
-          if (!motionQuery.matches && typingAgents.has(id) && node.jumpIntensity < 0.25) {
+          if (!reduceMotion && typingAgents.has(id) && node.jumpIntensity < 0.25) {
             node.jumpIntensity = 0.3;
           }
 
-          if (motionQuery.matches) {
+          if (reduceMotion) {
             node.bodyGroup.position.y = 0;
             node.bodyGroup.scale.set(1, 1, 1);
           } else if (node.jumpIntensity > 0.01) {
@@ -591,7 +593,7 @@ export const Sora3DIsland = React.forwardRef<Sora3DIslandRef, Sora3DIslandProps>
           }
         });
 
-        if (petalsSystemRef.current && !motionQuery.matches) {
+        if (petalsSystemRef.current && !reduceMotion) {
           const posAttr = petalsSystemRef.current.geometry.attributes.position;
           const arr = posAttr.array as Float32Array;
           const vels = petalsSystemRef.current.userData.velocities;
@@ -657,7 +659,7 @@ export const Sora3DIsland = React.forwardRef<Sora3DIslandRef, Sora3DIslandProps>
           camOrbit.targetLookAt.set(0, 1.35, 0);
         }
 
-        if (!motionQuery.matches && !isDragging && !focusedAgent) {
+        if (!reduceMotion && !isDragging && !focusedAgent) {
           camOrbit.targetTheta += 0.06 * delta;
         }
 

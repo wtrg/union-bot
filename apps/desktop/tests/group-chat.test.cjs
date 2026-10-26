@@ -10,6 +10,7 @@ const {
   readPage,
   runGroupTurn,
   prepareComposer,
+  replyIsComplete,
 } = require("../src/services/web-group-turn.cjs");
 const vm = require("node:vm");
 const fs = require("node:fs");
@@ -83,6 +84,35 @@ test("default leader and explicit member routing are predictable", () => {
   assert.deepEqual(targetsFor("`@all` là ví dụ trong tài liệu"), ["chatgpt"]);
 });
 
+test("Gemini continuation sends only new group context with a proven completed reply in the same URL", async () => {
+  const prompts={};
+  for (const kind of ['continued','new-url','missing-cursor','blocked','partial','inconsistent-state','wrong-room','review','summary']) {
+    const url='https://gemini.google.com/app/proven';
+    const previousUser=user('previous','r','PREVIOUS_USER_CONTEXT '.repeat(40));
+    const current=user('current','r','CURRENT_REQUEST_UNTRUNCATED');
+    if(kind==='review')current.metadata={collaborationMode:'review'};
+    const {group}=fixture({runGroupTurn:async({prompt})=>{prompts[kind]=prompt;return{text:'real reply',url};}});
+    group.threads['r:gemini']={url};
+    const previousReply={...group.replyEnvelope(previousUser,'gemini','completed'),parts:[{kind:'text',text:'PREVIOUS_GEMINI_REPLY'}]};
+    previousReply.delivery.sourceUrl=kind==='new-url'?'https://gemini.google.com/app/other':url;
+    if(kind==='blocked')previousReply.status='blocked';
+    if(kind==='partial')previousReply.status='streaming';
+    if(kind==='inconsistent-state')previousReply.delivery.state='blocked';
+    if(kind==='wrong-room')previousReply.roomId='other-room';
+    const otherReply={...group.replyEnvelope(previousUser,'claude','completed'),parts:[{kind:'text',text:'NEW_OTHER_MEMBER_EVIDENCE'}]};
+    const history=[...(kind==='missing-cursor'?[]:[previousUser]),previousReply,otherReply,current];
+    await group.turn(current,'gemini',current.parts[0].text,{history,phase:kind==='summary'?'summary':undefined});
+    assert.match(prompts[kind],/NEW_OTHER_MEMBER_EVIDENCE/);
+    assert.match(prompts[kind],/CURRENT_REQUEST_UNTRUNCATED/);
+    if(kind==='continued') {
+      assert.doesNotMatch(prompts[kind],/PREVIOUS_USER_CONTEXT|PREVIOUS_GEMINI_REPLY/);
+    } else {
+      assert.match(prompts[kind],/PREVIOUS_GEMINI_REPLY/);
+    }
+  }
+  assert.ok(prompts.continued.length < prompts['new-url'].length / 2);
+});
+
 test("composer recovery discards only an exact owned draft with no possible send", () => {
   class Textarea {
     constructor(value) { this._value = value; }
@@ -124,6 +154,56 @@ test("cold provider navigation completes before any page script is requested", a
   assert.equal(scripts, 1);
 });
 
+test("owned rich-text draft survives visibility serialization changes but rejects DOM edits", () => {
+  const editor={tagName:'DIV',isContentEditable:true,innerText:'MARKERFirstSecond',textContent:'MARKERFirstSecond',innerHTML:'<p>MARKER</p><p>First</p><p>Second</p>',
+    classList:{contains:()=>false},getClientRects:()=>[1],closest:()=>null,getAttribute:()=> 'textbox',focus(){},dispatchEvent(){}};
+  const document={querySelectorAll:()=>[editor],
+    getSelection:()=>({removeAllRanges(){},addRange(){}}),createRange:()=>({selectNodeContents(){}}),
+    execCommand(){editor.innerText=editor.textContent=editor.innerHTML='';}};
+  const context={document,location:{href:'https://chatgpt.com/c/test'},Event:class{}};
+  const captured=vm.runInNewContext(`(${prepareComposer.toString()})('chatgpt',null,'MARKER\\nFirst\\nSecond',true)`,context);
+  const owned={...captured,url:'https://chatgpt.com/c/test',mayHaveSent:false};
+  editor.innerText='MARKER\nFirst\nSecond';
+  vm.runInNewContext(`(${prepareComposer.toString()})('chatgpt',${JSON.stringify(owned)})`,context);
+  assert.equal(editor.textContent,'');
+  editor.innerText=editor.textContent='MARKERFirstSecond';
+  editor.innerHTML='<p>MARKER</p><p>First</p><p></p><p>Second</p>';
+  assert.throws(()=>vm.runInNewContext(`(${prepareComposer.toString()})('chatgpt',${JSON.stringify(owned)})`,context),/bản nháp/);
+  assert.ok(editor.innerHTML.includes('<p></p>'));
+});
+
+test("an existing conversation waits for history hydration before inserting a draft", async () => {
+  let hydrated = false, prepared = false;
+  const url='https://chatgpt.com/c/loading-history';
+  const web={isDestroyed:()=>false,isLoading:()=>false,
+    executeJavaScript:async code=> {
+      if(code.includes('function readPage')) return {ok:true,value:{editor:true,url,conversationReady:hydrated}};
+      prepared=true; assert.equal(hydrated,true); throw Error('HYDRATED_COMPOSER');
+    }};
+  const browser={getState:()=>({tabs:[{id:'hydrate',providerId:'chatgpt',url}]}),views:new Map([['hydrate',{webContents:web}]])};
+  const turn=runGroupTurn(browser,{roomId:'r',providerId:'chatgpt',reference:{url},prompt:'probe',timeoutMs:2000});
+  await new Promise(resolve=>setTimeout(resolve,30));
+  assert.equal(prepared,false);
+  hydrated=true;
+  await assert.rejects(turn,/HYDRATED_COMPOSER/);
+});
+
+test("unrelated subresource loads do not hold a ready composer in the loading queue", async () => {
+  let scripts = 0;
+  const url = 'https://gemini.google.com/app/test';
+  const web = {
+    isDestroyed:()=>false, isLoading:()=>true, isLoadingMainFrame:()=>false,
+    executeJavaScript:async code => {
+      scripts++;
+      if (code.includes('function readPage')) return {ok:true,value:{editor:true,url}};
+      throw Error('COMPOSER_READY_WITH_SUBRESOURCES');
+    },
+  };
+  const browser={getState:()=>({tabs:[{id:'loaded',providerId:'gemini',url}]}),views:new Map([['loaded',{webContents:web}]])};
+  await assert.rejects(runGroupTurn(browser,{roomId:'r',providerId:'gemini',reference:{url},prompt:'probe',timeoutMs:200}), /COMPOSER_READY_WITH_SUBRESOURCES/);
+  assert.equal(scripts, 2);
+});
+
 test("hidden composer paragraph serialization is accepted without accepting changed words", () => {
   const expected = 'MARKER\n\nFirst line\nSecond line';
   const editor = {
@@ -157,7 +237,7 @@ test("retry reuses the failed room tab before a conversation URL exists", async 
   assert.deepEqual(reference, {tabId:'room-tab'});
 });
 
-test("worker views render outside the window without opening the dock or changing the selected tab", () => {
+test("worker viewport retains a corner pixel without opening the dock or changing the selected tab", () => {
   const Module = require('node:module');
   const load = Module._load;
   let BrowserService;
@@ -179,7 +259,8 @@ test("worker views render outside the window without opening the dock or changin
   assert.equal(dockOpen, false);
   assert.equal(browser.stateManager.getState().activeTabId, selected);
   assert.equal(worker.visible, true);
-  assert.ok(worker.bounds.x + worker.bounds.width <= 0);
+  assert.equal(worker.bounds.x + worker.bounds.width, 1);
+  assert.equal(worker.bounds.y + worker.bounds.height, 1);
   assert.equal(operator.visible, false);
   dockOpen = true;
   browser.updateLayout();
@@ -190,6 +271,41 @@ test("worker views render outside the window without opening the dock or changin
   browser.updateLayout();
   assert.equal(worker.visible, false);
   assert.equal(operator.visible, true);
+});
+
+test("Gemini network timing diagnostics never log queries, cookies or bodies", () => {
+  const Module=require('node:module');
+  const originalLoad=Module._load;
+  const filename=require.resolve('../src/browser-service.cjs');
+  const previousModule=require.cache[filename];
+  const previousEnv=process.env.UNION_BOT_GROUP_DIAGNOSTICS;
+  const originalLog=console.log;
+  const logs=[], listeners={};
+  const webRequest={onBeforeRequest(){}};
+  for(const [api,event] of [['onSendHeaders','sent'],['onResponseStarted','headers'],['onCompleted','completed'],['onErrorOccurred','error']])
+    webRequest[api]=(_filter,listener)=>{listeners[event]=listener;};
+  try {
+    process.env.UNION_BOT_GROUP_DIAGNOSTICS='1';
+    delete require.cache[filename];
+    Module._load=function(name,...args){return name==='electron'?{session:{fromPartition:()=>({setPermissionRequestHandler(){},webRequest})}}:originalLoad.call(this,name,...args);};
+    const {BrowserService}=require(filename);
+    const browser=new BrowserService(null,null,null,process.cwd());
+    browser._ensurePartitionConfigured('persist:mcb-web-gemini');
+    console.log=(...args)=>logs.push(args.join(' '));
+    listeners.sent({id:1,method:'POST',url:'https://gemini.google.com/StreamGenerate?token=PRIVATE_QUERY',requestHeaders:{Cookie:'PRIVATE_COOKIE'},uploadData:[{bytes:'PRIVATE_BODY'}]});
+    listeners.headers({id:1,statusCode:200});
+    listeners.completed({id:1,statusCode:200});
+    listeners.error({id:1,error:'SHOULD_BE_IGNORED_AFTER_COMPLETION'});
+    assert.equal(logs.length,3);
+    assert.ok(logs.every(line=>!line.includes('PRIVATE')&&!line.includes('SHOULD_BE_IGNORED')));
+    assert.match(logs[0],/"route":"generation"/);
+    assert.match(logs[1],/"status":200/);
+  } finally {
+    Module._load=originalLoad;
+    console.log=originalLog;
+    if(previousModule) require.cache[filename]=previousModule; else delete require.cache[filename];
+    if(previousEnv===undefined)delete process.env.UNION_BOT_GROUP_DIAGNOSTICS;else process.env.UNION_BOT_GROUP_DIAGNOSTICS=previousEnv;
+  }
 });
 
 test("live leader deltas appear under its own identity, final reply is durable", async () => {
@@ -364,6 +480,111 @@ test("ChatGPT without author roles excludes the marked user prompt and locates i
   assert.equal(page.text, current.innerText);
   assert.equal(page.hasPromptMarker, true);
   assert.equal(page.assistantAfterUser, true);
+});
+
+test("Claude current markdown structure reads only the reply after the submitted marker", () => {
+  const element = (text, order, user = false) => ({
+    textContent: text, innerText: '', children: [], id: '', order,
+    classList: {contains: () => false},
+    getClientRects: () => [1], getAttribute: () => null,
+    closest: selector => user && selector.includes('user-message') ? {} : null,
+    contains(other) { return this === other; },
+    compareDocumentPosition(other) { return order < other.order ? 4 : 2; },
+  });
+  const old = element('old reply', 1);
+  const submitted = element('UNION_TURN_TEST latest prompt', 2, true);
+  const answer = element('UNION_CLAUDE_OK', 3);
+  const document = {
+    title: 'Claude', querySelector: () => null,
+    querySelectorAll(selector) {
+      if (selector === '.standard-markdown') return [old, submitted, answer];
+      if (selector === 'p, div, span') return [submitted];
+      if (selector.startsWith('[data-message-author-role="user"]')) return [submitted];
+      return [];
+    },
+  };
+  const page = vm.runInNewContext(`(${readPage.toString()})('UNION_TURN_TEST', 'claude')`, {
+    document, location:{href:'https://claude.ai/chat/test'}, Node:{DOCUMENT_POSITION_FOLLOWING:4},
+  });
+  assert.equal(page.count, 2);
+  assert.equal(page.text, 'UNION_CLAUDE_OK');
+  assert.equal(page.hasPromptMarker, true);
+  assert.equal(page.assistantAfterUser, true);
+  // An old reply cannot qualify simply because the submitted prompt exists.
+  answer.order = 0;
+  const stale = vm.runInNewContext(`(${readPage.toString()})('UNION_TURN_TEST', 'claude')`, {
+    document, location:{href:'https://claude.ai/chat/test'}, Node:{DOCUMENT_POSITION_FOLLOWING:4},
+  });
+  assert.equal(stale.assistantAfterUser, false);
+});
+
+test("Gemini Vietnamese stop control prevents completion, while hidden controls do not block a finished turn", () => {
+  let shown=true;
+  const document={title:'Gemini',querySelectorAll:selector=>selector.includes('Ngừng tạo câu trả lời')?[{getClientRects:()=>shown?[1]:[]}]:[]};
+  const context={document,location:{href:'https://gemini.google.com/app/test'}};
+  const read=()=>vm.runInNewContext(`(${readPage.toString()})('', 'gemini')`,context);
+  assert.equal(read().generating,true);
+  shown=false;
+  assert.equal(read().generating,false);
+  assert.equal(replyIsComplete('gemini',{generating:true},100,true),false);
+  assert.equal(replyIsComplete('gemini',{generating:false},1,true),false);
+  assert.equal(replyIsComplete('gemini',{generating:false},2,true),true);
+  assert.equal(replyIsComplete('gemini',{generating:false},2,false),false);
+  assert.equal(replyIsComplete('gemini',{generating:false},8,false),true);
+  assert.equal(replyIsComplete('claude',{generating:false},2,true),false);
+});
+
+test("Gemini user bubbles avoid whole-document marker scans and still reject an older answer", () => {
+  const user={textContent:'UNION_TURN_SCOPED prompt',children:[],order:2,compareDocumentPosition(other){return other.order>this.order?4:2;}};
+  const answer={textContent:'new answer',innerText:'new answer',children:[],order:3,id:'',getClientRects:()=>[1],getAttribute:()=>null,closest:()=>null};
+  const document={title:'Gemini',querySelectorAll:selector=>{
+    if(selector==='.query-text') return [user];
+    if(selector==='message-content .markdown-main-panel')return [answer];
+    if(selector==='p, div, span')throw Error('Should not scan every node when the provider user bubble exists');
+    return [];
+  }};
+  const context={document,location:{href:'https://gemini.google.com/app/test'},Node:{DOCUMENT_POSITION_FOLLOWING:4}};
+  const read=()=>vm.runInNewContext(`(${readPage.toString()})('UNION_TURN_SCOPED','gemini')`,context);
+  assert.equal(read().hasPromptMarker,true);
+  assert.equal(read().assistantAfterUser,true);
+  answer.order=1;
+  assert.equal(read().assistantAfterUser,false);
+});
+
+test("ChatGPT rich-text user turns avoid whole-document scans and reject replies before the prompt", () => {
+  const user = {textContent:'UNION_TURN_SCOPED prompt',children:[],order:2,compareDocumentPosition(other){return other.order > this.order ? 4 : 2;}};
+  const answer = {textContent:'new answer',innerText:'new answer',children:[],order:3,id:'',getClientRects:()=>[1],getAttribute:()=>null,closest:()=>null,classList:{contains:()=>false}};
+  const document = {title:'ChatGPT',querySelectorAll:selector=>{
+    if(selector.includes('rich-text-user-turn') && !selector.includes('contenteditable')) return [user];
+    if(selector.includes('MarkdownRoot-')) return [answer];
+    if(selector==='p, div, span') throw Error('Should not scan every node when rich-text user turns exist');
+    return [];
+  }};
+  const context = {document,location:{href:'https://chatgpt.com/c/test'},Node:{DOCUMENT_POSITION_FOLLOWING:4}};
+  const read = () => vm.runInNewContext(`(${readPage.toString()})('UNION_TURN_SCOPED','chatgpt')`,context);
+  assert.equal(read().hasPromptMarker,true);
+  assert.equal(read().assistantAfterUser,true);
+  answer.order = 1;
+  assert.equal(read().assistantAfterUser,false);
+});
+
+test("Gemini reads the markdown body without its provider heading or action controls", () => {
+  const answer = {
+    textContent:'UNION_GEMINI_OK', innerText:'UNION_GEMINI_OK', children:[], id:'',
+    getClientRects:()=>[1], getAttribute:()=>null, closest:()=>null, contains:()=>false,
+  };
+  const document = {
+    title:'Gemini', querySelector:()=>null,
+    querySelectorAll(selector) {
+      if (selector === 'message-content .markdown-main-panel') return [answer];
+      if (selector === 'model-response') throw Error('Must prefer the message body over the entire response card');
+      return [];
+    },
+  };
+  const page = vm.runInNewContext(`(${readPage.toString()})('', 'gemini')`, {
+    document, location:{href:'https://gemini.google.com/app/test'},
+  });
+  assert.equal(page.text, 'UNION_GEMINI_OK');
 });
 
 test("Gemini rich-textarea shadow DOM exposes the composer and model response", () => {
@@ -852,9 +1073,7 @@ test("Gemini ignores its editable clipboard and waits for an enabled localized s
         document,
         location: { href: "https://gemini.google.com/app", pathname: "/app" },
       }),
-    insertText: async (text) => {
-      editor.textContent = text;
-    },
+    insertText: async (text) => { editor.textContent = text; },
   };
   const browser = {
     getState: () => ({

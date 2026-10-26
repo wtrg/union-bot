@@ -1,0 +1,105 @@
+/* Group conversation: content-sized bubbles and identity first. */
+.ub-workspace .ub-mention { display: inline; padding: 1px 4px; border-radius: 5px; color: #a8d7ff; background: #77baff24; font-weight: 600; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
+.ub-workspace .ub-mention[data-member="chatgpt"] { color: #9ae8c8; background: #56d3a320; }
+.ub-workspace .ub-mention[data-member="gemini"] { color: #a4daff; background: #63b9f125; }
+.ub-workspace .ub-mention[data-member="codex"] { color: #f5d697; background: #edbc6022; }
+.ub-workspace .ub-mention[data-member="antigravity"] { color: #c5c0ff; background: #a293ff25; }
+.ub-workspace .ub-mention[data-member="claude"] { color: #f5c1a2; background: #efaa7b22; }
+.ub-workspace .ub-mention:is([data-member="all"],[data-member="team"]) { color: #e5d5ff; background: #b697f32b; }
+.ub-workspace .ub-tag-targets { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; font-size: 10px; color: #afc1d5; }
+.ub-workspace .ub-chat-region { background: rgba(9,15,25,.94); }
+.ub-workspace .ub-chat-scroll { padding: 18px 22px 12px; }
+.ub-workspace .ub-feed { min-width: 0; }
+.ub-workspace .ub-run { padding: 0; margin: 0 auto; border: 0; }
+.ub-workspace .ub-message {
+  --member-accent: #b7c8df;
+  display: flex; align-items: flex-start; gap: 9px; width: 100%; min-width: 0;
+  padding: 0; margin: 0 0 16px; border: 0; border-radius: 0;
+  background: none; box-shadow: none;
+}
+.ub-workspace [data-provider="chatgpt"] { --member-accent: #82d9ba; }
+.ub-workspace [data-provider="gemini"] { --member-accent: #8acbfb; }
+.ub-workspace [data-provider="codex"] { --member-accent: #edcf8f; }
+.ub-workspace [data-provider="antigravity"] { --member-accent: #b5b5ff; }
+.ub-workspace [data-provider="claude"] { --member-accent: #efb894; }
+.ub-workspace [data-provider="deepseek"] { --member-accent: #96b9ff; }
+.ub-workspace .ub-sender-avatar {
+  display: grid; place-items: center; flex: 0 0 31px; width: 31px; height: 31px;
+  border-radius: 50%; border: 1px solid color-mix(in srgb,var(--member-accent) 45%,transparent);
+  background: #202c3c; box-shadow: 0 2px 5px #0002; font-size: 16px;
+}
+.ub-workspace .ub-message-bubble {
+  min-width: 0; width: fit-content; max-width: min(82%,780px);
+  padding: 8px 12px 6px; border: 1px solid #ffffff12; border-radius: 4px 13px 13px;
+  background: #202936; box-shadow: 0 2px 4px #00000012;
+}
+.ub-workspace .ub-message-heading { display: flex; align-items: center; gap: 8px; min-height: 16px; margin: 0 0 4px; flex-wrap: wrap; }
+.ub-workspace .ub-message-heading strong { font-size: 11px; font-weight: 600; color: var(--member-accent); }
+.ub-workspace .ub-message-heading .ub-status { font-size: 9px; padding: 1px 5px; }
+.ub-workspace .ub-summary-label { color: #b6e1ce; font-size: 9px; }
+.ub-workspace .ub-message.is-summary .ub-message-bubble { border-color: #84d4b44d; background: #1c3030; }
+.ub-workspace .ub-message.from-user { justify-content: flex-end; background: none; border: 0; padding: 0; }
+.ub-workspace .ub-message.from-user .ub-message-bubble { max-width: min(76%,740px); background: #233d58; border-color: #94bde92b; border-radius: 13px 4px 13px 13px; }
+.ub-workspace .ub-message.from-user .ub-message-heading { display: none; }
+.ub-workspace .ub-message.from-user .ub-message-meta { justify-content: flex-end; }
+.ub-workspace .ub-message.from-system { background: none; border: 0; padding: 0; }
+.ub-workspace .ub-message.from-system .ub-message-bubble { background: #2d2932; border-color: #eac38d33; }
+.ub-workspace .ub-message[data-continuation="true"] { margin-top: -11px; }
+.ub-workspace .ub-message[data-continuation="true"] .ub-sender-avatar { visibility: hidden; }
+.ub-workspace .ub-message[data-continuation="true"] .ub-message-heading { display: none; }
+.ub-workspace .ub-message[data-continuation="true"][data-state="sending"] .ub-message-heading,
+.ub-workspace .ub-message[data-continuation="true"][data-state="streaming"] .ub-message-heading,
+.ub-workspace .ub-message[data-continuation="true"][data-state="queued"] .ub-message-heading { display: flex; }
+.ub-workspace .ub-prose { font-size: var(--chat-font-size,14px); color: #e3eaf2; line-height: 1.55; }
+.ub-workspace .ub-prose p + p { margin-top: 5px; }
+.ub-workspace .ub-prose h3 { margin: 12px 0 5px; font-size: 1em; }
+.ub-workspace .ub-prose :is(ul,ol) { margin: 6px 0; padding-left: 20px; }
+.ub-workspace .ub-prose li { margin: 3px 0; }
+.ub-workspace .ub-message .ub-wait { font-size: 12px; line-height: 1.5; color: #b6c7d8; }
+.ub-workspace .ub-message-meta { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 5px; min-height: 16px; }
+.ub-workspace .ub-message-meta time { font-size: 9px; color: #9cabbc; line-height: 16px; }
+.ub-workspace .ub-message-menu { position: relative; }
+.ub-workspace .ub-message-menu > summary { padding: 0 5px; border: 0; background: none; border-radius: 5px; font-size: 9px; color: #a7b8ca; line-height: 16px; list-style: none; cursor: pointer; letter-spacing: 1px; }
+.ub-workspace .ub-message-menu > summary::-webkit-details-marker { display: none; }
+.ub-workspace .ub-message-actions { position: absolute; top: calc(100% + 3px); left: 0; z-index: 25; display: flex; flex-direction: column; align-items: stretch; gap: 3px; min-width: 145px; width: max-content; padding: 5px; border: 1px solid #526478; border-radius: 8px; background: #243141; box-shadow: 0 7px 22px #0006; }
+.ub-workspace .from-user .ub-message-actions { left: auto; right: 0; }
+.ub-workspace .ub-message-actions button { padding: 5px 7px; min-height: 24px; text-align: left; background: none; border-color: transparent; border-radius: 4px; color: #cbd9e8; font-size: 11px; }
+.ub-workspace .ub-message-actions button:hover { color: #e5f2ff; background: #ffffff0a; }
+.ub-workspace .ub-message-failure { color: #f1bd9c; font-size: 10px; }
+.ub-workspace .ub-message-content { min-width: 0; }
+.ub-workspace .ub-message-content > summary { display: block; background: none; border: 0; padding: 0; border-radius: 0; list-style: none; cursor: pointer; }
+.ub-workspace .ub-message-content > summary[hidden] { display: none; }
+.ub-workspace .ub-message-content > summary::-webkit-details-marker { display: none; }
+.ub-workspace .ub-message-content[open] { display: flex; flex-direction: column; }
+.ub-workspace .ub-message-content[open] > summary { order: 2; margin-top: 6px; align-self: flex-start; }
+.ub-workspace .ub-message-preview { display: -webkit-box; -webkit-line-clamp: 5; -webkit-box-orient: vertical; overflow: hidden; white-space: pre-line; text-align: left; color: #e3eaf2; font-size: var(--chat-font-size,14px); line-height: 1.55; font-weight: 400; }
+.ub-workspace .ub-expand-label { display: block; margin-top: 5px; font-size: 11px; color: #9bcfff; font-weight: 500; }
+.ub-workspace .ub-message-content[open] .ub-message-preview,.ub-workspace .ub-message-content[open] .when-closed,.ub-workspace .ub-message-content:not([open]) .when-open { display: none; }
+.ub-workspace .ub-run-notices { margin: 3px 0 18px 40px; border: 1px solid #dfb77526; border-radius: 9px; background: #dfb77507; }
+.ub-workspace .ub-run-notices > summary { display: flex; align-items: center; gap: 8px; min-height: 34px; padding: 7px 10px; border: 0; background: none; list-style: none; cursor: pointer; }
+.ub-workspace .ub-run-notices > summary::-webkit-details-marker { display: none; }
+.ub-workspace .ub-notice-icon { display: grid; place-items: center; width: 15px; height: 15px; flex-shrink: 0; border-radius: 50%; background: #ddb16f25; color: #edc382; font-size: 10px; font-weight: 700; }
+.ub-workspace .ub-run-notices > summary strong { font-size: 11px; color: #d7be98; font-weight: 500; white-space: nowrap; }
+.ub-workspace .ub-notice-names { font-size: 10px; color: #a7adb8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ub-workspace .ub-notice-chevron { color: #ad9d86; margin-left: auto; }
+.ub-workspace .ub-run-notices[open] .ub-notice-chevron { transform: rotate(180deg); }
+.ub-workspace .ub-notice-list { padding: 0 10px 8px; }
+.ub-workspace .ub-notice-item { padding: 9px 0; border-top: 1px solid #ffffff0a; }
+.ub-workspace .ub-notice-heading { display: flex; justify-content: space-between; gap: 12px; }
+.ub-workspace .ub-notice-heading strong { font-size: 11px; color: var(--member-accent,#c0cddd); }
+.ub-workspace .ub-notice-heading time { font-size: 9px; color: #93a3b7; }
+.ub-workspace .ub-notice-item p { margin-top: 5px; font-size: 12px; line-height: 1.5; color: #c1cbd7; }
+.ub-workspace .ub-notice-controls { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px; margin-top: 6px; }
+.ub-workspace .ub-notice-controls > button,.ub-workspace .ub-notice-debug > summary { padding: 3px 5px; font-size: 10px; background: none; border: 0; color: #a6c8ee; }
+.ub-workspace .ub-notice-debug { flex: 1; min-width: 0; }
+.ub-workspace .ub-notice-debug > summary { width: fit-content; cursor: pointer; }
+.ub-workspace .ub-notice-debug pre { max-height: 220px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; padding: 9px; border-radius: 5px; background: #0e1723; font: 10px/1.6 Consolas,monospace; color: #aab6c7; }
+.ub-workspace .ub-run-toolbar { font-size: 10px; margin: 0 0 8px 40px; }
+@media (max-width: 760px) {
+  .ub-workspace .ub-chat-scroll { padding: 12px 10px; }
+  .ub-workspace .ub-message { gap: 7px; margin-bottom: 15px; }
+  .ub-workspace .ub-sender-avatar { width: 27px; height: 27px; flex-basis: 27px; font-size: 14px; }
+  .ub-workspace .ub-message-bubble { max-width: calc(100% - 34px); padding: 8px 10px 6px; }
+  .ub-workspace .ub-message.from-user .ub-message-bubble { max-width: 88%; }
+  .ub-workspace .ub-run-notices { margin-left: 0; }
+}

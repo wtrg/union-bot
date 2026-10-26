@@ -104,6 +104,22 @@ test(
           `(() => { const el = document.querySelector(${JSON.stringify(selector)}); const prototype = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : el.tagName === 'SELECT' ? HTMLSelectElement.prototype : HTMLInputElement.prototype; Object.getOwnPropertyDescriptor(prototype, 'value').set.call(el, ${JSON.stringify(value)}); el.dispatchEvent(new Event(el.tagName === 'SELECT' ? 'change' : 'input', { bubbles: true })); })()`,
         );
       await waitFor("!!document.querySelector('.ub-workspace')");
+      // The supplied spatial layout keeps both side panels small on desktop.
+      assert.equal(await evaluate("Math.round(document.querySelector('.ub-navigation').getBoundingClientRect().width)"), 160);
+      assert.equal(await evaluate("Math.round(document.querySelector('.ub-inspector').getBoundingClientRect().width)"), 210);
+      assert.equal(await evaluate("getComputedStyle(document.querySelector('.ub-workspace')).getPropertyValue('--chat-font-size').trim()"), "14px");
+      assert.equal(await evaluate("!!document.querySelector('.ub-twilight-sky[aria-hidden=true]')"), true);
+      await click("Chi tiết");
+      // Mascot interactions must remain local: no message or provider changes.
+      const mascotBefore = await evaluate("({ sends: window.__workspaceTest.stats().sends.length, recipient: document.querySelector('.ub-composer select').value })");
+      await evaluate("document.querySelector('.ub-aether-root').click()");
+      await waitFor("document.querySelector('.ub-aether-root').classList.contains('ub-aether-poked')");
+      await waitFor("!document.querySelector('.ub-aether-root').classList.contains('ub-aether-poked')");
+      assert.deepEqual(await evaluate("({ sends: window.__workspaceTest.stats().sends.length, recipient: document.querySelector('.ub-composer select').value })"), mascotBefore);
+      await evaluate("document.querySelector('.ub-nav-toggle').click()");
+      await waitFor("document.querySelector('.ub-shell').classList.contains('nav-collapsed')");
+      await evaluate("document.querySelector('.ub-nav-toggle').click()");
+      await waitFor("!document.querySelector('.ub-shell').classList.contains('nav-collapsed')");
       assert.equal(
         await evaluate("document.body.innerText.includes('ĐANG THỰC THI')"),
         false,
@@ -209,6 +225,7 @@ test(
       );
       await setValue(".ub-composer textarea", "");
       await click("Hiệu ứng");
+      await waitFor("document.querySelector('.ub-aether-root').dataset.motion === 'false'");
       assert.equal(
         await evaluate(
           "document.querySelector('.ub-signal-stage').dataset.paused",
@@ -247,6 +264,18 @@ test(
         (await evaluate("window.__workspaceTest.stats()")).sessionChecks.at(-1),
         "deepseek",
       );
+      await evaluate("window.__workspaceTest.providerFixture([{id:'deepseek-home',providerId:'deepseek',url:'https://chat.deepseek.com/'},{id:'deepseek-room',providerId:'deepseek',url:'https://chat.deepseek.com/a/chat/room-bound'}],{orchestration:{deepseek:{url:'https://chat.deepseek.com/a/chat/room-bound'}}})");
+      await evaluate("document.querySelector('[data-testid=provider-session-deepseek] button:nth-child(2)').click()");
+      await waitFor("window.__workspaceTest.stats().sessionCheckTabs.at(-1) === 'deepseek-room'");
+      const checksBeforeMissingRoom = await evaluate("window.__workspaceTest.stats().sessionChecks.length");
+      await evaluate("window.__workspaceTest.providerFixture([{id:'deepseek-home',providerId:'deepseek',url:'https://chat.deepseek.com/'}],{orchestration:{deepseek:{url:'https://chat.deepseek.com/a/chat/room-bound'}}})");
+      await evaluate("document.querySelector('[data-testid=provider-session-deepseek] button:nth-child(2)').click()");
+      await waitFor("document.querySelector('[data-testid=provider-session-deepseek]').innerText.includes('Hội thoại của phòng chưa mở')");
+      assert.equal(await evaluate("window.__workspaceTest.stats().sessionChecks.length"), checksBeforeMissingRoom);
+      await evaluate("window.__workspaceTest.providerFixture([],{})");
+      await setValue(".ub-composer textarea", "@chatgpt @gemini kiểm tra tag");
+      await waitFor("document.querySelectorAll('.ub-tag-targets .ub-mention').length === 2");
+      await setValue(".ub-composer textarea", "");
       await cdp("Emulation.setDeviceMetricsOverride", {
         width: 1536,
         height: 864,
@@ -255,6 +284,49 @@ test(
       });
       await delay(150);
       const cleanShot = await cdp("Page.captureScreenshot", { format: "png" });
+
+      // Group chat readability: short bubbles, distinct speakers, full long content,
+      // and one recoverable notice instead of a wall of provider errors.
+      await evaluate(String.raw`(() => {
+        const base={traceId:'thread-layout',timestamp:Date.now(),roomId:'orchestration',fidelity:'L0_RAW_TEXT',recipient:{kind:'room',id:'orchestration'},status:'completed',correlationId:'thread-layout'};
+        const send=(id,provider,text,kind='agent',state='completed')=>window.__workspaceTest.emit({...base,id,sender:{kind,id:provider,name:provider,provider},delivery:{runId:'thread-layout',provider,state},parts:[{kind:'text',text}],status:state});
+        send('layout_user','user','Mỗi bạn đề xuất một điểm cải thiện khung chat nhé.','user');
+        send('layout_gemini','gemini','Mình đề xuất tách rõ tên người gửi và dùng bong bóng ôm nội dung.');
+        send('layout_gemini_next','gemini','Giữ hiệu ứng ở ngoài vùng đọc chữ.');
+        send('layout_anti','antigravity','Mình sẽ giữ thao tác sao chép và trả lời trong menu tin nhắn.');
+        window.__longReply='## Các bước thực hiện\n'+Array.from({length:20},(_,i)=>(i+1)+'. Kiểm tra bố cục và hành vi cuộn khi nhận phản hồi từ các thành viên.').join('\n')+'\nEND_LONG_REPLY';
+        send('layout_long','chatgpt',window.__longReply);
+        send('layout_error_1','claude','Claude Web chưa thể trả lời: ERR_WEB_OPERATION_TIMEOUT: Trạng thái gửi chưa chắc chắn; kiểm tra trước khi gửi lại.','system','blocked');
+        send('layout_error_2','deepseek','DeepSeek Web chưa thể trả lời: Cần đăng nhập trong AI Browser.','system','blocked');
+        send('layout_error_3','codex','Codex chưa thể trả lời: ERR_CODEX_EMPTY_RESPONSE','system','blocked');
+      })()`);
+      await waitFor("!!document.querySelector('[data-message-id=layout_long]')");
+      await evaluate(String.raw`window.__workspaceTest.emit({id:'mention_probe',traceId:'mention',timestamp:Date.now(),roomId:'orchestration',fidelity:'L0_RAW_TEXT',sender:{kind:'user',id:'user',name:'Bạn'},recipient:{kind:'room',id:'orchestration'},parts:[{kind:'text',text:'@chatgpt **@Gemini** @all, email me@chatgpt.com và code '+String.fromCharCode(96)+'@codex'+String.fromCharCode(96)+''}],status:'completed'})`);
+      await waitFor("document.querySelectorAll('[data-message-id=mention_probe] .ub-mention').length === 3");
+      assert.equal(await evaluate("document.querySelectorAll('[data-message-id=mention_probe] code .ub-mention').length"), 0);
+      assert.equal(await evaluate("document.querySelector('[data-message-id=mention_probe] code').textContent"), "@codex");
+      assert.equal(await evaluate("document.querySelectorAll('[data-testid=run-notices]').length"), 1);
+      assert.equal(await evaluate("document.querySelector('[data-testid=run-notices]').open"), false);
+      assert.equal(await evaluate("document.querySelectorAll('.ub-message.from-system').length"), 0);
+      assert.equal(await evaluate("document.querySelector('[data-message-id=layout_gemini_next]').dataset.continuation"), "true");
+      assert.equal(await evaluate("document.querySelector('[data-message-id=layout_long] .ub-message-content').open"), false);
+      assert.ok(await evaluate("document.querySelector('[data-message-id=layout_long] .ub-message-bubble').getBoundingClientRect().height < 220"));
+      assert.ok(await evaluate("document.querySelector('[data-message-id=layout_anti] .ub-message-bubble').getBoundingClientRect().width < document.querySelector('.ub-chat-scroll').clientWidth * .8"));
+      assert.ok(await evaluate("(() => {const row=document.querySelector('[data-message-id=layout_user]');return Math.abs(row.getBoundingClientRect().right-row.querySelector('.ub-message-bubble').getBoundingClientRect().right)<2;})()"));
+      await evaluate("document.querySelector('[data-message-id=layout_long] .ub-message-content > summary').click()");
+      await waitFor("document.querySelector('[data-message-id=layout_long] .ub-message-content').open");
+      assert.equal(await evaluate("document.querySelector('[data-message-id=layout_long]').innerText.includes('END_LONG_REPLY')"), true);
+      await cdp("Runtime.evaluate", {expression:"(() => { const row=document.querySelector('[data-message-id=layout_long]');row.querySelector('.ub-message-menu').open=true;row.querySelector('.ub-message-actions button').click(); })()", userGesture:true});
+      await waitFor("document.querySelector('[data-message-id=layout_long] .ub-message-actions button').textContent.includes('Đã chép')");
+      assert.equal(await evaluate("window.__workspaceTest.readClipboard() === window.__longReply"), true);
+      await evaluate("window.__workspaceTest.restoreClipboard(); document.querySelector('[data-message-id=layout_long] .ub-message-menu').open=false; document.querySelector('[data-message-id=layout_long] .ub-message-content > summary').click();document.querySelector('[data-testid=run-notices] > summary').click()");
+      await waitFor("document.querySelector('[data-testid=run-notices]').open");
+      assert.equal(await evaluate("document.querySelectorAll('.ub-notice-item').length"), 3);
+      assert.equal(await evaluate("document.querySelector('[data-testid=run-notices]').innerText.includes('ERR_WEB_OPERATION_TIMEOUT')"), false);
+      await evaluate("document.querySelector('.ub-notice-debug > summary').click()");
+      await waitFor("document.querySelector('[data-testid=run-notices]').innerText.includes('ERR_WEB_OPERATION_TIMEOUT')");
+      await evaluate("document.querySelector('[data-testid=run-notices] > summary').click(); document.querySelector('[data-message-id=layout_user]').scrollIntoView({block:'start'})");
+      const threadShot = await cdp("Page.captureScreenshot", {format:"png"});
 
       await setValue(".ub-composer textarea", "Bản nháp phòng chung");
       await evaluate(
@@ -397,6 +469,11 @@ test(
           bounds.right <= width && bounds.bottom <= height,
           `Send visible at ${width}`,
         );
+        await evaluate("document.querySelector('.ub-nav-toggle').click()");
+        await delay(40);
+        assert.equal(await evaluate("document.querySelector('.ub-conversation').getBoundingClientRect().right <= window.innerWidth"), true, `Collapsed layout fits at ${width}`);
+        assert.equal(await evaluate("document.querySelector('.ub-conversation').getBoundingClientRect().width > Math.min(300, window.innerWidth - 50)"), true, `Chat retains space at ${width}`);
+        await evaluate("document.querySelector('.ub-nav-toggle').click()");
       }
       await cdp("Emulation.setDeviceMetricsOverride", {
         width: 1536,
@@ -411,6 +488,9 @@ test(
       await cdp("Emulation.setEmulatedMedia", {
         features: [{ name: "prefers-reduced-motion", value: "reduce" }],
       });
+      await waitFor("document.querySelector('.ub-aether-root').dataset.motion === 'false'");
+      await evaluate("document.querySelector('.ub-aether-root').click()");
+      assert.equal(await evaluate("document.querySelector('.ub-aether-root').classList.contains('ub-aether-poked')"), false);
       await delay(300);
       await click("Ẩn đảo 3D");
       await setValue(".ub-composer textarea", "Bản nháp khôi phục sau mở lại");
@@ -425,6 +505,7 @@ test(
         path.join(evidenceDir, "workspace-1536.png"),
         Buffer.from(cleanShot.data, "base64"),
       );
+      fs.writeFileSync(path.join(evidenceDir, "chat-thread-1536.png"), Buffer.from(threadShot.data, "base64"));
       fs.writeFileSync(
         path.join(evidenceDir, "result.json"),
         JSON.stringify(
@@ -444,6 +525,15 @@ test(
               "vietnamese-ime-does-not-send",
               "multiline-plain-text-input",
               "motion-toggle",
+              "aether-interaction-does-not-send-or-change-recipient",
+              "aether-animation-resumes-after-poke",
+              "aether-respects-reduced-motion",
+              "collapsible-room-navigation",
+              "compact-member-bubbles-and-right-aligned-user",
+              "long-message-expand-and-copy-full-text",
+              "provider-errors-collapsed-with-accessible-technical-details",
+              "colored-member-mentions-preserve-code-and-routing",
+              "session-check-uses-room-binding-and-never-falls-back-to-unrelated-home",
               "1001-event-stream-batching",
               "composer-resize-bottom-anchor",
               "draft-restored-after-immediate-reload",

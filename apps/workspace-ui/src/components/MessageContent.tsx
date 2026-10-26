@@ -1,4 +1,5 @@
 import React from "react";
+import { MemberMentions } from "./MemberMentions.tsx";
 
 // Render text as React nodes: model output never becomes executable HTML.
 function inline(text: string): React.ReactNode[] {
@@ -8,7 +9,7 @@ function inline(text: string): React.ReactNode[] {
       if (part.startsWith("`") && part.endsWith("`"))
         return <code key={i}>{part.slice(1, -1)}</code>;
       if (part.startsWith("**") && part.endsWith("**"))
-        return <strong key={i}>{part.slice(2, -2)}</strong>;
+        return <strong key={i}><MemberMentions text={part.slice(2, -2)} /></strong>;
       const link = part.match(/^\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)$/);
       if (link)
         return (
@@ -16,7 +17,7 @@ function inline(text: string): React.ReactNode[] {
             {link[1]}
           </a>
         );
-      return part;
+      return <MemberMentions key={i} text={part} />;
     });
 }
 export const MessageContent = React.memo(function MessageContent({

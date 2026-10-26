@@ -11,7 +11,10 @@ const stats = {
   cancels: [],
   loginOpens: [],
   sessionChecks: [],
+  sessionCheckTabs: [],
 };
+let providerTabs = [];
+let roomBindings = {};
 let failSend = false;
 const originalClipboard = clipboard.readText();
 const tasks = [
@@ -49,7 +52,7 @@ contextBridge.exposeInMainWorld("unionBotAPI", {
     return () => taskListeners.delete(callback);
   },
   browserGetState: async () => ({
-    tabs: [],
+    tabs: structuredClone(providerTabs),
     activeTabId: null,
     bounds: { x: 0, y: 0, width: 0, height: 0 },
     isVisible: false,
@@ -70,8 +73,9 @@ contextBridge.exposeInMainWorld("unionBotAPI", {
         "Đăng nhập trực tiếp trên trang DeepSeek, sau đó kiểm tra lại phiên.",
     };
   },
-  providerCheckSession: async ({ providerId }) => {
+  providerCheckSession: async ({ providerId, tabId }) => {
     stats.sessionChecks.push(providerId);
+    stats.sessionCheckTabs.push(tabId);
     return {
       success: true,
       providerId,
@@ -79,7 +83,7 @@ contextBridge.exposeInMainWorld("unionBotAPI", {
       message: "Chưa đăng nhập. Hãy hoàn tất đăng nhập trong tab nhà cung cấp.",
     };
   },
-  getGroupBindings: async () => ({ success: true, bindings: {} }),
+  getGroupBindings: async ({roomId}) => ({ success: true, bindings: structuredClone(roomBindings[roomId] || {}) }),
   async sendGroupMessage(envelope) {
     const parsed = EnvelopeSchema.safeParse(envelope);
     if (!parsed.success) return { success: false, error: parsed.error.message };
@@ -151,4 +155,5 @@ contextBridge.exposeInMainWorld("__workspaceTest", {
   failSend(value) {
     failSend = value;
   },
+  providerFixture(tabs, bindings) { providerTabs = tabs; roomBindings = bindings; },
 });

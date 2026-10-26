@@ -1,5 +1,16 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { commandMentionTargets, mentionSegments } from "../src/utils/mentions.ts";
+
+test("member mentions preserve text, avoid email/URL fragments, and match command-prefix routing", () => {
+  const text = "@ChatGPT hỏi @gemini, @all; mail me@chatgpt.com https://example.com/@codex @geminix";
+  const parts = mentionSegments(text);
+  assert.equal(parts.map(p => p.text).join(""), text);
+  assert.deepEqual(parts.filter(p => p.member).map(p => p.member), ["chatgpt", "gemini", "all"]);
+  assert.deepEqual(commandMentionTargets("@chatgpt @gemini kiểm tra"), ["chatgpt", "gemini"]);
+  assert.deepEqual(commandMentionTargets("Mô tả lượt @all trước đó"), []);
+  assert.equal(commandMentionTargets("@all hello").length, 6);
+});
 import {
   isTaskActive,
   taskProgress,
