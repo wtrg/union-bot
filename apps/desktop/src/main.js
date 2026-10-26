@@ -6048,10 +6048,13 @@ ipcMain.handle('union-bot:group-open-thread', async (event, { roomId, provider }
   if (!checkSenderAuthorized(event)) return { success: false, error: 'Unauthorized IPC sender' };
   try {
     const reference = getGroupChatService().threads[`${roomId}:${provider}`];
-    if (!reference?.url) throw new Error('Thành viên này chưa có hội thoại web trong kênh.');
-    let tab = browserService.getState().tabs.find(t => t.providerId === provider && t.url.split(/[?#]/)[0] === reference.url);
+    let tab = reference?.url
+      ? browserService.getState().tabs.find(t => t.providerId === provider && t.url.split(/[?#]/)[0] === reference.url)
+      : browserService.getState().tabs.find(t => t.providerId === provider);
     if (!tab) {
-      const created = browserService.createTab(provider, reference.url);
+      const defaultUrl = reference?.url || (provider === 'chatgpt' ? 'https://chatgpt.com/' : provider === 'gemini' ? 'https://gemini.google.com/' : provider === 'claude' ? 'https://claude.ai/' : provider === 'deepseek' ? 'https://chat.deepseek.com/' : undefined);
+      if (!defaultUrl) throw new Error('Thành viên này chưa có hội thoại web trong kênh.');
+      const created = browserService.createTab(provider, defaultUrl);
       if (!created.success) throw new Error(created.error);
       tab = created.tab;
     }

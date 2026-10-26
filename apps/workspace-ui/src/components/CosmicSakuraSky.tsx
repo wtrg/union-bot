@@ -64,19 +64,19 @@ export const CosmicSakuraSky = forwardRef<CosmicSakuraSkyRef, CosmicSakuraSkyPro
       resize();
 
       // Twinkling stars
-      for (let i = 0; i < 64; i++) {
+      for (let i = 0; i < 72; i++) {
         const rand = Math.random();
         stars.push({
           x: Math.random() * window.innerWidth,
           y: Math.random() * window.innerHeight * 0.85,
-          r: Math.random() * 1.5 + 0.4,
+          r: Math.random() * 1.6 + 0.5,
           phase: Math.random() * Math.PI * 2,
           color: rand > 0.5 ? "#fbcfe8" : rand > 0.2 ? "#7dd3fc" : "#ffffff",
         });
       }
 
-      const getWidth = () => canvas.width;
-      const getHeight = () => canvas.height;
+      const getWidth = () => canvas.width || window.innerWidth;
+      const getHeight = () => canvas.height || window.innerHeight;
 
       class ShootingStar {
         x: number;
@@ -169,7 +169,7 @@ export const CosmicSakuraSky = forwardRef<CosmicSakuraSkyRef, CosmicSakuraSkyPro
           this.rot = Math.random() * Math.PI * 2;
           this.vRot = (Math.random() - 0.5) * 0.022;
           this.sway = Math.random() * Math.PI * 2;
-          this.alpha = Math.min(0.75, this.z * 0.65 + 0.18);
+          this.alpha = Math.min(0.85, this.z * 0.7 + 0.25);
         }
 
         update() {
@@ -211,13 +211,13 @@ export const CosmicSakuraSky = forwardRef<CosmicSakuraSkyRef, CosmicSakuraSkyPro
         while (petals.length > count) petals.pop();
       };
 
-      const counts = [34, 18, 0];
+      const counts = [36, 18, 0];
       syncPetals(counts[densityRef.current]);
 
-      triggerBurstRef.current = (x: number, y: number, count = 14) => {
+      triggerBurstRef.current = (x: number, y: number, count = 16) => {
         for (let i = 0; i < count; i++) {
           const angle = (Math.PI * 2 * i) / count + (Math.random() - 0.5) * 0.3;
-          const speed = Math.random() * 3.6 + 1.2;
+          const speed = Math.random() * 3.8 + 1.2;
           burstPetals.push({
             x,
             y,
@@ -225,7 +225,7 @@ export const CosmicSakuraSky = forwardRef<CosmicSakuraSkyRef, CosmicSakuraSkyPro
             vy: Math.sin(angle) * speed - 0.8,
             size: Math.random() * 5 + 4,
             rot: Math.random() * Math.PI * 2,
-            alpha: 0.92,
+            alpha: 0.95,
           });
         }
       };
@@ -249,7 +249,7 @@ export const CosmicSakuraSky = forwardRef<CosmicSakuraSkyRef, CosmicSakuraSkyPro
         if (shootingStars.length < 10) {
           shootingStars.push(new ShootingStar());
         }
-      }, 3200);
+      }, 2800);
 
       const render = () => {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -259,7 +259,7 @@ export const CosmicSakuraSky = forwardRef<CosmicSakuraSkyRef, CosmicSakuraSkyPro
           const st = stars[i];
           st.phase += 0.025;
           ctx.save();
-          ctx.globalAlpha = 0.28 + Math.sin(st.phase) * 0.22;
+          ctx.globalAlpha = 0.35 + Math.sin(st.phase) * 0.25;
           ctx.fillStyle = st.color;
           ctx.beginPath();
           ctx.arc(st.x, st.y, st.r, 0, Math.PI * 2);
@@ -319,34 +319,53 @@ export const CosmicSakuraSky = forwardRef<CosmicSakuraSkyRef, CosmicSakuraSkyPro
 
     return (
       <div className="ub-twilight-sky" aria-hidden="true">
-        {/* CSS Meteors for test compatibility and baseline styling */}
+        {/* CSS Meteors for test suite and fallback */}
         <span className="ub-meteor" />
         <span className="ub-meteor second" />
 
         {/* 1. Milky Way Diagonal Pink-Cyan Starlight Arch */}
         <div
-          className="absolute -top-28 left-1/5 w-[1100px] h-[380px] -rotate-12 opacity-40 pointer-events-none"
           style={{
+            position: "absolute",
+            top: "-80px",
+            left: "15%",
+            width: "1200px",
+            height: "420px",
+            transform: "rotate(-12deg)",
+            opacity: 0.55,
+            pointerEvents: "none",
             background:
-              "radial-gradient(ellipse at center, rgba(244,114,182,0.42) 0%, rgba(139,92,246,0.28) 38%, rgba(56,189,248,0.22) 62%, transparent 80%)",
-            filter: "blur(42px)",
+              "radial-gradient(ellipse at center, rgba(244,114,182,0.48) 0%, rgba(139,92,246,0.32) 38%, rgba(56,189,248,0.25) 62%, transparent 80%)",
+            filter: "blur(38px)",
           }}
         />
 
         {/* 2. BLURRY PLANET #1: Ringed Sakura-Sapphire Gas Giant (Upper Right Sky) */}
         <div
-          className="absolute top-4 right-[8%] w-72 h-72 planet-float-1 opacity-70 pointer-events-none"
-          style={{ filter: "blur(1.5px)" }}
+          className="planet-float-1"
+          style={{
+            position: "absolute",
+            top: "16px",
+            right: "5%",
+            width: "320px",
+            height: "320px",
+            opacity: 0.85,
+            pointerEvents: "none",
+            filter: "blur(1px)",
+          }}
         >
           <div
-            className="absolute inset-4 rounded-full opacity-55"
             style={{
+              position: "absolute",
+              inset: "16px",
+              borderRadius: "50%",
+              opacity: 0.65,
               background:
-                "radial-gradient(circle, rgba(244,114,182,0.45) 0%, rgba(56,189,248,0.25) 55%, transparent 75%)",
-              filter: "blur(18px)",
+                "radial-gradient(circle, rgba(244,114,182,0.55) 0%, rgba(56,189,248,0.35) 55%, transparent 75%)",
+              filter: "blur(22px)",
             }}
           />
-          <svg viewBox="0 0 320 320" className="w-full h-full overflow-visible">
+          <svg viewBox="0 0 320 320" style={{ width: "100%", height: "100%", overflow: "visible" }}>
             <defs>
               <linearGradient id="ringedPlanetBody" x1="15%" y1="10%" x2="85%" y2="90%">
                 <stop offset="0%" stopColor="#fbcfe8" />
@@ -356,155 +375,210 @@ export const CosmicSakuraSky = forwardRef<CosmicSakuraSkyRef, CosmicSakuraSkyPro
               </linearGradient>
               <linearGradient id="planetRingGrad" x1="0%" y1="0%" x2="100%" y2="0%">
                 <stop offset="0%" stopColor="rgba(56,189,248,0.05)" />
-                <stop offset="25%" stopColor="rgba(244,114,182,0.65)" />
-                <stop offset="50%" stopColor="rgba(251,207,232,0.85)" />
-                <stop offset="75%" stopColor="rgba(56,189,248,0.65)" />
+                <stop offset="25%" stopColor="rgba(244,114,182,0.75)" />
+                <stop offset="50%" stopColor="rgba(251,207,232,0.95)" />
+                <stop offset="75%" stopColor="rgba(56,189,248,0.75)" />
                 <stop offset="100%" stopColor="rgba(244,114,182,0.05)" />
               </linearGradient>
             </defs>
             <ellipse
               cx="160"
               cy="160"
-              rx="148"
-              ry="36"
+              rx="155"
+              ry="38"
               fill="none"
               stroke="url(#planetRingGrad)"
-              strokeWidth="10"
+              strokeWidth="11"
               transform="rotate(-22 160 160)"
-              opacity="0.55"
+              opacity="0.6"
             />
-            <circle cx="160" cy="160" r="76" fill="url(#ringedPlanetBody)" />
+            <circle cx="160" cy="160" r="80" fill="url(#ringedPlanetBody)" />
             <path
-              d="M90,140 Q160,158 230,140"
+              d="M85,140 Q160,160 235,140"
               fill="none"
-              stroke="rgba(251,207,232,0.35)"
+              stroke="rgba(251,207,232,0.4)"
               strokeWidth="6"
               strokeLinecap="round"
             />
             <path
-              d="M86,168 Q160,186 234,168"
+              d="M82,168 Q160,188 238,168"
               fill="none"
-              stroke="rgba(56,189,248,0.3)"
+              stroke="rgba(56,189,248,0.35)"
               strokeWidth="5"
               strokeLinecap="round"
             />
             <path
-              d="M 23,215 A 148,36 0 0 0 297,105"
+              d="M 18,218 A 155,38 0 0 0 302,102"
               fill="none"
               stroke="url(#planetRingGrad)"
-              strokeWidth="12"
-              opacity="0.8"
+              strokeWidth="13"
+              opacity="0.85"
             />
           </svg>
         </div>
 
         {/* 3. BLURRY PLANET #2: Misty Pink-Cyan Crescent Moon (Upper Left Sky) */}
         <div
-          className="absolute top-10 left-[10%] w-44 h-44 planet-float-2 opacity-65 pointer-events-none"
-          style={{ filter: "blur(2px)" }}
+          className="planet-float-2"
+          style={{
+            position: "absolute",
+            top: "24px",
+            left: "6%",
+            width: "220px",
+            height: "220px",
+            opacity: 0.8,
+            pointerEvents: "none",
+            filter: "blur(1.5px)",
+          }}
         >
           <div
-            className="absolute inset-0 rounded-full"
             style={{
+              position: "absolute",
+              inset: 0,
+              borderRadius: "50%",
               background:
                 "radial-gradient(circle at 32% 30%, #fce7f3 0%, #f472b6 38%, #38bdf8 72%, transparent 82%)",
-              boxShadow: "0 0 50px rgba(244,114,182,0.45)",
+              boxShadow: "0 0 55px rgba(244,114,182,0.55)",
             }}
           />
           <div
-            className="absolute top-3 left-6 w-36 h-36 rounded-full bg-[#090720] opacity-80"
-            style={{ filter: "blur(6px)" }}
+            style={{
+              position: "absolute",
+              top: "12px",
+              left: "28px",
+              width: "180px",
+              height: "180px",
+              borderRadius: "50%",
+              backgroundColor: "#090720",
+              opacity: 0.82,
+              filter: "blur(7px)",
+            }}
           />
         </div>
 
         {/* 4. BLURRY PLANET #3: Distant Rose-Violet Nebula Sphere */}
         <div
-          className="absolute bottom-20 left-[20%] w-32 h-32 rounded-full planet-float-1 opacity-45 pointer-events-none"
+          className="planet-float-1"
           style={{
+            position: "absolute",
+            bottom: "70px",
+            left: "18%",
+            width: "160px",
+            height: "160px",
+            borderRadius: "50%",
+            opacity: 0.55,
+            pointerEvents: "none",
             background:
-              "radial-gradient(circle at 35% 35%, rgba(251,207,232,0.85), rgba(236,72,153,0.5) 45%, rgba(99,102,241,0.25) 75%, transparent)",
-            filter: "blur(5px)",
+              "radial-gradient(circle at 35% 35%, rgba(251,207,232,0.9), rgba(236,72,153,0.55) 45%, rgba(99,102,241,0.3) 75%, transparent)",
+            filter: "blur(4px)",
           }}
         />
 
-        {/* 5. LUMINOUS SAKURA TREE CANOPIES (Left & Right) */}
+        {/* 5. PROMINENT LUMINOUS SAKURA TREE CANOPIES (Left & Right) */}
         <svg
-          className="absolute -top-4 -left-6 w-[380px] h-[300px] canopy-left opacity-80 pointer-events-none"
+          className="canopy-left"
+          style={{
+            position: "absolute",
+            top: "-10px",
+            left: "-10px",
+            width: "440px",
+            height: "340px",
+            opacity: 0.92,
+            pointerEvents: "none",
+          }}
           viewBox="0 0 430 340"
         >
           <defs>
             <radialGradient id="sakuraClusterLeft" cx="50%" cy="50%" r="50%">
               <stop offset="0%" stopColor="#ffffff" stopOpacity="0.95" />
-              <stop offset="45%" stopColor="#fbcfe8" stopOpacity="0.88" />
-              <stop offset="78%" stopColor="#f472b6" stopOpacity="0.65" />
+              <stop offset="45%" stopColor="#fbcfe8" stopOpacity="0.92" />
+              <stop offset="78%" stopColor="#f472b6" stopOpacity="0.75" />
               <stop offset="100%" stopColor="#ec4899" stopOpacity="0" />
             </radialGradient>
             <radialGradient id="cyanSakuraGlow" cx="50%" cy="50%" r="50%">
-              <stop offset="0%" stopColor="#e0f2fe" stopOpacity="0.9" />
-              <stop offset="55%" stopColor="#38bdf8" stopOpacity="0.5" />
+              <stop offset="0%" stopColor="#e0f2fe" stopOpacity="0.95" />
+              <stop offset="55%" stopColor="#38bdf8" stopOpacity="0.6" />
               <stop offset="100%" stopColor="#38bdf8" stopOpacity="0" />
             </radialGradient>
           </defs>
-          <ellipse cx="95" cy="70" rx="95" ry="55" fill="url(#sakuraClusterLeft)" />
-          <ellipse cx="195" cy="52" rx="110" ry="48" fill="url(#sakuraClusterLeft)" />
-          <ellipse cx="60" cy="145" rx="85" ry="50" fill="url(#sakuraClusterLeft)" />
-          <ellipse cx="165" cy="115" rx="90" ry="45" fill="url(#sakuraClusterLeft)" />
-          <ellipse cx="275" cy="82" rx="75" ry="38" fill="url(#cyanSakuraGlow)" />
-          <path d="M-10,18 Q95,42 185,78 T315,92" fill="none" stroke="#2e1035" strokeWidth="7" strokeLinecap="round" />
-          <path d="M55,36 Q115,95 175,135" fill="none" stroke="#2e1035" strokeWidth="4.5" strokeLinecap="round" />
-          <path d="M-10,95 Q55,120 115,165" fill="none" stroke="#2e1035" strokeWidth="5" strokeLinecap="round" />
-          <circle cx="88" cy="58" r="7" fill="#ffffff" />
-          <circle cx="145" cy="74" r="9" fill="#fce7f3" />
-          <circle cx="215" cy="68" r="8" fill="#fbcfe8" />
-          <circle cx="172" cy="128" r="7" fill="#f9a8d4" />
-          <circle cx="268" cy="88" r="6" fill="#7dd3fc" />
-          <circle cx="110" cy="155" r="6.5" fill="#fce7f3" />
+          <ellipse cx="95" cy="70" rx="100" ry="58" fill="url(#sakuraClusterLeft)" />
+          <ellipse cx="195" cy="52" rx="115" ry="52" fill="url(#sakuraClusterLeft)" />
+          <ellipse cx="60" cy="145" rx="90" ry="54" fill="url(#sakuraClusterLeft)" />
+          <ellipse cx="165" cy="115" rx="95" ry="48" fill="url(#sakuraClusterLeft)" />
+          <ellipse cx="275" cy="82" rx="80" ry="42" fill="url(#cyanSakuraGlow)" />
+          <path d="M-10,18 Q95,42 185,78 T315,92" fill="none" stroke="#2e1035" strokeWidth="8" strokeLinecap="round" />
+          <path d="M55,36 Q115,95 175,135" fill="none" stroke="#2e1035" strokeWidth="5" strokeLinecap="round" />
+          <path d="M-10,95 Q55,120 115,165" fill="none" stroke="#2e1035" strokeWidth="5.5" strokeLinecap="round" />
+          <circle cx="88" cy="58" r="8" fill="#ffffff" />
+          <circle cx="145" cy="74" r="10" fill="#fce7f3" />
+          <circle cx="215" cy="68" r="9" fill="#fbcfe8" />
+          <circle cx="172" cy="128" r="8" fill="#f9a8d4" />
+          <circle cx="268" cy="88" r="7" fill="#7dd3fc" />
+          <circle cx="110" cy="155" r="7.5" fill="#fce7f3" />
         </svg>
 
         <svg
-          className="absolute -top-4 -right-6 w-[400px] h-[320px] canopy-right opacity-85 pointer-events-none"
+          className="canopy-right"
+          style={{
+            position: "absolute",
+            top: "-10px",
+            right: "-10px",
+            width: "470px",
+            height: "360px",
+            opacity: 0.95,
+            pointerEvents: "none",
+          }}
           viewBox="0 0 460 360"
         >
           <defs>
             <radialGradient id="sakuraClusterRight" cx="50%" cy="50%" r="50%">
               <stop offset="0%" stopColor="#ffffff" stopOpacity="0.95" />
-              <stop offset="40%" stopColor="#fbcfe8" stopOpacity="0.9" />
-              <stop offset="75%" stopColor="#f472b6" stopOpacity="0.7" />
+              <stop offset="40%" stopColor="#fbcfe8" stopOpacity="0.94" />
+              <stop offset="75%" stopColor="#f472b6" stopOpacity="0.75" />
               <stop offset="100%" stopColor="#db2777" stopOpacity="0" />
             </radialGradient>
           </defs>
-          <ellipse cx="365" cy="68" rx="105" ry="58" fill="url(#sakuraClusterRight)" />
-          <ellipse cx="255" cy="55" rx="115" ry="50" fill="url(#sakuraClusterRight)" />
-          <ellipse cx="390" cy="150" rx="90" ry="52" fill="url(#sakuraClusterRight)" />
-          <ellipse cx="290" cy="125" rx="95" ry="46" fill="url(#sakuraClusterRight)" />
-          <ellipse cx="175" cy="85" rx="80" ry="40" fill="url(#cyanSakuraGlow)" />
-          <path d="M470,15 Q360,40 265,78 T135,95" fill="none" stroke="#2b0f30" strokeWidth="7.5" strokeLinecap="round" />
-          <path d="M380,38 Q325,95 268,142" fill="none" stroke="#2b0f30" strokeWidth="4.5" strokeLinecap="round" />
-          <path d="M470,105 Q395,132 335,178" fill="none" stroke="#2b0f30" strokeWidth="5" strokeLinecap="round" />
-          <circle cx="355" cy="62" r="8" fill="#ffffff" />
-          <circle cx="290" cy="76" r="9.5" fill="#fce7f3" />
-          <circle cx="220" cy="72" r="8" fill="#fbcfe8" />
-          <circle cx="272" cy="136" r="7.5" fill="#f9a8d4" />
-          <circle cx="175" cy="90" r="6" fill="#7dd3fc" />
-          <circle cx="342" cy="168" r="7" fill="#fce7f3" />
+          <ellipse cx="365" cy="68" rx="110" ry="62" fill="url(#sakuraClusterRight)" />
+          <ellipse cx="255" cy="55" rx="120" ry="54" fill="url(#sakuraClusterRight)" />
+          <ellipse cx="390" cy="150" rx="95" ry="55" fill="url(#sakuraClusterRight)" />
+          <ellipse cx="290" cy="125" rx="100" ry="48" fill="url(#sakuraClusterRight)" />
+          <ellipse cx="175" cy="85" rx="85" ry="42" fill="url(#cyanSakuraGlow)" />
+          <path d="M470,15 Q360,40 265,78 T135,95" fill="none" stroke="#2b0f30" strokeWidth="8" strokeLinecap="round" />
+          <path d="M380,38 Q325,95 268,142" fill="none" stroke="#2b0f30" strokeWidth="5" strokeLinecap="round" />
+          <path d="M470,105 Q395,132 335,178" fill="none" stroke="#2b0f30" strokeWidth="5.5" strokeLinecap="round" />
+          <circle cx="355" cy="62" r="9" fill="#ffffff" />
+          <circle cx="290" cy="76" r="10.5" fill="#fce7f3" />
+          <circle cx="220" cy="72" r="9" fill="#fbcfe8" />
+          <circle cx="272" cy="136" r="8.5" fill="#f9a8d4" />
+          <circle cx="175" cy="90" r="7" fill="#7dd3fc" />
+          <circle cx="342" cy="168" r="8" fill="#fce7f3" />
         </svg>
 
         {/* Distant Mountain Silhouette & Torii Sanctuary Horizon */}
         <svg
-          className="absolute bottom-0 inset-x-0 w-full h-32 opacity-45 pointer-events-none"
+          style={{
+            position: "absolute",
+            bottom: 0,
+            left: 0,
+            right: 0,
+            width: "100%",
+            height: "150px",
+            opacity: 0.55,
+            pointerEvents: "none",
+          }}
           viewBox="0 0 1440 160"
           preserveAspectRatio="none"
         >
           <defs>
             <linearGradient id="horizonMist" x1="0%" y1="0%" x2="100%" y2="0%">
-              <stop offset="0%" stopColor="rgba(236,72,153,0.28)" />
-              <stop offset="50%" stopColor="rgba(56,189,248,0.24)" />
-              <stop offset="100%" stopColor="rgba(236,72,153,0.28)" />
+              <stop offset="0%" stopColor="rgba(236,72,153,0.32)" />
+              <stop offset="50%" stopColor="rgba(56,189,248,0.28)" />
+              <stop offset="100%" stopColor="rgba(236,72,153,0.32)" />
             </linearGradient>
           </defs>
           <path d="M0,160 L0,105 Q220,45 450,95 T920,75 T1440,95 L1440,160 Z" fill="#09061e" />
           <path d="M0,160 L0,125 Q360,80 720,118 T1440,110 L1440,160 Z" fill="url(#horizonMist)" />
-          <g transform="translate(115, 62) scale(0.75)" fill="#f472b6" opacity="0.65">
+          <g transform="translate(115, 62) scale(0.85)" fill="#f472b6" opacity="0.75">
             <path d="M0,12 Q28,4 56,12 L52,17 Q28,10 4,17 Z" />
             <rect x="8" y="21" width="40" height="4" />
             <rect x="14" y="15" width="4.5" height="36" />
@@ -517,7 +591,14 @@ export const CosmicSakuraSky = forwardRef<CosmicSakuraSkyRef, CosmicSakuraSkyPro
           <canvas
             ref={canvasRef}
             id="galaxySakuraCanvas"
-            className="fixed inset-0 pointer-events-none z-10"
+            style={{
+              position: "fixed",
+              inset: 0,
+              width: "100vw",
+              height: "100vh",
+              pointerEvents: "none",
+              zIndex: 1,
+            }}
           />
         )}
       </div>

@@ -36,7 +36,7 @@ function noticeText(envelope: EnvelopeView) {
   if (messageState(envelope) === "cancelled") return "Đã dừng lượt; nội dung nhận được vẫn được giữ lại.";
   if (/LOGIN_REQUIRED|Cần đăng nhập|chưa đăng nhập/i.test(text)) return "Cần đăng nhập để tiếp tục.";
   if (/PERMISSION_REQUIRED|permission denied|tool permission/i.test(text)) return "Cần duyệt quyền trong ứng dụng gốc.";
-  if (/bản nháp chưa gửi|Ô nhập đã thay đổi|bảo toàn bản nháp/i.test(text)) return "Có bản nháp cần kiểm tra trước khi gửi.";
+  if (/bản nháp chưa gửi|Ô nhập đã thay đổi|bảo toàn bản nháp/i.test(text)) return "Có bản nháp chưa gửi trong tab AI Browser. Hãy mở tab gốc để gửi hoặc xóa.";
   if (/không tìm được nút gửi|không tìm thấy nút gửi/i.test(text)) return "Chưa gửi được; bản nháp được giữ trong tab gốc.";
   if (/TIMEOUT|thời gian chờ|timed out/i.test(text)) return "Quá thời gian chờ; kiểm tra tab gốc trước khi gửi lại.";
   return "Lượt chưa hoàn tất. Mở chi tiết để kiểm tra nguyên nhân.";
@@ -61,7 +61,7 @@ export const RunNotices = memo(function RunNotices({ envelopes, onOpenThread }: 
               <div className="ub-notice-heading"><strong>{AGENT_NAMES[provider] || "Hệ thống"}</strong><time>{timeOf(envelope)}</time></div>
               <p>{noticeText(envelope)}</p>
               <div className="ub-notice-controls">
-                {["chatgpt", "gemini", "claude", "deepseek"].includes(provider) && <button type="button" onClick={() => onOpenThread(envelope)}>Mở tab gốc ↗</button>}
+                {["chatgpt", "gemini", "claude", "deepseek"].includes(provider) && <button type="button" onClick={() => onOpenThread(envelope)}>Mở tab AI Browser ↗</button>}
                 <details className="ub-notice-debug"><summary>Chi tiết kỹ thuật</summary><pre>{textOf(envelope)}</pre><CopyButton text={textOf(envelope)} /></details>
               </div>
             </section>

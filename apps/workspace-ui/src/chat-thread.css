@@ -7,15 +7,15 @@
 .ub-workspace .ub-mention[data-member="claude"] { color: #f5c1a2; background: #efaa7b22; }
 .ub-workspace .ub-mention:is([data-member="all"],[data-member="team"]) { color: #e5d5ff; background: #b697f32b; }
 .ub-workspace .ub-tag-targets { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; font-size: 10px; color: #afc1d5; }
-.ub-workspace .ub-chat-region { background: rgba(9,15,25,.94); }
-.ub-workspace .ub-chat-scroll { padding: 18px 22px 12px; }
-.ub-workspace .ub-feed { min-width: 0; }
-.ub-workspace .ub-run { padding: 0; margin: 0 auto; border: 0; }
+.ub-workspace .ub-chat-region { background: transparent; }
+.ub-workspace .ub-chat-scroll { padding: 18px 22px 12px; background: transparent; }
+.ub-workspace .ub-feed { min-width: 0; background: transparent; }
+.ub-workspace .ub-run { padding: 0; margin: 0 auto; border: 0; background: transparent; }
 .ub-workspace .ub-message {
   --member-accent: #b7c8df;
   display: flex; align-items: flex-start; gap: 9px; width: 100%; min-width: 0;
   padding: 0; margin: 0 0 16px; border: 0; border-radius: 0;
-  background: none; box-shadow: none;
+  background: transparent; box-shadow: none;
 }
 .ub-workspace [data-provider="chatgpt"] { --member-accent: #82d9ba; }
 .ub-workspace [data-provider="gemini"] { --member-accent: #8acbfb; }
@@ -26,24 +26,48 @@
 .ub-workspace .ub-sender-avatar {
   display: grid; place-items: center; flex: 0 0 31px; width: 31px; height: 31px;
   border-radius: 50%; border: 1px solid color-mix(in srgb,var(--member-accent) 45%,transparent);
-  background: #202c3c; box-shadow: 0 2px 5px #0002; font-size: 16px;
+  background: rgba(26, 18, 54, 0.85); box-shadow: 0 2px 8px rgba(0,0,0,0.3); font-size: 16px;
 }
 .ub-workspace .ub-message-bubble {
-  min-width: 0; width: fit-content; max-width: min(82%,780px);
-  padding: 8px 12px 6px; border: 1px solid #ffffff12; border-radius: 4px 13px 13px;
-  background: #202936; box-shadow: 0 2px 4px #00000012;
+  min-width: 0; width: fit-content; max-width: min(84%, 800px);
+  padding: 10px 14px 8px; border: 1px solid rgba(249, 168, 212, 0.28);
+  border-left: 3px solid var(--member-accent, #f472b6);
+  border-radius: 4px 14px 14px 14px;
+  background: rgba(19, 15, 46, 0.86);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: 0 6px 20px -4px rgba(3, 4, 20, 0.65), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+.ub-workspace .ub-message-bubble:hover {
+  border-color: rgba(244, 114, 182, 0.55);
+  box-shadow: 0 8px 24px -4px rgba(236, 72, 153, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.12);
 }
 .ub-workspace .ub-message-heading { display: flex; align-items: center; gap: 8px; min-height: 16px; margin: 0 0 4px; flex-wrap: wrap; }
 .ub-workspace .ub-message-heading strong { font-size: 11px; font-weight: 600; color: var(--member-accent); }
 .ub-workspace .ub-message-heading .ub-status { font-size: 9px; padding: 1px 5px; }
 .ub-workspace .ub-summary-label { color: #b6e1ce; font-size: 9px; }
-.ub-workspace .ub-message.is-summary .ub-message-bubble { border-color: #84d4b44d; background: #1c3030; }
-.ub-workspace .ub-message.from-user { justify-content: flex-end; background: none; border: 0; padding: 0; }
-.ub-workspace .ub-message.from-user .ub-message-bubble { max-width: min(76%,740px); background: #233d58; border-color: #94bde92b; border-radius: 13px 4px 13px 13px; }
+.ub-workspace .ub-message.is-summary .ub-message-bubble { border-color: rgba(132, 212, 180, 0.45); background: rgba(28, 48, 48, 0.85); }
+.ub-workspace .ub-message.from-user { justify-content: flex-end; background: transparent !important; border: 0 !important; padding: 0 !important; box-shadow: none !important; }
+.ub-workspace .ub-message.from-user .ub-message-bubble {
+  max-width: min(78%, 740px);
+  background: linear-gradient(135deg, rgba(236, 72, 153, 0.92), rgba(139, 92, 246, 0.88) 50%, rgba(56, 189, 248, 0.88));
+  border: 1px solid rgba(251, 207, 232, 0.6);
+  border-radius: 14px 14px 4px 14px;
+  box-shadow: 0 6px 24px rgba(236, 72, 153, 0.35), 0 0 14px rgba(56, 189, 248, 0.2);
+  color: #ffffff;
+}
+.ub-workspace .ub-message.from-user .ub-prose { color: #ffffff !important; font-weight: 500; }
+.ub-workspace .ub-message.from-user .ub-prose p { color: #ffffff !important; }
 .ub-workspace .ub-message.from-user .ub-message-heading { display: none; }
 .ub-workspace .ub-message.from-user .ub-message-meta { justify-content: flex-end; }
-.ub-workspace .ub-message.from-system { background: none; border: 0; padding: 0; }
-.ub-workspace .ub-message.from-system .ub-message-bubble { background: #2d2932; border-color: #eac38d33; }
+.ub-workspace .ub-message.from-user .ub-message-meta time { color: rgba(255, 255, 255, 0.8); }
+.ub-workspace .ub-message.from-system { background: transparent !important; border: 0 !important; padding: 0 !important; }
+.ub-workspace .ub-message.from-system .ub-message-bubble {
+  background: rgba(30, 20, 52, 0.85);
+  border: 1px solid rgba(251, 191, 36, 0.35);
+  border-left: 3px solid #fbbf24;
+}
 .ub-workspace .ub-message[data-continuation="true"] { margin-top: -11px; }
 .ub-workspace .ub-message[data-continuation="true"] .ub-sender-avatar { visibility: hidden; }
 .ub-workspace .ub-message[data-continuation="true"] .ub-message-heading { display: none; }

@@ -120,7 +120,7 @@
   flex: 1;
   min-height: 0;
   min-width: 0;
-  background: var(--ub-navy);
+  background: transparent;
 }
 .ub-room-header {
   height: 64px;
@@ -204,8 +204,8 @@
   background: transparent;
   border-radius: 0;
   margin: 0;
-  border-bottom: 1px solid var(--ub-border);
-  padding: 14px 0;
+  border-bottom: none;
+  padding: 0;
 }
 @keyframes ubMessageEnter {
   from {
